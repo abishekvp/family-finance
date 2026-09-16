@@ -2,11 +2,73 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Family Finance</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+
+    <title>Family Finance — money, together</title>
+    <meta
+      name="description"
+      content="Shared family accounts alongside private ones: track balances, budgets and spending together."
+    />
+
+    <!-- Repainted at runtime by ThemeProvider so the browser chrome follows the active theme. -->
+    <meta name="theme-color" content="#F4F6FC" />
+    <meta name="color-scheme" content="light dark" />
+
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/icons/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/icons/favicon-32.png" sizes="32x32" type="image/png" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+
+    <!-- iOS has no manifest support for standalone mode; these three tags are the equivalent. -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Family Finance" />
+    <meta name="mobile-web-app-capable" content="yes" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+
+    <style>
+      /*
+       * Painted before React boots so a cold load never flashes white in dark mode.
+       * Mirrors --c-canvas from tokens.css.
+       */
+      html { background: #f4f6fc; }
+      @media (prefers-color-scheme: dark) { html { background: #070a16; } }
+      #boot {
+        position: fixed;
+        inset: 0;
+        display: grid;
+        place-items: center;
+      }
+      #boot span {
+        width: 34px;
+        height: 34px;
+        border-radius: 999px;
+        border: 2.5px solid rgba(109, 95, 240, 0.25);
+        border-top-color: #6d5ff0;
+        animation: boot-spin 0.7s linear infinite;
+      }
+      @keyframes boot-spin { to { transform: rotate(360deg); } }
+    </style>
+    <script>
+      // Apply the stored theme synchronously — after React mounts is already too late.
+      try {
+        var stored = localStorage.getItem("theme:v1");
+        var dark =
+          stored === "dark" ||
+          ((!stored || stored === "system") &&
+            window.matchMedia("(prefers-color-scheme: dark)").matches);
+        if (dark) document.documentElement.classList.add("dark");
+      } catch (e) {}
+    </script>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root"><div id="boot"><span></span></div></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

@@ -19,7 +19,8 @@
     "prisma:studio": "npm run prisma:studio --workspace server"
   },
   "devDependencies": {
-    "concurrently": "^9.1.0"
+    "concurrently": "^9.1.0",
+    "sharp": "^0.34.5"
   },
   "allowScripts": {
     "@prisma/client@6.19.3": true,

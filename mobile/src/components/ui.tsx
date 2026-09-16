@@ -72,6 +72,47 @@ export function ErrorText({ children }: { children?: string | null }) {
   return <Text style={styles.errorText}>{children}</Text>;
 }
 
+/** The selectable-chip pattern used across account/type/category pickers. */
+export function pillStyle(selected: boolean) {
+  return {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: selected ? colors.brand600 : colors.slate50,
+    borderWidth: 1,
+    borderColor: selected ? colors.brand600 : colors.slate200,
+  } as const;
+}
+
+export function pillTextStyle(selected: boolean) {
+  return { color: selected ? colors.white : colors.slate700, fontSize: 12, fontWeight: "600" as const };
+}
+
+/** The grey-track/white-pill segmented control used for the family/personal scope toggle. */
+export function Segmented<T extends string>({
+  options,
+  value,
+  onChange,
+}: {
+  options: { value: T; label: string }[];
+  value: T;
+  onChange: (value: T) => void;
+}) {
+  return (
+    <View style={styles.segmentedTrack}>
+      {options.map((opt) => (
+        <Pressable
+          key={opt.value}
+          onPress={() => onChange(opt.value)}
+          style={[styles.segmentedPill, value === opt.value && styles.segmentedPillActive]}
+        >
+          <Text style={[styles.segmentedText, value === opt.value && styles.segmentedTextActive]}>{opt.label}</Text>
+        </Pressable>
+      ))}
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   card: {
     backgroundColor: colors.white,
@@ -130,5 +171,28 @@ const styles = StyleSheet.create({
     color: colors.red600,
     fontSize: 13,
     marginTop: 4,
+  },
+  segmentedTrack: {
+    flexDirection: "row",
+    backgroundColor: colors.slate200,
+    borderRadius: 10,
+    padding: 4,
+    alignSelf: "flex-start",
+  },
+  segmentedPill: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  segmentedPillActive: {
+    backgroundColor: colors.white,
+  },
+  segmentedText: {
+    fontWeight: "600",
+    fontSize: 13,
+    color: colors.slate500,
+  },
+  segmentedTextActive: {
+    color: colors.brand700,
   },
 });

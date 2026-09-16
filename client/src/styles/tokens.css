@@ -1,0 +1,115 @@
+/*
+ * Design tokens — "Aurora Ledger".
+ *
+ * Every value is an "R G B" triplet so Tailwind can apply an alpha channel to it
+ * (`bg-surface/70`). The `.dark` block re-declares the same names, which is why component
+ * markup carries almost no `dark:` variants — a token means the right thing in both themes.
+ */
+
+:root {
+  color-scheme: light;
+
+  /* Neutrals ------------------------------------------------------------- */
+  --c-canvas: 244 246 252;
+  --c-surface: 255 255 255;
+  --c-surface-raised: 255 255 255;
+  --c-surface-sunken: 240 242 249;
+  --c-line: 226 230 241;
+  --c-line-strong: 203 210 228;
+  --c-ink: 13 17 34;
+  --c-ink-muted: 92 102 124;
+  --c-ink-subtle: 134 143 164;
+  --c-shadow: 14 20 44;
+
+  /* Brand ---------------------------------------------------------------- */
+  --c-brand-50: 238 240 255;
+  --c-brand-100: 224 227 255;
+  --c-brand-200: 199 204 254;
+  --c-brand-300: 165 169 251;
+  --c-brand-400: 135 129 247;
+  --c-brand-500: 109 95 240;
+  --c-brand-600: 91 70 229;
+  --c-brand-700: 76 54 201;
+  --c-brand-800: 63 45 162;
+  --c-brand-900: 54 43 128;
+  --c-brand-soft: 238 240 255;
+
+  /* Semantic ------------------------------------------------------------- */
+  --c-income: 5 150 105;
+  --c-income-soft: 220 250 239;
+  --c-expense: 225 29 72;
+  --c-expense-soft: 255 228 234;
+  --c-warn: 217 119 6;
+  --c-warn-soft: 254 243 219;
+  --c-info: 2 132 199;
+  --c-info-soft: 224 242 254;
+
+  /* Surface treatment ---------------------------------------------------- */
+  --c-glass: 255 255 255;
+  --glass-alpha: 0.74;
+  --glass-alpha-strong: 0.88;
+  --glass-border: 255 255 255;
+  --glass-border-alpha: 0.7;
+  --c-sheen: 0.7;
+
+  /* Aurora backdrop ------------------------------------------------------ */
+  --aurora-1: 109 95 240;
+  --aurora-2: 168 85 247;
+  --aurora-3: 34 211 238;
+  --aurora-4: 45 212 191;
+  --aurora-opacity: 0.30;
+
+  /* Chrome --------------------------------------------------------------- */
+  --scrollbar-thumb: 203 210 228;
+}
+
+.dark {
+  color-scheme: dark;
+
+  --c-canvas: 7 10 22;
+  --c-surface: 18 22 42;
+  --c-surface-raised: 24 29 52;
+  --c-surface-sunken: 12 16 32;
+  --c-line: 40 47 76;
+  --c-line-strong: 60 69 104;
+  --c-ink: 233 237 249;
+  --c-ink-muted: 150 160 184;
+  --c-ink-subtle: 112 122 146;
+  --c-shadow: 0 0 0;
+
+  --c-brand-50: 33 30 72;
+  --c-brand-100: 44 40 96;
+  --c-brand-200: 60 55 132;
+  --c-brand-300: 92 84 190;
+  --c-brand-400: 124 115 232;
+  --c-brand-500: 145 136 250;
+  --c-brand-600: 130 119 248;
+  --c-brand-700: 165 158 252;
+  --c-brand-800: 196 192 253;
+  --c-brand-900: 224 222 254;
+  --c-brand-soft: 38 34 82;
+
+  --c-income: 52 211 153;
+  --c-income-soft: 8 46 45;
+  --c-expense: 251 113 133;
+  --c-expense-soft: 60 18 33;
+  --c-warn: 251 191 36;
+  --c-warn-soft: 56 38 8;
+  --c-info: 56 189 248;
+  --c-info-soft: 9 40 63;
+
+  --c-glass: 24 29 52;
+  --glass-alpha: 0.62;
+  --glass-alpha-strong: 0.82;
+  --glass-border: 255 255 255;
+  --glass-border-alpha: 0.10;
+  --c-sheen: 0.06;
+
+  --aurora-1: 109 95 240;
+  --aurora-2: 168 85 247;
+  --aurora-3: 34 211 238;
+  --aurora-4: 16 185 129;
+  --aurora-opacity: 0.38;
+
+  --scrollbar-thumb: 60 69 104;
+}

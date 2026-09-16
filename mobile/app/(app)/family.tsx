@@ -2,10 +2,10 @@ import { useCallback, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import { useFocusEffect } from "expo-router";
-import { api } from "../../../src/api/client";
-import { useAuth } from "../../../src/context/AuthContext";
-import { getErrorMessage } from "../../../src/api/errors";
-import { Button, Card, ErrorText, Input, Label, colors } from "../../../src/components/ui";
+import { api } from "../../src/api/client";
+import { useAuth } from "../../src/context/AuthContext";
+import { getErrorMessage } from "../../src/api/errors";
+import { Button, Card, ErrorText, Input, Label, colors } from "../../src/components/ui";
 
 interface Member {
   userId: string;

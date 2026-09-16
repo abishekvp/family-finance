@@ -4,9 +4,11 @@
   "main": "expo-router/entry",
   "dependencies": {
     "axios": "^1.20.0",
+    "date-fns": "^4.4.0",
     "expo": "~57.0.23",
     "expo-clipboard": "~57.0.2",
     "expo-constants": "~57.0.18",
+    "expo-linear-gradient": "~57.0.2",
     "expo-linking": "~57.0.10",
     "expo-router": "~57.0.21",
     "expo-secure-store": "~57.0.4",

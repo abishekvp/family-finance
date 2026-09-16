@@ -10,8 +10,10 @@ export default function TabsLayout() {
         tabBarInactiveTintColor: colors.slate400,
       }}
     >
-      <Tabs.Screen name="index" options={{ title: "Dashboard" }} />
-      <Tabs.Screen name="family" options={{ title: "Family" }} />
+      <Tabs.Screen name="index" options={{ title: "Trans." }} />
+      <Tabs.Screen name="stats" options={{ title: "Stats" }} />
+      <Tabs.Screen name="accounts" options={{ title: "Accounts" }} />
+      <Tabs.Screen name="more" options={{ title: "More" }} />
     </Tabs>
   );
 }

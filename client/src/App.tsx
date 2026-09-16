@@ -8,6 +8,11 @@ import { Onboarding } from "./pages/Onboarding";
 import { AcceptInvite } from "./pages/AcceptInvite";
 import { Dashboard } from "./pages/Dashboard";
 import { FamilySettings } from "./pages/FamilySettings";
+import { Transactions } from "./pages/Transactions";
+import { Stats } from "./pages/Stats";
+import { Accounts } from "./pages/Accounts";
+import { Settings } from "./pages/Settings";
+import { GetTheApp } from "./pages/GetTheApp";
 
 export default function App() {
   return (
@@ -22,7 +27,12 @@ export default function App() {
         <Route element={<RequireFamily />}>
           <Route element={<Layout />}>
             <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/transactions" element={<Transactions />} />
+            <Route path="/stats" element={<Stats />} />
+            <Route path="/accounts" element={<Accounts />} />
+            <Route path="/settings" element={<Settings />} />
             <Route path="/family" element={<FamilySettings />} />
+            <Route path="/get-the-app" element={<GetTheApp />} />
           </Route>
         </Route>
 

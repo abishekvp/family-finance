@@ -57,6 +57,16 @@ accountsRouter.get(
   })
 );
 
+function assertCanModify(ownerId: string | null, requesterId: string, role: Role) {
+  if (ownerId === null) {
+    if (role !== Role.ADMIN) {
+      throw new AppError(403, "Only an admin can modify a shared account");
+    }
+  } else if (ownerId !== requesterId) {
+    throw new AppError(403, "Not allowed to modify this account");
+  }
+}
+
 const accountTypeSchema = z.nativeEnum(AccountType);
 
 const createAccountSchema = z.object({
@@ -95,5 +105,71 @@ accountsRouter.post(
     });
 
     res.status(201).json(account);
+  })
+);
+
+const updateAccountSchema = z.object({
+  name: z.string().trim().min(1).max(100).optional(),
+  type: accountTypeSchema.optional(),
+  color: z.string().trim().optional(),
+  icon: z.string().trim().optional(),
+  openingBalance: z.number().finite().optional(),
+  creditLimit: z.number().finite().optional(),
+});
+
+accountsRouter.patch(
+  "/:accountId",
+  requireFamilyRole(Role.MEMBER),
+  asyncHandler(async (req, res) => {
+    const familyId = req.params.familyId;
+    const requesterId = req.user!.id;
+
+    const existing = await prisma.account.findFirst({
+      where: { id: req.params.accountId, familyId, isArchived: false },
+    });
+    if (!existing) throw new AppError(404, "Account not found");
+
+    assertCanModify(existing.ownerId, requesterId, req.familyMembership!.role);
+
+    const data = updateAccountSchema.parse(req.body);
+
+    const updated = await prisma.account.update({
+      where: { id: existing.id },
+      data: {
+        ...(data.name !== undefined ? { name: data.name } : {}),
+        ...(data.type !== undefined ? { type: data.type } : {}),
+        ...(data.color !== undefined ? { color: data.color } : {}),
+        ...(data.icon !== undefined ? { icon: data.icon } : {}),
+        ...(data.openingBalance !== undefined ? { openingBalance: data.openingBalance } : {}),
+        ...(data.creditLimit !== undefined ? { creditLimit: data.creditLimit } : {}),
+      },
+    });
+
+    // Client refetches the account list (which recomputes balance) after a save,
+    // so the raw updated row is returned here rather than duplicating that calc.
+    res.json(updated);
+  })
+);
+
+accountsRouter.delete(
+  "/:accountId",
+  requireFamilyRole(Role.MEMBER),
+  asyncHandler(async (req, res) => {
+    const familyId = req.params.familyId;
+    const requesterId = req.user!.id;
+
+    const existing = await prisma.account.findFirst({
+      where: { id: req.params.accountId, familyId, isArchived: false },
+    });
+    if (!existing) throw new AppError(404, "Account not found");
+
+    assertCanModify(existing.ownerId, requesterId, req.familyMembership!.role);
+
+    await prisma.account.update({
+      where: { id: existing.id },
+      data: { isArchived: true },
+    });
+
+    res.status(204).send();
   })
 );

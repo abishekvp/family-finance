@@ -51,7 +51,7 @@ NODE_ENV=production npm start
 ```
 
 Serves the whole app — API and client — from a single process at http://localhost:4000 (configurable via
-`API_PORT` in `server/.env`).
+`PORT` in `server/.env`).
 
 ## What's implemented so far
 

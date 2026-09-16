@@ -1,228 +1,237 @@
-import { useCallback, useEffect, useState } from "react";
-import { FlatList, Pressable, RefreshControl, ScrollView, Switch, Text, View } from "react-native";
-import { useFocusEffect } from "expo-router";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { ActivityIndicator, Pressable, ScrollView, Text, View } from "react-native";
+import { useFocusEffect, useNavigation, useRouter } from "expo-router";
 import { api } from "../../../src/api/client";
+import type { Account, Transaction } from "../../../src/api/types";
 import { useAuth } from "../../../src/context/AuthContext";
+import { usePrefs } from "../../../src/context/PrefsContext";
 import { getErrorMessage } from "../../../src/api/errors";
-import { Button, Card, ErrorText, Input, Label, colors } from "../../../src/components/ui";
+import { ErrorText, Segmented, colors } from "../../../src/components/ui";
+import { monthRange, yearRange } from "../../../src/lib/dateUtils";
+import { href } from "../../../src/lib/nav";
+import { DailyView } from "../../../src/components/transactions/DailyView";
+import { CalendarView } from "../../../src/components/transactions/CalendarView";
+import { MonthlyView } from "../../../src/components/transactions/MonthlyView";
+import { TotalView } from "../../../src/components/transactions/TotalView";
+import { FilterModal } from "../../../src/components/transactions/FilterModal";
 
-const ACCOUNT_TYPES = ["CASH", "BANK", "SAVINGS", "CREDIT_CARD", "DEBIT_CARD", "INVESTMENT", "LOAN"] as const;
-type AccountType = (typeof ACCOUNT_TYPES)[number];
+type SubView = "daily" | "calendar" | "monthly" | "total";
 
-interface Account {
-  id: string;
-  name: string;
-  type: AccountType;
-  currency: string;
-  balance: number;
-  owner: { id: string; name: string } | null;
-}
+const SUB_VIEW_OPTIONS: { value: SubView; label: string }[] = [
+  { value: "daily", label: "Daily" },
+  { value: "calendar", label: "Calendar" },
+  { value: "monthly", label: "Monthly" },
+  { value: "total", label: "Total" },
+];
 
-function formatCurrency(amount: number, currency: string) {
-  return new Intl.NumberFormat(undefined, { style: "currency", currency }).format(amount);
-}
-
-export default function Dashboard() {
+export default function TransactionsHub() {
   const { user } = useAuth();
   const family = user!.families[0];
-  const [scope, setScope] = useState<"family" | "personal">("family");
+  const router = useRouter();
+  const navigation = useNavigation();
+  const { prefs, isLoading: prefsLoading } = usePrefs();
+
+  const [subView, setSubView] = useState<SubView>("daily");
+  const didInitFromPrefs = useRef(false);
+  useEffect(() => {
+    // One-time sync from the persisted default landing view, before the user touches the toggle.
+    if (!prefsLoading && !didInitFromPrefs.current) {
+      didInitFromPrefs.current = true;
+      setSubView(prefs.landingView);
+    }
+  }, [prefsLoading, prefs.landingView]);
+
+  const [anchorMonth, setAnchorMonth] = useState(() => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), 1);
+  });
+  const [selectedYear, setSelectedYear] = useState(() => new Date().getFullYear());
+
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [periodTransactions, setPeriodTransactions] = useState<Transaction[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [showAddAccount, setShowAddAccount] = useState(false);
+  const [selectedAccountIds, setSelectedAccountIds] = useState<Set<string> | null>(null);
+  const [filterVisible, setFilterVisible] = useState(false);
 
   const loadAccounts = useCallback(async () => {
+    const res = await api.get<Account[]>(`/families/${family.id}/accounts`);
+    setAccounts(res.data);
+  }, [family.id]);
+
+  const loadPeriod = useCallback(async () => {
+    const { from, to } = subView === "monthly" ? yearRange(selectedYear) : monthRange(anchorMonth);
+    const res = await api.get<Transaction[]>(`/families/${family.id}/transactions`, {
+      params: { from: from.toISOString(), to: to.toISOString(), limit: 1000 },
+    });
+    setPeriodTransactions(res.data);
+  }, [family.id, subView, anchorMonth, selectedYear]);
+
+  const loadAll = useCallback(async () => {
     try {
-      const res = await api.get<Account[]>(`/families/${family.id}/accounts`);
-      setAccounts(res.data);
+      await Promise.all([loadAccounts(), loadPeriod()]);
       setError(null);
     } catch (err) {
-      setError(getErrorMessage(err, "Unable to load accounts"));
+      setError(getErrorMessage(err, "Unable to load transactions"));
     } finally {
       setIsLoading(false);
     }
-  }, [family.id]);
+  }, [loadAccounts, loadPeriod]);
 
   useFocusEffect(
     useCallback(() => {
-      loadAccounts();
-    }, [loadAccounts])
+      setIsLoading(true);
+      loadAll();
+    }, [loadAll])
   );
 
-  const visibleAccounts = scope === "family" ? accounts : accounts.filter((a) => a.owner?.id === user!.id);
-  const totalBalance = visibleAccounts.reduce((sum, a) => sum + a.balance, 0);
-
-  return (
-    <FlatList
-      style={{ backgroundColor: "#F8FAFC" }}
-      contentContainerStyle={{ padding: 16, gap: 12 }}
-      refreshControl={<RefreshControl refreshing={isLoading} onRefresh={loadAccounts} />}
-      ListHeaderComponent={
-        <View style={{ gap: 12, marginBottom: 12 }}>
-          <View
-            style={{
-              flexDirection: "row",
-              backgroundColor: "#E2E8F0",
-              borderRadius: 10,
-              padding: 4,
-              alignSelf: "flex-start",
-            }}
-          >
-            {(["family", "personal"] as const).map((s) => (
-              <Pressable
-                key={s}
-                onPress={() => setScope(s)}
-                style={{
-                  paddingHorizontal: 16,
-                  paddingVertical: 6,
-                  borderRadius: 8,
-                  backgroundColor: scope === s ? colors.white : "transparent",
-                }}
-              >
-                <Text style={{ fontWeight: "600", color: scope === s ? colors.brand700 : colors.slate500, textTransform: "capitalize" }}>
-                  {s}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
-
-          <Card>
-            <Text style={{ color: colors.slate500, fontSize: 13 }}>
-              {scope === "family" ? "Family" : "Your"} total balance
-            </Text>
-            <Text style={{ fontSize: 26, fontWeight: "700", marginTop: 4 }}>
-              {formatCurrency(totalBalance, family.currency)}
-            </Text>
-            <View style={{ flexDirection: "row", marginTop: 12, gap: 24 }}>
-              <View>
-                <Text style={{ color: colors.slate500, fontSize: 12 }}>Accounts</Text>
-                <Text style={{ fontWeight: "600" }}>{visibleAccounts.length}</Text>
-              </View>
-              <View>
-                <Text style={{ color: colors.slate500, fontSize: 12 }}>Your role</Text>
-                <Text style={{ fontWeight: "600", textTransform: "capitalize" }}>{family.role.toLowerCase()}</Text>
-              </View>
-            </View>
-          </Card>
-
-          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-            <Text style={{ fontSize: 17, fontWeight: "700" }}>Accounts</Text>
-            <Button
-              title={showAddAccount ? "Cancel" : "Add account"}
-              variant="secondary"
-              onPress={() => setShowAddAccount((v) => !v)}
-            />
-          </View>
-
-          {showAddAccount && (
-            <AddAccountForm
-              familyId={family.id}
-              onCreated={() => {
-                setShowAddAccount(false);
-                loadAccounts();
-              }}
-            />
-          )}
-
-          <ErrorText>{error}</ErrorText>
-
-          {!isLoading && visibleAccounts.length === 0 && (
-            <Text style={{ color: colors.slate400, fontSize: 13 }}>
-              No accounts yet. Add a common family account or a private account of your own to get started.
-            </Text>
-          )}
-        </View>
-      }
-      data={visibleAccounts}
-      keyExtractor={(item) => item.id}
-      renderItem={({ item }) => (
-        <Card style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-          <View>
-            <Text style={{ fontWeight: "600" }}>{item.name}</Text>
-            <Text style={{ color: colors.slate500, fontSize: 12, marginTop: 2 }}>
-              {item.type.replace("_", " ")} · {item.owner ? item.owner.name : "Shared (Common)"}
-            </Text>
-          </View>
-          <Text style={{ fontWeight: "700", color: item.balance < 0 ? colors.red600 : colors.slate900 }}>
-            {formatCurrency(item.balance, item.currency)}
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      headerRight: () => (
+        <Pressable onPress={() => setFilterVisible(true)} hitSlop={10} style={{ paddingHorizontal: 8 }}>
+          <Text style={{ fontSize: 14, fontWeight: "600", color: selectedAccountIds ? colors.brand600 : colors.slate700 }}>
+            Filter{selectedAccountIds ? ` (${selectedAccountIds.size})` : ""}
           </Text>
-        </Card>
-      )}
-    />
+        </Pressable>
+      ),
+    });
+  }, [navigation, selectedAccountIds]);
+
+  const filteredTransactions = useMemo(() => {
+    if (selectedAccountIds === null) return periodTransactions;
+    return periodTransactions.filter((t) => selectedAccountIds.has(t.accountId));
+  }, [periodTransactions, selectedAccountIds]);
+
+  const scopedAccountIds = useMemo(
+    () => selectedAccountIds ?? new Set(accounts.map((a) => a.id)),
+    [selectedAccountIds, accounts]
   );
-}
 
-function AddAccountForm({ familyId, onCreated }: { familyId: string; onCreated: () => void }) {
-  const [name, setName] = useState("");
-  const [type, setType] = useState<AccountType>("BANK");
-  const [isCommon, setIsCommon] = useState(false);
-  const [openingBalance, setOpeningBalance] = useState("0");
-  const [error, setError] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-
-  async function handleSubmit() {
-    setError(null);
-    setIsSubmitting(true);
-    try {
-      await api.post(`/families/${familyId}/accounts`, {
-        name,
-        type,
-        isCommon,
-        openingBalance: Number(openingBalance) || 0,
-      });
-      onCreated();
-    } catch (err) {
-      setError(getErrorMessage(err, "Unable to create account"));
-    } finally {
-      setIsSubmitting(false);
-    }
+  function openTransaction(t: Transaction) {
+    router.push(href("/transaction-form", { id: t.id, transaction: JSON.stringify(t) }));
   }
 
+  function openNewTransaction() {
+    router.push(href("/transaction-form"));
+  }
+
+  const monthLabel = anchorMonth.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+
   return (
-    <Card style={{ gap: 12 }}>
-      <View>
-        <Label>Name</Label>
-        <Input value={name} onChangeText={setName} placeholder="Joint Checking" />
-      </View>
+    <View style={{ flex: 1, backgroundColor: colors.slate50 }}>
+      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 100, gap: 12 }}>
+        <Segmented options={SUB_VIEW_OPTIONS} value={subView} onChange={setSubView} />
 
-      <View>
-        <Label>Type</Label>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          <View style={{ flexDirection: "row", gap: 8 }}>
-            {ACCOUNT_TYPES.map((t) => (
-              <Pressable
-                key={t}
-                onPress={() => setType(t)}
-                style={{
-                  paddingHorizontal: 12,
-                  paddingVertical: 6,
-                  borderRadius: 999,
-                  backgroundColor: type === t ? colors.brand600 : colors.slate50,
-                  borderWidth: 1,
-                  borderColor: type === t ? colors.brand600 : colors.slate200,
-                }}
-              >
-                <Text style={{ color: type === t ? colors.white : colors.slate700, fontSize: 12, fontWeight: "600" }}>
-                  {t.replace("_", " ")}
-                </Text>
-              </Pressable>
-            ))}
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 20 }}>
+          <Pressable
+            hitSlop={10}
+            onPress={() =>
+              subView === "monthly"
+                ? setSelectedYear((y) => y - 1)
+                : setAnchorMonth((d) => new Date(d.getFullYear(), d.getMonth() - 1, 1))
+            }
+          >
+            <Text style={{ fontSize: 18, color: colors.slate500 }}>‹</Text>
+          </Pressable>
+          <Text style={{ fontWeight: "700", fontSize: 15 }}>{subView === "monthly" ? selectedYear : monthLabel}</Text>
+          <Pressable
+            hitSlop={10}
+            onPress={() =>
+              subView === "monthly"
+                ? setSelectedYear((y) => y + 1)
+                : setAnchorMonth((d) => new Date(d.getFullYear(), d.getMonth() + 1, 1))
+            }
+          >
+            <Text style={{ fontSize: 18, color: colors.slate500 }}>›</Text>
+          </Pressable>
+        </View>
+
+        <ErrorText>{error}</ErrorText>
+
+        {isLoading ? (
+          <View style={{ paddingVertical: 60, alignItems: "center" }}>
+            <ActivityIndicator color={colors.brand600} size="large" />
           </View>
-        </ScrollView>
-      </View>
+        ) : subView === "daily" ? (
+          <DailyView
+            transactions={filteredTransactions}
+            accounts={accounts}
+            familyId={family.id}
+            currency={family.currency}
+            periodStart={anchorMonth}
+            carryOver={prefs.carryOver}
+            accountIds={scopedAccountIds}
+            onPressTransaction={openTransaction}
+          />
+        ) : subView === "calendar" ? (
+          <CalendarView
+            transactions={filteredTransactions}
+            accounts={accounts}
+            familyId={family.id}
+            currency={family.currency}
+            anchorMonth={anchorMonth}
+            weekStart={prefs.weekStart}
+            carryOver={prefs.carryOver}
+            accountIds={scopedAccountIds}
+            onPressTransaction={openTransaction}
+          />
+        ) : subView === "monthly" ? (
+          <MonthlyView
+            transactions={filteredTransactions}
+            accounts={accounts}
+            familyId={family.id}
+            currency={family.currency}
+            year={selectedYear}
+            weekStart={prefs.weekStart}
+            carryOver={prefs.carryOver}
+            accountIds={scopedAccountIds}
+          />
+        ) : (
+          <TotalView
+            transactions={filteredTransactions}
+            accounts={accounts}
+            familyId={family.id}
+            currency={family.currency}
+            anchorMonth={anchorMonth}
+            selectedAccountIds={selectedAccountIds}
+            carryOver={prefs.carryOver}
+            accountIds={scopedAccountIds}
+          />
+        )}
+      </ScrollView>
 
-      <View>
-        <Label>Opening balance</Label>
-        <Input keyboardType="decimal-pad" value={openingBalance} onChangeText={setOpeningBalance} />
-      </View>
+      <Pressable
+        onPress={openNewTransaction}
+        style={({ pressed }) => ({
+          position: "absolute",
+          right: 20,
+          bottom: 24,
+          width: 56,
+          height: 56,
+          borderRadius: 28,
+          backgroundColor: colors.brand600,
+          alignItems: "center",
+          justifyContent: "center",
+          opacity: pressed ? 0.85 : 1,
+          shadowColor: "#000",
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 0.2,
+          shadowRadius: 6,
+          elevation: 4,
+        })}
+      >
+        <Text style={{ color: colors.white, fontSize: 28, fontWeight: "300", marginTop: -2 }}>+</Text>
+      </Pressable>
 
-      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-        <Label>Shared family (common) account</Label>
-        <Switch value={isCommon} onValueChange={setIsCommon} />
-      </View>
-
-      <ErrorText>{error}</ErrorText>
-      <Button title={isSubmitting ? "Adding..." : "Add account"} onPress={handleSubmit} disabled={isSubmitting || !name.trim()} />
-    </Card>
+      <FilterModal
+        visible={filterVisible}
+        accounts={accounts}
+        periodTransactions={periodTransactions}
+        selectedAccountIds={selectedAccountIds}
+        onChange={setSelectedAccountIds}
+        currency={family.currency}
+        onClose={() => setFilterVisible(false)}
+      />
+    </View>
   );
 }

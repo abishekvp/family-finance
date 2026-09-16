@@ -1,199 +1,146 @@
-import { useEffect, useState, type FormEvent } from "react";
-import { useOutletContext } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Link, useOutletContext } from "react-router-dom";
+import { ArrowRight, Plus } from "lucide-react";
 import { api } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { getErrorMessage } from "../api/errors";
-import { Button, Card, ErrorText, Input, Label } from "../components/ui";
+import { Button, Card, EmptyState, ErrorText, Spinner } from "../components/ui";
 import type { LayoutContext } from "../components/Layout";
+import type { Account, Category, Transaction } from "../api/types";
+import { formatCurrency } from "../lib/format";
+import { TransactionRow } from "../components/transactions/TransactionRow";
+import { TransactionFormModal } from "../components/transactions/TransactionFormModal";
 
-const ACCOUNT_TYPES = ["CASH", "BANK", "SAVINGS", "CREDIT_CARD", "DEBIT_CARD", "INVESTMENT", "LOAN"] as const;
-
-interface Account {
-  id: string;
-  name: string;
-  type: (typeof ACCOUNT_TYPES)[number];
-  currency: string;
-  balance: number;
-  owner: { id: string; name: string } | null;
-}
-
-function formatCurrency(amount: number, currency: string) {
-  return new Intl.NumberFormat(undefined, { style: "currency", currency }).format(amount);
-}
-
+// A genuine at-a-glance overview. Full account management now lives on Accounts.tsx and
+// the full transaction list/filters/period views live on Transactions.tsx.
 export function Dashboard() {
   const { family, scope } = useOutletContext<LayoutContext>();
   const { user } = useAuth();
+
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [showAddAccount, setShowAddAccount] = useState(false);
+  const [showAddTransaction, setShowAddTransaction] = useState(false);
+  const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
 
-  async function loadAccounts() {
+  async function load() {
     setIsLoading(true);
+    setError(null);
     try {
-      const res = await api.get<Account[]>(`/families/${family.id}/accounts`);
-      setAccounts(res.data);
+      const [accountsRes, categoriesRes, transactionsRes] = await Promise.all([
+        api.get<Account[]>(`/families/${family.id}/accounts`),
+        api.get<Category[]>(`/families/${family.id}/categories`),
+        api.get<Transaction[]>(`/families/${family.id}/transactions`, { params: { limit: 5 } }),
+      ]);
+      setAccounts(accountsRes.data);
+      setCategories(categoriesRes.data);
+      setTransactions(transactionsRes.data);
     } catch (err) {
-      setError(getErrorMessage(err, "Unable to load accounts"));
+      setError(getErrorMessage(err, "Unable to load your dashboard"));
     } finally {
       setIsLoading(false);
     }
   }
 
   useEffect(() => {
-    loadAccounts().catch(() => undefined);
+    load().catch(() => undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [family.id]);
 
-  const visibleAccounts =
-    scope === "family" ? accounts : accounts.filter((a) => a.owner?.id === user!.id);
-  const totalBalance = visibleAccounts.reduce((sum, a) => sum + a.balance, 0);
+  const visibleAccounts = scope === "family" ? accounts : accounts.filter((a) => a.owner?.id === user!.id);
+  const netWorth = visibleAccounts.reduce((sum, a) => sum + (a.balance ?? 0), 0);
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <Card>
-          <p className="text-sm text-slate-500">{scope === "family" ? "Family" : "Your"} total balance</p>
-          <p className="mt-2 text-2xl font-semibold">{formatCurrency(totalBalance, family.currency)}</p>
+          <p className="text-sm text-slate-500">{scope === "family" ? "Family" : "Your"} net worth</p>
+          {isLoading ? (
+            <p className="mt-2 text-2xl font-semibold text-slate-300 dark:text-slate-700">···</p>
+          ) : (
+            <p className="mt-2 text-2xl font-semibold">{formatCurrency(netWorth, family.currency)}</p>
+          )}
+          <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
+            Across {visibleAccounts.length} account{visibleAccounts.length === 1 ? "" : "s"}
+          </p>
         </Card>
-        <Card>
-          <p className="text-sm text-slate-500">Accounts</p>
-          <p className="mt-2 text-2xl font-semibold">{visibleAccounts.length}</p>
-        </Card>
-        <Card>
-          <p className="text-sm text-slate-500">Your role</p>
-          <p className="mt-2 text-2xl font-semibold capitalize">{family.role.toLowerCase()}</p>
+        <Card className="flex flex-col justify-center gap-3">
+          <p className="text-sm text-slate-500">Quick actions</p>
+          <div className="flex flex-wrap gap-2">
+            <Button onClick={() => setShowAddTransaction(true)}>
+              <Plus size={16} className="mr-1.5" />
+              Add transaction
+            </Button>
+            <Link to="/accounts">
+              <Button variant="secondary">Manage accounts</Button>
+            </Link>
+          </div>
         </Card>
       </div>
+
+      <ErrorText>{error}</ErrorText>
 
       <Card>
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Accounts</h2>
-          <Button variant="secondary" onClick={() => setShowAddAccount((v) => !v)}>
-            {showAddAccount ? "Cancel" : "Add account"}
-          </Button>
+          <h2 className="text-lg font-semibold">Recent transactions</h2>
+          <Link
+            to="/transactions"
+            className="flex items-center gap-1 text-sm font-medium text-brand-600 hover:text-brand-700 dark:text-brand-400"
+          >
+            View all
+            <ArrowRight size={14} />
+          </Link>
         </div>
 
-        {showAddAccount && (
-          <AddAccountForm
-            familyId={family.id}
-            onCreated={() => {
-              setShowAddAccount(false);
-              loadAccounts();
-            }}
-          />
-        )}
-
-        <ErrorText>{error}</ErrorText>
-
         {isLoading ? (
-          <p className="text-sm text-slate-400">Loading accounts...</p>
-        ) : visibleAccounts.length === 0 ? (
-          <p className="text-sm text-slate-400">
-            No accounts yet. Add a common family account or a private account of your own to get started.
-          </p>
+          <Spinner label="Loading transactions..." />
+        ) : transactions.length === 0 ? (
+          <EmptyState title="No transactions yet" description="Add your first transaction to see it here." />
         ) : (
-          <ul className="divide-y divide-slate-200 dark:divide-slate-800">
-            {visibleAccounts.map((account) => (
-              <li key={account.id} className="flex items-center justify-between py-3">
-                <div>
-                  <p className="text-sm font-medium">{account.name}</p>
-                  <p className="text-xs text-slate-500">
-                    {account.type.replace("_", " ")} ·{" "}
-                    {account.owner ? account.owner.name : "Shared (Common)"}
-                  </p>
-                </div>
-                <p
-                  className={`text-sm font-semibold ${account.balance < 0 ? "text-expense" : "text-slate-900 dark:text-slate-100"}`}
-                >
-                  {formatCurrency(account.balance, account.currency)}
-                </p>
-              </li>
+          <div className="divide-y divide-slate-200 dark:divide-slate-800">
+            {transactions.map((t) => (
+              <TransactionRow key={t.id} transaction={t} onClick={() => setEditingTransaction(t)} />
             ))}
-          </ul>
+          </div>
         )}
       </Card>
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <Link to="/transactions">
+          <Card className="flex h-full items-center justify-between transition-colors hover:border-brand-300 dark:hover:border-brand-700">
+            <span className="text-sm font-medium">Transactions</span>
+            <ArrowRight size={16} className="text-slate-400" />
+          </Card>
+        </Link>
+        <Link to="/stats">
+          <Card className="flex h-full items-center justify-between transition-colors hover:border-brand-300 dark:hover:border-brand-700">
+            <span className="text-sm font-medium">Stats</span>
+            <ArrowRight size={16} className="text-slate-400" />
+          </Card>
+        </Link>
+        <Link to="/accounts">
+          <Card className="flex h-full items-center justify-between transition-colors hover:border-brand-300 dark:hover:border-brand-700">
+            <span className="text-sm font-medium">Accounts</span>
+            <ArrowRight size={16} className="text-slate-400" />
+          </Card>
+        </Link>
+      </div>
+
+      {(showAddTransaction || editingTransaction) && (
+        <TransactionFormModal
+          familyId={family.id}
+          accounts={accounts}
+          categories={categories}
+          transaction={editingTransaction}
+          onClose={() => {
+            setShowAddTransaction(false);
+            setEditingTransaction(null);
+          }}
+          onSaved={load}
+        />
+      )}
     </div>
-  );
-}
-
-function AddAccountForm({ familyId, onCreated }: { familyId: string; onCreated: () => void }) {
-  const [name, setName] = useState("");
-  const [type, setType] = useState<(typeof ACCOUNT_TYPES)[number]>("BANK");
-  const [isCommon, setIsCommon] = useState(false);
-  const [openingBalance, setOpeningBalance] = useState("0");
-  const [error, setError] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-
-  async function handleSubmit(e: FormEvent) {
-    e.preventDefault();
-    setError(null);
-    setIsSubmitting(true);
-    try {
-      await api.post(`/families/${familyId}/accounts`, {
-        name,
-        type,
-        isCommon,
-        openingBalance: Number(openingBalance) || 0,
-      });
-      onCreated();
-    } catch (err) {
-      setError(getErrorMessage(err, "Unable to create account"));
-    } finally {
-      setIsSubmitting(false);
-    }
-  }
-
-  return (
-    <form onSubmit={handleSubmit} className="mb-6 grid grid-cols-1 gap-3 rounded-xl bg-slate-50 p-4 dark:bg-slate-800/50 sm:grid-cols-2">
-      <div>
-        <Label htmlFor="account-name">Name</Label>
-        <Input id="account-name" required value={name} onChange={(e) => setName(e.target.value)} />
-      </div>
-      <div>
-        <Label htmlFor="account-type">Type</Label>
-        <select
-          id="account-type"
-          value={type}
-          onChange={(e) => setType(e.target.value as typeof type)}
-          className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800"
-        >
-          {ACCOUNT_TYPES.map((t) => (
-            <option key={t} value={t}>
-              {t.replace("_", " ")}
-            </option>
-          ))}
-        </select>
-      </div>
-      <div>
-        <Label htmlFor="opening-balance">Opening balance</Label>
-        <Input
-          id="opening-balance"
-          type="number"
-          step="0.01"
-          value={openingBalance}
-          onChange={(e) => setOpeningBalance(e.target.value)}
-        />
-      </div>
-      <div className="flex items-end gap-2">
-        <input
-          id="is-common"
-          type="checkbox"
-          checked={isCommon}
-          onChange={(e) => setIsCommon(e.target.checked)}
-          className="h-4 w-4 rounded border-slate-300"
-        />
-        <Label htmlFor="is-common" className="mb-0">
-          Shared family (common) account
-        </Label>
-      </div>
-      <div className="sm:col-span-2">
-        <ErrorText>{error}</ErrorText>
-        <Button type="submit" disabled={isSubmitting}>
-          {isSubmitting ? "Adding..." : "Add account"}
-        </Button>
-      </div>
-    </form>
   );
 }

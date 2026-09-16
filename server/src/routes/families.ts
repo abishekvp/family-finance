@@ -8,6 +8,8 @@ import { requireAuth, requireFamilyRole } from "../middleware/auth";
 import { seedDefaultCategories } from "../lib/defaultCategories";
 import { accountsRouter } from "./accounts";
 import { categoriesRouter } from "./categories";
+import { transactionsRouter } from "./transactions";
+import { budgetsRouter } from "./budgets";
 
 export const familiesRouter = Router();
 
@@ -16,6 +18,8 @@ const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 familiesRouter.use(requireAuth);
 familiesRouter.use("/:familyId/accounts", accountsRouter);
 familiesRouter.use("/:familyId/categories", categoriesRouter);
+familiesRouter.use("/:familyId/transactions", transactionsRouter);
+familiesRouter.use("/:familyId/budgets", budgetsRouter);
 
 const createFamilySchema = z.object({
   name: z.string().trim().min(1, "Family name is required").max(100),
@@ -45,6 +49,29 @@ familiesRouter.get(
   requireFamilyRole(Role.VIEWER),
   asyncHandler(async (req, res) => {
     const family = await prisma.family.findUniqueOrThrow({ where: { id: req.params.familyId } });
+    res.json({ ...family, role: req.familyMembership!.role });
+  })
+);
+
+const updateFamilySchema = z.object({
+  name: z.string().trim().min(1, "Family name is required").max(100).optional(),
+  currency: z.string().trim().length(3).optional(),
+});
+
+familiesRouter.patch(
+  "/:familyId",
+  requireFamilyRole(Role.ADMIN),
+  asyncHandler(async (req, res) => {
+    const data = updateFamilySchema.parse(req.body);
+
+    const family = await prisma.family.update({
+      where: { id: req.params.familyId },
+      data: {
+        ...(data.name !== undefined ? { name: data.name } : {}),
+        ...(data.currency !== undefined ? { currency: data.currency } : {}),
+      },
+    });
+
     res.json({ ...family, role: req.familyMembership!.role });
   })
 );
@@ -142,11 +169,10 @@ familiesRouter.post(
       },
     });
 
-    const clientOrigin = process.env.CLIENT_ORIGIN ?? "http://localhost:5173";
     res.status(201).json({
       ...invite,
       // TODO: send this link via an email provider instead of returning it directly.
-      inviteLink: `${clientOrigin}/invites/${invite.token}`,
+      inviteLink: `${req.protocol}://${req.get("host")}/invites/${invite.token}`,
     });
   })
 );
