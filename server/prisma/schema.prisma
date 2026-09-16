@@ -1,0 +1,287 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  MEMBER
+  VIEWER
+}
+
+enum AccountType {
+  CASH
+  BANK
+  SAVINGS
+  CREDIT_CARD
+  DEBIT_CARD
+  INVESTMENT
+  LOAN
+}
+
+enum CategoryType {
+  INCOME
+  EXPENSE
+}
+
+enum TransactionType {
+  INCOME
+  EXPENSE
+  TRANSFER
+}
+
+enum TransactionStatus {
+  PENDING
+  CLEARED
+}
+
+enum InviteStatus {
+  PENDING
+  ACCEPTED
+  EXPIRED
+  REVOKED
+}
+
+enum BudgetPeriod {
+  MONTHLY
+  WEEKLY
+  ANNUAL
+}
+
+model User {
+  id              String    @id @default(cuid())
+  email           String    @unique
+  passwordHash    String
+  name            String
+  avatarUrl       String?
+  emailVerifiedAt DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  memberships       FamilyMembership[]
+  ownedAccounts     Account[]          @relation("AccountOwner")
+  ownedCategories   Category[]         @relation("CategoryOwner")
+  transactions      Transaction[]      @relation("TransactionActor")
+  ownedBudgets      Budget[]           @relation("BudgetOwner")
+  goalContributions GoalContribution[]
+  auditLogs         AuditLog[]
+  refreshTokens     RefreshToken[]
+  sentInvites       Invite[]           @relation("InviteSender")
+}
+
+model RefreshToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  createdAt DateTime  @default(now())
+  revokedAt DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Family {
+  id        String   @id @default(cuid())
+  name      String
+  currency  String   @default("USD")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  memberships  FamilyMembership[]
+  accounts     Account[]
+  categories   Category[]
+  transactions Transaction[]
+  budgets      Budget[]
+  goals        Goal[]
+  invites      Invite[]
+  auditLogs    AuditLog[]
+}
+
+model FamilyMembership {
+  id       String   @id @default(cuid())
+  userId   String
+  familyId String
+  role     Role     @default(MEMBER)
+  joinedAt DateTime @default(now())
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, familyId])
+  @@index([familyId])
+}
+
+model Invite {
+  id          String       @id @default(cuid())
+  familyId    String
+  email       String
+  token       String       @unique
+  role        Role         @default(MEMBER)
+  status      InviteStatus @default(PENDING)
+  invitedById String
+  expiresAt   DateTime
+  createdAt   DateTime     @default(now())
+
+  family    Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  invitedBy User   @relation("InviteSender", fields: [invitedById], references: [id])
+
+  @@index([familyId])
+}
+
+model Account {
+  id                String      @id @default(cuid())
+  familyId          String
+  ownerId           String?
+  name              String
+  type              AccountType
+  currency          String      @default("USD")
+  openingBalance    Decimal     @default(0) @db.Decimal(14, 2)
+  creditLimit       Decimal?    @db.Decimal(14, 2)
+  interestRate      Decimal?    @db.Decimal(6, 3)
+  color             String?
+  icon              String?
+  sortOrder         Int         @default(0)
+  isArchived        Boolean     @default(false)
+  includeInNetWorth Boolean     @default(true)
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+
+  family              Family        @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  owner               User?         @relation("AccountOwner", fields: [ownerId], references: [id])
+  transactions        Transaction[] @relation("TransactionAccount")
+  incomingTransfers   Transaction[] @relation("TransactionTransferTo")
+  goals               Goal[]
+
+  @@index([familyId])
+  @@index([ownerId])
+}
+
+model Category {
+  id         String       @id @default(cuid())
+  familyId   String
+  ownerId    String?
+  parentId   String?
+  name       String
+  type       CategoryType
+  color      String       @default("#6366F1")
+  icon       String       @default("tag")
+  sortOrder  Int          @default(0)
+  isArchived Boolean      @default(false)
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+
+  family       Family        @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  owner        User?         @relation("CategoryOwner", fields: [ownerId], references: [id])
+  parent       Category?     @relation("CategoryChildren", fields: [parentId], references: [id])
+  children     Category[]    @relation("CategoryChildren")
+  transactions Transaction[]
+  budgets      Budget[]
+
+  @@index([familyId])
+  @@index([parentId])
+}
+
+model Transaction {
+  id                  String            @id @default(cuid())
+  familyId            String
+  accountId           String
+  transferToAccountId String?
+  categoryId          String?
+  userId              String
+  type                TransactionType
+  status              TransactionStatus @default(CLEARED)
+  amount              Decimal           @db.Decimal(14, 2)
+  date                DateTime
+  payee               String?
+  notes               String?
+  tags                String[]          @default([])
+  isDeleted           Boolean           @default(false)
+  deletedAt           DateTime?
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+
+  family            Family    @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  account           Account   @relation("TransactionAccount", fields: [accountId], references: [id])
+  transferToAccount Account?  @relation("TransactionTransferTo", fields: [transferToAccountId], references: [id])
+  category          Category? @relation(fields: [categoryId], references: [id])
+  user              User      @relation("TransactionActor", fields: [userId], references: [id])
+
+  @@index([familyId, date])
+  @@index([accountId])
+  @@index([categoryId])
+}
+
+model Budget {
+  id         String       @id @default(cuid())
+  familyId   String
+  ownerId    String?
+  categoryId String
+  period     BudgetPeriod @default(MONTHLY)
+  amount     Decimal      @db.Decimal(14, 2)
+  month      Int?
+  year       Int
+  rollover   Boolean      @default(false)
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+
+  family   Family   @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  owner    User?    @relation("BudgetOwner", fields: [ownerId], references: [id])
+  category Category @relation(fields: [categoryId], references: [id])
+
+  @@unique([categoryId, ownerId, year, month])
+  @@index([familyId])
+}
+
+model Goal {
+  id           String    @id @default(cuid())
+  familyId     String
+  ownerId      String?
+  accountId    String?
+  name         String
+  targetAmount Decimal   @db.Decimal(14, 2)
+  targetDate   DateTime?
+  isCompleted  Boolean   @default(false)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  family        Family             @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  account       Account?           @relation(fields: [accountId], references: [id])
+  contributions GoalContribution[]
+
+  @@index([familyId])
+}
+
+model GoalContribution {
+  id            String   @id @default(cuid())
+  goalId        String
+  userId        String
+  amount        Decimal  @db.Decimal(14, 2)
+  contributedAt DateTime @default(now())
+
+  goal Goal @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([goalId])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  familyId   String
+  actorId    String
+  entityType String
+  entityId   String
+  action     String
+  diff       Json?
+  createdAt  DateTime @default(now())
+
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  actor  User   @relation(fields: [actorId], references: [id])
+
+  @@index([familyId, createdAt])
+}
