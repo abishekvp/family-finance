@@ -1,5 +1,5 @@
 {
-  "buildCommand": "npm run build:client && npm run prisma:generate",
+  "buildCommand": "npm run build",
   "outputDirectory": "client/dist",
   "installCommand": "npm install",
   "functions": {
@@ -9,6 +9,9 @@
     }
   },
   "rewrites": [
-    { "source": "/api/(.*)", "destination": "/api" }
+    {
+      "source": "/api/(.*)",
+      "destination": "/api"
+    }
   ]
 }
