@@ -53,6 +53,97 @@ NODE_ENV=production npm start
 Serves the whole app — API and client — from a single process at http://localhost:4000 (configurable via
 `PORT` in `server/.env`).
 
+## Design system
+
+The web and mobile UIs share one visual language — "Aurora Ledger": frosted glass surfaces over a
+soft aurora gradient, one brand ramp, one set of semantic colors (income/expense/warn/info). See
+[DESIGN.md](DESIGN.md) for tokens, components and patterns before adding UI.
+
+- Web primitives: `client/src/components/ui.tsx` (+ `figures.tsx` for `Money`/`StatTile`)
+- Mobile primitives: `mobile/src/components/ui.tsx`, theme in `mobile/src/theme.ts` /
+  `mobile/src/context/ThemeContext.tsx`
+- Regenerate every app icon (favicons, PWA icons, Android adaptive icon) from the sources in
+  `assets-src/` with `npm run icons`.
+
+The web app is an installable PWA (manifest + offline shell service worker in `client/public/`),
+and `/get-the-app` in the web app offers both the PWA install prompt and a direct Android APK
+download once one has been built (see below).
+
+## Mobile app (Expo / React Native)
+
+```bash
+cd mobile
+npm install
+npm start        # Expo dev server — press a for Android, i for iOS, w for web
+```
+
+The built app talks to `https://family-finance.vercel.app/api` by default (see
+`mobile/src/api/client.ts`). For local development against your own server, override it:
+
+```bash
+EXPO_PUBLIC_API_URL=http://localhost:4000/api npm start
+```
+
+On a physical device or emulator reaching a server on your dev machine, forward the port first:
+`adb reverse tcp:4000 tcp:4000`.
+
+### Building an installable APK
+
+`mobile/android` (and `ios`) are generated, gitignored folders — standard Expo "Continuous
+Native Generation". Regenerate before every native build, and always after changing `app.json`,
+adding a native dependency, or updating the icons in `assets-src/`:
+
+```bash
+cd mobile
+npx expo prebuild --platform android --clean
+```
+
+Then build a debug APK (signed with the auto-generated debug keystore — installable on any
+device with "unknown sources" allowed, not intended for the Play Store). By default this builds
+all four ABIs, which makes for a large APK; restrict it to `arm64-v8a` (covers virtually every
+real phone from the last ~8 years) for a much smaller, still-installable build:
+
+```bash
+cd mobile/android
+./gradlew assembleDebug -PreactNativeArchitectures=arm64-v8a
+```
+
+**Windows only:** the checkout's own path plus the mirrored source-tree suffix CMake/ninja
+append for out-of-tree object files can exceed Windows' 260-character path limit, failing
+native codegen for react-native-gesture-handler/rnscreens/rnsvg with "Filename longer than 260
+characters". `mobile/android/app/build.gradle` already redirects the CMake staging directory to
+`%USERPROFILE%\ffcxx` to avoid this — no action needed unless you've customized that file.
+
+The APK lands at `mobile/android/app/build/outputs/apk/debug/app-debug.apk`. Copy it to
+`client/public/downloads/family-finance.apk` and rebuild the client so `/get-the-app` can serve
+it for download.
+
+## Deploying
+
+### Vercel (the default `EXPO_PUBLIC_API_URL` target)
+
+`vercel.json` and `api/index.ts` at the repo root wrap the same Express app as a single
+serverless function; everything under `/api/*` is routed there, everything else is served as the
+static `client/dist` build. To deploy:
+
+1. Import the repo into Vercel.
+2. Set the project's environment variables: `DATABASE_URL` (a Postgres reachable from Vercel —
+   e.g. Vercel Postgres, Neon, or Supabase), `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`.
+3. Run `npm run prisma:migrate` (or `prisma migrate deploy`) against that database once, from a
+   machine that can reach it — Vercel's build step does not run migrations automatically.
+4. Deploy. `family-finance.vercel.app` (or whatever domain the project gets) is what the mobile
+   app's default `EXPO_PUBLIC_API_URL` expects.
+
+### Self-hosted (single Node process)
+
+```bash
+npm run build
+NODE_ENV=production npm start
+```
+
+Serves the whole app — API and client — from a single process at http://localhost:4000
+(configurable via `PORT` in `server/.env`).
+
 ## What's implemented so far
 
 - Registration/login with JWT access tokens + rotating refresh tokens (httpOnly cookie)

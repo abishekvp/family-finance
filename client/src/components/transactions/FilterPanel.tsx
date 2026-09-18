@@ -1,7 +1,7 @@
-import { X } from "lucide-react";
+import { Wallet } from "lucide-react";
 import type { Account, Transaction } from "../../api/types";
-import { formatCurrency } from "../../lib/format";
-import { Button } from "../ui";
+import { Money } from "../figures";
+import { Checkbox, Popover } from "../ui";
 
 export function FilterPanel({
   accounts,
@@ -14,86 +14,71 @@ export function FilterPanel({
   accounts: Account[];
   transactions: Transaction[];
   selectedAccountIds: Set<string> | null;
-  onChange: (next: Set<string> | null) => void;
+  onChange: (ids: Set<string> | null) => void;
   currency: string;
   onClose: () => void;
 }) {
-  const isSelected = (id: string) => selectedAccountIds === null || selectedAccountIds.has(id);
+  const activeIds = selectedAccountIds ?? new Set(accounts.map((a) => a.id));
 
-  function toggle(id: string) {
-    const current = selectedAccountIds ?? new Set(accounts.map((a) => a.id));
-    const next = new Set(current);
-    if (next.has(id)) {
-      next.delete(id);
-    } else {
-      next.add(id);
-    }
-    // Selecting every account is equivalent to no filter at all.
+  function toggle(accountId: string) {
+    const next = new Set(activeIds);
+    if (next.has(accountId)) next.delete(accountId);
+    else next.add(accountId);
+    // Selecting every account is equivalent to no filter at all — collapse back to null so
+    // newly-added accounts stay visible without the user having to re-check them.
     onChange(next.size === accounts.length ? null : next);
   }
 
-  function totalsFor(accountId: string) {
-    let income = 0;
-    let expense = 0;
-    for (const t of transactions) {
-      if (t.accountId !== accountId) continue;
-      if (t.type === "INCOME") income += t.amount;
-      else if (t.type === "EXPENSE") expense += t.amount;
-    }
-    return { income, expense };
+  function balanceFor(accountId: string) {
+    return transactions
+      .filter((t) => t.accountId === accountId)
+      .reduce((sum, t) => sum + (t.type === "INCOME" ? t.amount : t.type === "EXPENSE" ? -t.amount : 0), 0);
   }
 
   return (
-    <div className="absolute right-0 top-full z-40 mt-2 w-80 max-w-[90vw] rounded-2xl border border-slate-200 bg-white p-4 shadow-xl dark:border-slate-800 dark:bg-slate-900">
+    <Popover onClose={onClose} className="w-80">
       <div className="mb-3 flex items-center justify-between">
-        <h3 className="text-sm font-semibold">Filter accounts</h3>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close filter"
-          className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
-        >
-          <X size={16} />
-        </button>
-      </div>
-
-      <div className="mb-3 flex gap-2">
-        <Button variant="ghost" className="!px-2 !py-1 text-xs" onClick={() => onChange(null)}>
-          Select all
-        </Button>
-        <Button variant="ghost" className="!px-2 !py-1 text-xs" onClick={() => onChange(new Set())}>
-          Clear all
-        </Button>
+        <p className="text-sm font-semibold text-ink">Accounts</p>
+        <div className="flex gap-3 text-xs font-semibold text-brand-600">
+          <button type="button" onClick={() => onChange(null)} className="hover:underline">
+            Select all
+          </button>
+          <button type="button" onClick={() => onChange(new Set())} className="hover:underline">
+            Clear
+          </button>
+        </div>
       </div>
 
       {accounts.length === 0 ? (
-        <p className="text-sm text-slate-400">No accounts to filter yet.</p>
+        <p className="py-4 text-center text-xs text-ink-subtle">No accounts to filter by yet.</p>
       ) : (
-        <ul className="max-h-80 space-y-1 overflow-y-auto">
-          {accounts.map((account) => {
-            const { income, expense } = totalsFor(account.id);
-            return (
-              <li key={account.id}>
-                <label className="flex cursor-pointer items-center justify-between gap-2 rounded-lg px-2 py-2 hover:bg-slate-50 dark:hover:bg-slate-800/60">
-                  <span className="flex min-w-0 items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={isSelected(account.id)}
-                      onChange={() => toggle(account.id)}
-                      className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500 dark:border-slate-600"
-                    />
-                    <span className="truncate text-sm">{account.name}</span>
+        <ul className="max-h-72 space-y-0.5 overflow-y-auto">
+          {accounts.map((account) => (
+            <li key={account.id}>
+              <label className="flex cursor-pointer items-center gap-3 rounded-xl px-2 py-2 hover:bg-surface-sunken">
+                <Checkbox
+                  checked={activeIds.has(account.id)}
+                  onChange={() => toggle(account.id)}
+                  label=""
+                  className="flex-none"
+                />
+                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-brand-soft text-brand-600">
+                  <Wallet size={14} />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-medium text-ink">{account.name}</span>
+                  <span className="block truncate text-xs text-ink-subtle">
+                    {account.owner ? account.owner.name : "Shared"}
                   </span>
-                  <span className="shrink-0 text-right text-xs">
-                    <span className="block text-income">+{formatCurrency(income, account.currency || currency)}</span>
-                    <span className="block text-expense">-{formatCurrency(expense, account.currency || currency)}</span>
-                  </span>
-                </label>
-              </li>
-            );
-          })}
+                </span>
+                <span className="shrink-0 text-xs font-semibold tnum text-ink-muted">
+                  <Money amount={balanceFor(account.id)} currency={currency} signed />
+                </span>
+              </label>
+            </li>
+          ))}
         </ul>
       )}
-    </div>
+    </Popover>
   );
 }

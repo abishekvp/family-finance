@@ -108,7 +108,7 @@ export default {
         inset: "inset 0 1px 0 0 rgb(255 255 255 / var(--c-sheen))",
       },
       backdropBlur: {
-        glass: "22px",
+        glass: "12px",
       },
       transitionTimingFunction: {
         swift: "cubic-bezier(0.22, 1, 0.36, 1)",
@@ -116,9 +116,9 @@ export default {
       },
       keyframes: {
         "aurora-drift": {
-          "0%, 100%": { transform: "translate3d(0, 0, 0) scale(1)" },
-          "33%": { transform: "translate3d(4%, -5%, 0) scale(1.08)" },
-          "66%": { transform: "translate3d(-4%, 4%, 0) scale(0.95)" },
+          "0%, 100%": { transform: "translate3d(0, 0, 0)" },
+          "33%": { transform: "translate3d(4%, -5%, 0)" },
+          "66%": { transform: "translate3d(-4%, 4%, 0)" },
         },
         "fade-in": {
           from: { opacity: "0" },

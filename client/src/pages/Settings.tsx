@@ -1,8 +1,9 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { useOutletContext } from "react-router-dom";
+import { Link, useOutletContext } from "react-router-dom";
+import { CalendarCog, Coins, Smartphone } from "lucide-react";
 import { api } from "../api/client";
 import { getErrorMessage } from "../api/errors";
-import { Button, Card, ErrorText, Input, Label } from "../components/ui";
+import { Button, Card, CardHeader, ErrorText, Field, Input, Radio, Toggle, useToast } from "../components/ui";
 import type { LayoutContext } from "../components/Layout";
 import { loadPrefs, savePrefs, type LandingView, type Prefs, type WeekStart } from "../lib/prefs";
 import { CategoryManager } from "../components/settings/CategoryManager";
@@ -14,10 +15,10 @@ const WEEK_START_OPTIONS: WeekStart[] = ["Sunday", "Monday"];
 export function Settings() {
   const { family } = useOutletContext<LayoutContext>();
   const isAdmin = family.role === "ADMIN";
+  const toast = useToast();
 
   const [currency, setCurrency] = useState(family.currency);
   const [currencyError, setCurrencyError] = useState<string | null>(null);
-  const [currencySuccess, setCurrencySuccess] = useState(false);
   const [isSavingCurrency, setIsSavingCurrency] = useState(false);
 
   const [prefs, setPrefs] = useState<Prefs>(loadPrefs);
@@ -37,11 +38,10 @@ export function Settings() {
   async function handleCurrencySubmit(e: FormEvent) {
     e.preventDefault();
     setCurrencyError(null);
-    setCurrencySuccess(false);
     setIsSavingCurrency(true);
     try {
       await api.patch(`/families/${family.id}`, { currency: currency.toUpperCase() });
-      setCurrencySuccess(true);
+      toast("Currency updated");
     } catch (err) {
       setCurrencyError(getErrorMessage(err, "Unable to update currency"));
     } finally {
@@ -50,91 +50,96 @@ export function Settings() {
   }
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
+    <div className="mx-auto max-w-3xl space-y-5">
       <Card>
-        <h2 className="mb-4 text-lg font-semibold">Currency</h2>
+        <CardHeader title="Currency" icon={<Coins size={17} />} />
         {isAdmin ? (
           <form onSubmit={handleCurrencySubmit} className="flex flex-wrap items-end gap-3">
-            <div>
-              <Label htmlFor="family-currency">Family currency (ISO code)</Label>
-              <Input
-                id="family-currency"
-                required
-                maxLength={3}
-                value={currency}
-                onChange={(e) => {
-                  setCurrency(e.target.value.toUpperCase());
-                  setCurrencySuccess(false);
-                }}
-                className="w-24 uppercase"
-              />
-            </div>
-            <Button type="submit" disabled={isSavingCurrency}>
-              {isSavingCurrency ? "Saving..." : "Save"}
+            <Field label="Family currency (ISO code)" className="w-28">
+              {(props) => (
+                <Input
+                  {...props}
+                  required
+                  maxLength={3}
+                  value={currency}
+                  onChange={(e) => setCurrency(e.target.value.toUpperCase())}
+                  className="uppercase"
+                />
+              )}
+            </Field>
+            <Button type="submit" loading={isSavingCurrency}>
+              Save
             </Button>
-            {currencySuccess && <p className="text-sm text-income">Saved.</p>}
           </form>
         ) : (
-          <p className="text-sm text-slate-500">
-            Current currency: <span className="font-medium">{family.currency}</span>. Only an admin can change it.
+          <p className="text-sm text-ink-muted">
+            Current currency: <span className="font-semibold text-ink">{family.currency}</span>. Only an admin can
+            change it.
           </p>
         )}
         <ErrorText>{currencyError}</ErrorText>
       </Card>
 
       <Card>
-        <h2 className="mb-4 text-lg font-semibold">Transactions preferences</h2>
+        <CardHeader title="Transaction preferences" icon={<CalendarCog size={17} />} />
 
-        <p className="mb-1.5 text-sm font-medium text-slate-700 dark:text-slate-300">Default landing view</p>
-        <div className="mb-4 flex gap-4">
-          {LANDING_VIEW_OPTIONS.map((option) => (
-            <label key={option} className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
-              <input
-                type="radio"
-                name="default-view"
-                checked={prefs.defaultView === option}
-                onChange={() => updatePrefs({ defaultView: option })}
-                className="h-4 w-4 border-slate-300 text-brand-600 focus:ring-brand-500 dark:border-slate-600"
-              />
-              {option}
-            </label>
-          ))}
-        </div>
+        <div className="space-y-5">
+          <div>
+            <p className="mb-2 text-sm font-medium text-ink">Default landing view</p>
+            <div className="flex gap-5">
+              {LANDING_VIEW_OPTIONS.map((option) => (
+                <Radio
+                  key={option}
+                  name="default-view"
+                  checked={prefs.defaultView === option}
+                  onChange={() => updatePrefs({ defaultView: option })}
+                  label={option}
+                />
+              ))}
+            </div>
+          </div>
 
-        <p className="mb-1.5 text-sm font-medium text-slate-700 dark:text-slate-300">Week starts on</p>
-        <div className="mb-4 flex gap-4">
-          {WEEK_START_OPTIONS.map((option) => (
-            <label key={option} className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
-              <input
-                type="radio"
-                name="week-start"
-                checked={prefs.weekStart === option}
-                onChange={() => updatePrefs({ weekStart: option })}
-                className="h-4 w-4 border-slate-300 text-brand-600 focus:ring-brand-500 dark:border-slate-600"
-              />
-              {option}
-            </label>
-          ))}
-        </div>
+          <div>
+            <p className="mb-2 text-sm font-medium text-ink">Week starts on</p>
+            <div className="flex gap-5">
+              {WEEK_START_OPTIONS.map((option) => (
+                <Radio
+                  key={option}
+                  name="week-start"
+                  checked={prefs.weekStart === option}
+                  onChange={() => updatePrefs({ weekStart: option })}
+                  label={option}
+                />
+              ))}
+            </div>
+          </div>
 
-        <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
+          <Toggle
             checked={prefs.carryOver}
-            onChange={(e) => updatePrefs({ carryOver: e.target.checked })}
-            className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500 dark:border-slate-600"
+            onChange={(next) => updatePrefs({ carryOver: next })}
+            label="Carry-over balances"
+            description="Show a running balance instead of a blank state for periods with no transactions."
           />
-          <span>
-            <span className="font-medium text-slate-700 dark:text-slate-300">Carry-over balances</span>
-            <span className="block text-xs text-slate-400 dark:text-slate-500">
-              Show a running balance instead of a blank state for periods with no transactions.
-            </span>
-          </span>
-        </label>
+        </div>
       </Card>
 
       <CategoryManager familyId={family.id} />
       <BudgetManager familyId={family.id} currency={family.currency} />
+
+      <Card>
+        <CardHeader
+          title="Get the app"
+          subtitle="Install Family Finance on your phone"
+          icon={<Smartphone size={17} />}
+          actions={
+            <Link to="/get-the-app">
+              <Button variant="secondary" size="sm">
+                Open
+              </Button>
+            </Link>
+          }
+        />
+      </Card>
     </div>
   );
 }

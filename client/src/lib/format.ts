@@ -44,6 +44,16 @@ export function safePercent(part: number, total: number) {
   return Math.min(100, Math.max(0, (part / total) * 100));
 }
 
+/** Just the symbol/code for a currency (₹, $, €…) — for prefixing a raw numeric input. */
+export function currencySymbol(currency: string) {
+  try {
+    const parts = new Intl.NumberFormat(undefined, { style: "currency", currency }).formatToParts(0);
+    return parts.find((p) => p.type === "currency")?.value ?? currency;
+  } catch {
+    return currency;
+  }
+}
+
 export function initials(name: string) {
   const trimmed = name.trim();
   return trimmed.length > 0 ? trimmed.charAt(0).toUpperCase() : "?";

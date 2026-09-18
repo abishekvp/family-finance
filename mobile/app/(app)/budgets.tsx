@@ -1,17 +1,20 @@
 import { useCallback, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, Switch, Text, View } from "react-native";
+import { Pressable, ScrollView, Text, View } from "react-native";
 import { useFocusEffect } from "expo-router";
+import { ChevronLeft, ChevronRight, PiggyBank } from "lucide-react-native";
 import { api } from "../../src/api/client";
 import type { Budget, Category } from "../../src/api/types";
 import { useAuth } from "../../src/context/AuthContext";
+import { useTheme } from "../../src/context/ThemeContext";
 import { getErrorMessage } from "../../src/api/errors";
-import { Button, Card, ErrorText, Input, Label, colors, pillStyle, pillTextStyle } from "../../src/components/ui";
-import { formatCurrency, safePercent } from "../../src/lib/format";
+import { Button, Card, Dot, EmptyState, ErrorText, Field, IconButton, Input, Money, ProgressBar, SkeletonRows, Toggle } from "../../src/components/ui";
+import { safePercent } from "../../src/lib/format";
 import { MONTH_LABELS } from "../../src/lib/dateUtils";
 import { CategoryPicker } from "../../src/components/CategoryPicker";
 
 export default function Budgets() {
   const { user } = useAuth();
+  const { colors } = useTheme();
   const family = user!.families[0];
   const [anchor, setAnchor] = useState(() => {
     const now = new Date();
@@ -71,23 +74,24 @@ export default function Budgets() {
   const availableCategories = categories.filter((c) => !budgetedCategoryIds.has(c.id));
 
   return (
-    <ScrollView style={{ backgroundColor: colors.slate50 }} contentContainerStyle={{ padding: 16, gap: 16 }}>
-      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 20 }}>
-        <Pressable hitSlop={10} onPress={() => shiftMonth(-1)}>
-          <Text style={{ fontSize: 18, color: colors.slate500 }}>‹</Text>
-        </Pressable>
-        <Text style={{ fontWeight: "700", fontSize: 15 }}>
+    <ScrollView style={{ backgroundColor: colors.canvas }} contentContainerStyle={{ padding: 16, gap: 16 }}>
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 }}>
+        <IconButton onPress={() => shiftMonth(-1)}>
+          <ChevronLeft size={19} color={colors.inkMuted} />
+        </IconButton>
+        <Text style={{ fontWeight: "800", fontSize: 15, color: colors.ink, minWidth: 140, textAlign: "center" }}>
           {MONTH_LABELS[anchor.month - 1]} {anchor.year}
         </Text>
-        <Pressable hitSlop={10} onPress={() => shiftMonth(1)}>
-          <Text style={{ fontSize: 18, color: colors.slate500 }}>›</Text>
-        </Pressable>
+        <IconButton onPress={() => shiftMonth(1)}>
+          <ChevronRight size={19} color={colors.inkMuted} />
+        </IconButton>
       </View>
 
       <View style={{ flexDirection: "row", justifyContent: "flex-end" }}>
         <Button
           title={showAddForm ? "Cancel" : "Add budget"}
           variant="secondary"
+          size="sm"
           onPress={() => {
             setEditing(null);
             setShowAddForm((v) => !v);
@@ -113,13 +117,9 @@ export default function Budgets() {
       <ErrorText>{deleteError}</ErrorText>
 
       {isLoading ? (
-        <ActivityIndicator color={colors.brand600} size="large" style={{ marginTop: 40 }} />
+        <SkeletonRows rows={3} />
       ) : budgets.length === 0 ? (
-        <Card>
-          <Text style={{ color: colors.slate400, fontSize: 13, textAlign: "center" }}>
-            No budgets set for {MONTH_LABELS[anchor.month - 1]} {anchor.year} yet.
-          </Text>
-        </Card>
+        <EmptyState icon={<PiggyBank size={20} color={colors.brand600} />} title="No budgets set" description={`Nothing budgeted for ${MONTH_LABELS[anchor.month - 1]} ${anchor.year} yet.`} />
       ) : (
         <View style={{ gap: 12 }}>
           {budgets.map((b) => {
@@ -142,40 +142,39 @@ export default function Budgets() {
             return (
               <Card key={b.id} style={{ gap: 10 }}>
                 <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-                  <Text style={{ fontWeight: "600", fontSize: 15 }}>{b.category.name}</Text>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flex: 1 }}>
+                    <Dot color={b.category.color} />
+                    <Text style={{ fontWeight: "700", fontSize: 14.5, color: colors.ink }} numberOfLines={1}>
+                      {b.category.name}
+                    </Text>
+                  </View>
                   <View style={{ flexDirection: "row", gap: 14 }}>
                     <Pressable onPress={() => setEditing(b)} hitSlop={8}>
-                      <Text style={{ color: colors.brand600, fontSize: 12, fontWeight: "600" }}>Edit</Text>
+                      <Text style={{ color: colors.brand600, fontSize: 12, fontWeight: "700" }}>Edit</Text>
                     </Pressable>
                     {confirmDeleteId === b.id ? (
-                      <View style={{ flexDirection: "row", gap: 10 }}>
-                        <Pressable onPress={() => handleDelete(b.id)} hitSlop={8}>
-                          <Text style={{ color: colors.red600, fontSize: 12, fontWeight: "700" }}>Confirm</Text>
-                        </Pressable>
-                        <Pressable onPress={() => setConfirmDeleteId(null)} hitSlop={8}>
-                          <Text style={{ color: colors.slate500, fontSize: 12 }}>Cancel</Text>
-                        </Pressable>
-                      </View>
+                      <Button title="Confirm" size="sm" variant="danger" onPress={() => handleDelete(b.id)} />
                     ) : (
                       <Pressable onPress={() => setConfirmDeleteId(b.id)} hitSlop={8}>
-                        <Text style={{ color: colors.slate400, fontSize: 12, fontWeight: "600" }}>Delete</Text>
+                        <Text style={{ color: colors.inkSubtle, fontSize: 12, fontWeight: "700" }}>Delete</Text>
                       </Pressable>
                     )}
                   </View>
                 </View>
                 <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
-                  <Text style={{ fontSize: 12, color: colors.slate500 }}>
-                    {formatCurrency(b.spent, family.currency)} of {formatCurrency(b.amount, family.currency)}
+                  <Text style={{ fontSize: 12, color: colors.inkSubtle }}>
+                    {safePercent(b.spent, b.amount).toFixed(0)}% used
                   </Text>
-                  <Text style={{ fontSize: 12, color: over ? colors.red600 : colors.green600, fontWeight: "600" }}>
+                  <Text style={{ fontSize: 12, color: over ? colors.expense : colors.income, fontWeight: "700" }}>
                     {over ? "Over by " : "Remaining "}
-                    {formatCurrency(Math.abs(b.remaining), family.currency)}
                   </Text>
                 </View>
-                <View style={{ height: 8, borderRadius: 4, backgroundColor: colors.slate200, overflow: "hidden" }}>
-                  <View style={{ width: `${pct}%`, height: "100%", backgroundColor: over ? colors.red600 : colors.brand600 }} />
+                <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+                  <Money amount={b.spent} currency={family.currency} style={{ fontSize: 12, color: colors.inkSubtle }} />
+                  <Money amount={Math.abs(b.remaining)} currency={family.currency} tone={over ? "expense" : "income"} style={{ fontSize: 12, fontWeight: "700" }} />
                 </View>
-                {b.rollover && <Text style={{ fontSize: 11, color: colors.slate400 }}>Rollover enabled</Text>}
+                <ProgressBar value={pct / 100} tone={over ? "expense" : "brand"} />
+                {b.rollover && <Text style={{ fontSize: 11, color: colors.inkSubtle }}>Rollover enabled</Text>}
               </Card>
             );
           })}
@@ -200,6 +199,7 @@ function BudgetForm({
   onDone: () => void;
   onCancel: () => void;
 }) {
+  const { colors } = useTheme();
   const [categoryId, setCategoryId] = useState<string | null>(null);
   const [amount, setAmount] = useState("");
   const [rollover, setRollover] = useState(false);
@@ -214,15 +214,7 @@ function BudgetForm({
     setError(null);
     setIsSubmitting(true);
     try {
-      await api.post(`/families/${familyId}/budgets`, {
-        categoryId,
-        amount: amountValue,
-        year,
-        month,
-        period: "MONTHLY",
-        rollover,
-        isCommon,
-      });
+      await api.post(`/families/${familyId}/budgets`, { categoryId, amount: amountValue, year, month, period: "MONTHLY", rollover, isCommon });
       onDone();
     } catch (err) {
       setError(getErrorMessage(err, "Unable to create budget"));
@@ -232,39 +224,33 @@ function BudgetForm({
   }
 
   return (
-    <Card style={{ gap: 12 }}>
-      <View>
-        <Label>Category</Label>
+    <Card style={{ gap: 14 }}>
+      <Field label="Category">
         {categories.length === 0 ? (
-          <Text style={{ color: colors.slate400, fontSize: 13 }}>
-            All expense categories already have a budget this month.
-          </Text>
+          <Text style={{ color: colors.inkSubtle, fontSize: 13 }}>All expense categories already have a budget this month.</Text>
         ) : (
           <CategoryPicker categories={categories} selectedId={categoryId} onSelect={setCategoryId} />
         )}
-      </View>
+      </Field>
 
-      <View>
-        <Label>Monthly amount</Label>
+      <Field label="Monthly amount">
         <Input keyboardType="decimal-pad" value={amount} onChangeText={setAmount} placeholder="0.00" />
+      </Field>
+
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+        <Text style={{ fontSize: 13, fontWeight: "600", color: colors.ink }}>Roll over unused amount</Text>
+        <Toggle value={rollover} onChange={setRollover} />
       </View>
 
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-        <Label>Roll over unused amount</Label>
-        <Switch value={rollover} onValueChange={setRollover} />
-      </View>
-
-      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-        <Label>Shared family budget</Label>
-        <Pressable onPress={() => setIsCommon((v) => !v)} style={[pillStyle(isCommon), { paddingHorizontal: 16 }]}>
-          <Text style={pillTextStyle(isCommon)}>{isCommon ? "Shared" : "Private"}</Text>
-        </Pressable>
+        <Text style={{ fontSize: 13, fontWeight: "600", color: colors.ink }}>Shared family budget</Text>
+        <Toggle value={isCommon} onChange={setIsCommon} />
       </View>
 
       <ErrorText>{error}</ErrorText>
       <View style={{ flexDirection: "row", gap: 8 }}>
         <View style={{ flex: 1 }}>
-          <Button title={isSubmitting ? "Saving..." : "Add budget"} onPress={handleSubmit} disabled={isSubmitting || !canSubmit} />
+          <Button title="Add budget" loading={isSubmitting} disabled={!canSubmit} onPress={handleSubmit} />
         </View>
         <View style={{ flex: 1 }}>
           <Button title="Cancel" variant="secondary" onPress={onCancel} />
@@ -285,6 +271,7 @@ function BudgetEditForm({
   onDone: () => void;
   onCancel: () => void;
 }) {
+  const { colors } = useTheme();
   const [amount, setAmount] = useState(String(budget.amount));
   const [rollover, setRollover] = useState(budget.rollover);
   const [error, setError] = useState<string | null>(null);
@@ -307,20 +294,19 @@ function BudgetEditForm({
   }
 
   return (
-    <Card style={{ gap: 12 }}>
-      <Text style={{ fontWeight: "700" }}>{budget.category.name}</Text>
-      <View>
-        <Label>Monthly amount</Label>
+    <Card style={{ gap: 14 }}>
+      <Text style={{ fontWeight: "800", color: colors.ink }}>{budget.category.name}</Text>
+      <Field label="Monthly amount">
         <Input keyboardType="decimal-pad" value={amount} onChangeText={setAmount} />
-      </View>
+      </Field>
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-        <Label>Roll over unused amount</Label>
-        <Switch value={rollover} onValueChange={setRollover} />
+        <Text style={{ fontSize: 13, fontWeight: "600", color: colors.ink }}>Roll over unused amount</Text>
+        <Toggle value={rollover} onChange={setRollover} />
       </View>
       <ErrorText>{error}</ErrorText>
       <View style={{ flexDirection: "row", gap: 8 }}>
         <View style={{ flex: 1 }}>
-          <Button title={isSubmitting ? "Saving..." : "Save changes"} onPress={handleSubmit} disabled={isSubmitting || !canSubmit} />
+          <Button title="Save changes" loading={isSubmitting} disabled={!canSubmit} onPress={handleSubmit} />
         </View>
         <View style={{ flex: 1 }}>
           <Button title="Cancel" variant="secondary" onPress={onCancel} />

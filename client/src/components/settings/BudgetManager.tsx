@@ -1,10 +1,25 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { Pencil, Plus, Trash2 } from "lucide-react";
+import { Pencil, PiggyBank, Plus, Trash2 } from "lucide-react";
 import { api } from "../../api/client";
 import { getErrorMessage } from "../../api/errors";
-import { Button, Card, EmptyState, ErrorText, Input, Label, Modal, Select, Spinner } from "../ui";
+import {
+  Button,
+  Card,
+  CardHeader,
+  Dot,
+  EmptyState,
+  ErrorText,
+  Field,
+  IconButton,
+  Input,
+  Modal,
+  ProgressBar,
+  Select,
+  SkeletonRows,
+  Toggle,
+} from "../ui";
+import { Money } from "../figures";
 import type { Budget, Category } from "../../api/types";
-import { formatCurrency } from "../../lib/format";
 import { MONTH_LABELS } from "../../lib/dateUtils";
 
 export function BudgetManager({ familyId, currency }: { familyId: string; currency: string }) {
@@ -48,6 +63,14 @@ export function BudgetManager({ familyId, currency }: { familyId: string; curren
     [expenseCategories, budgetedCategoryIds]
   );
 
+  const summary = useMemo(
+    () => ({
+      budgeted: budgets.reduce((s, b) => s + b.amount, 0),
+      spent: budgets.reduce((s, b) => s + b.spent, 0),
+    }),
+    [budgets]
+  );
+
   async function handleDelete(budgetId: string) {
     setDeleteError(null);
     try {
@@ -61,102 +84,122 @@ export function BudgetManager({ familyId, currency }: { familyId: string; curren
 
   return (
     <Card>
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-lg font-semibold">Budgets</h2>
-        <div className="flex flex-wrap items-center gap-2">
-          <Select value={month} onChange={(e) => setMonth(Number(e.target.value))} className="!w-auto">
-            {MONTH_LABELS.map((label, index) => (
-              <option key={label} value={index + 1}>
-                {label}
-              </option>
-            ))}
-          </Select>
-          <Select value={year} onChange={(e) => setYear(Number(e.target.value))} className="!w-auto">
-            {Array.from({ length: 6 }, (_, i) => now.getFullYear() - 2 + i).map((y) => (
-              <option key={y} value={y}>
-                {y}
-              </option>
-            ))}
-          </Select>
-          <Button variant="secondary" onClick={() => setEditing("new")}>
-            <Plus size={16} className="mr-1.5" />
-            Add
-          </Button>
-        </div>
-      </div>
+      <CardHeader
+        title="Budgets"
+        subtitle={budgets.length > 0 ? `${MONTH_LABELS[month - 1]} ${year}` : undefined}
+        icon={<PiggyBank size={17} />}
+        actions={
+          <>
+            <Select value={month} onChange={(e) => setMonth(Number(e.target.value))} className="!h-9 !text-xs">
+              {MONTH_LABELS.map((label, index) => (
+                <option key={label} value={index + 1}>
+                  {label}
+                </option>
+              ))}
+            </Select>
+            <Select value={year} onChange={(e) => setYear(Number(e.target.value))} className="!h-9 !text-xs">
+              {Array.from({ length: 6 }, (_, i) => now.getFullYear() - 2 + i).map((y) => (
+                <option key={y} value={y}>
+                  {y}
+                </option>
+              ))}
+            </Select>
+            <Button variant="secondary" size="sm" icon={<Plus size={14} />} onClick={() => setEditing("new")}>
+              Add
+            </Button>
+          </>
+        }
+      />
 
       <ErrorText>{error || deleteError}</ErrorText>
 
       {isLoading ? (
-        <Spinner label="Loading budgets..." />
+        <SkeletonRows rows={3} />
       ) : budgets.length === 0 ? (
-        <EmptyState title="No budgets for this month" description="Add a budget to track spending against a category." />
+        <EmptyState
+          title="No budgets for this month"
+          description="Add a budget to track spending against a category."
+          icon={<PiggyBank size={18} />}
+        />
       ) : (
-        <ul className="divide-y divide-slate-200 dark:divide-slate-800">
-          {budgets.map((budget) => {
-            const pct = budget.amount > 0 ? Math.min(1, budget.spent / budget.amount) : 0;
-            const over = budget.spent > budget.amount;
-            return (
-              <li key={budget.id} className="py-3">
-                <div className="mb-1.5 flex items-center justify-between gap-3">
-                  <span className="flex min-w-0 items-center gap-2 text-sm font-medium">
-                    <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: budget.category.color }} />
-                    <span className="truncate">{budget.category.name}</span>
-                  </span>
-                  <span className="flex shrink-0 items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setEditing(budget)}
-                      aria-label={`Edit ${budget.category.name} budget`}
-                      className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
-                    >
-                      <Pencil size={14} />
-                    </button>
-                    {deletingId === budget.id ? (
-                      <span className="flex items-center gap-1.5 text-xs">
-                        <button
-                          type="button"
-                          onClick={() => handleDelete(budget.id)}
-                          className="rounded-md bg-red-600 px-2 py-1 font-medium text-white hover:bg-red-700"
+        <>
+          {summary.budgeted > 0 && (
+            <div className="mb-4 rounded-xl bg-surface-sunken/60 px-3.5 py-2.5 text-xs">
+              <div className="mb-1.5 flex items-center justify-between font-semibold text-ink">
+                <span>
+                  <Money amount={summary.spent} currency={currency} /> of{" "}
+                  <Money amount={summary.budgeted} currency={currency} /> spent
+                </span>
+                <span className={summary.spent > summary.budgeted ? "text-expense" : "text-ink-subtle"}>
+                  {summary.budgeted > 0 ? Math.round((summary.spent / summary.budgeted) * 100) : 0}%
+                </span>
+              </div>
+              <ProgressBar
+                value={summary.budgeted > 0 ? summary.spent / summary.budgeted : 0}
+                tone={summary.spent > summary.budgeted ? "expense" : "brand"}
+              />
+            </div>
+          )}
+
+          <ul className="divide-y divide-line">
+            {budgets.map((budget) => {
+              const pct = budget.amount > 0 ? budget.spent / budget.amount : 0;
+              const over = budget.spent > budget.amount;
+              const remaining = budget.amount - budget.spent;
+              return (
+                <li key={budget.id} className="py-3.5">
+                  <div className="mb-2 flex items-center justify-between gap-3">
+                    <span className="flex min-w-0 items-center gap-2 text-sm font-semibold text-ink">
+                      <Dot color={budget.category.color} />
+                      <span className="truncate">{budget.category.name}</span>
+                    </span>
+                    <span className="flex shrink-0 items-center gap-1">
+                      <IconButton label={`Edit ${budget.category.name} budget`} onClick={() => setEditing(budget)}>
+                        <Pencil size={14} />
+                      </IconButton>
+                      {deletingId === budget.id ? (
+                        <span className="flex items-center gap-1.5">
+                          <Button size="sm" variant="danger" onClick={() => handleDelete(budget.id)}>
+                            Confirm
+                          </Button>
+                          <Button size="sm" variant="ghost" onClick={() => setDeletingId(null)}>
+                            Cancel
+                          </Button>
+                        </span>
+                      ) : (
+                        <IconButton
+                          label={`Delete ${budget.category.name} budget`}
+                          tone="danger"
+                          onClick={() => setDeletingId(budget.id)}
                         >
-                          Confirm
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setDeletingId(null)}
-                          className="rounded-md bg-slate-100 px-2 py-1 font-medium text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
-                        >
-                          Cancel
-                        </button>
-                      </span>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => setDeletingId(budget.id)}
-                        aria-label={`Delete ${budget.category.name} budget`}
-                        className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-red-600 dark:hover:bg-slate-800 dark:hover:text-red-400"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    )}
-                  </span>
-                </div>
-                <div className="mb-1 flex items-center justify-between text-xs">
-                  <span className={over ? "text-expense" : "text-slate-500"}>
-                    {formatCurrency(budget.spent, currency)} / {formatCurrency(budget.amount, currency)}
-                  </span>
-                  {budget.rollover && <span className="text-slate-400 dark:text-slate-500">Rollover on</span>}
-                </div>
-                <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
-                  <div
-                    className={`h-full rounded-full ${over ? "bg-expense" : "bg-brand-500"}`}
-                    style={{ width: `${pct * 100}%` }}
-                  />
-                </div>
-              </li>
-            );
-          })}
-        </ul>
+                          <Trash2 size={14} />
+                        </IconButton>
+                      )}
+                    </span>
+                  </div>
+                  <div className="mb-1.5 flex items-center justify-between text-xs">
+                    <span className={over ? "tnum text-expense" : "tnum text-ink-subtle"}>
+                      <Money amount={budget.spent} currency={currency} /> / <Money amount={budget.amount} currency={currency} />
+                    </span>
+                    <span className={over ? "font-semibold text-expense" : "text-ink-subtle"}>
+                      {over ? (
+                        <>
+                          <Money amount={Math.abs(remaining)} currency={currency} /> over
+                        </>
+                      ) : (
+                        <>
+                          <Money amount={remaining} currency={currency} /> left
+                        </>
+                      )}
+                    </span>
+                  </div>
+                  <ProgressBar value={pct} tone={over ? "expense" : "brand"} />
+                  {budget.rollover && <p className="mt-1.5 text-2xs text-ink-subtle">Rollover on</p>}
+                </li>
+              );
+            })}
+          </ul>
+        </>
       )}
 
       {editing && (
@@ -230,73 +273,61 @@ function BudgetFormModal({
   }
 
   return (
-    <Modal title={isEdit ? "Edit budget" : "Add budget"} onClose={onClose}>
-      <form onSubmit={handleSubmit} className="space-y-4">
-        {!isEdit && (
-          <div>
-            <Label htmlFor="budget-category">Category</Label>
-            {categories.length === 0 ? (
-              <p className="text-sm text-slate-400 dark:text-slate-500">
-                All expense categories already have a budget for this month.
-              </p>
-            ) : (
-              <Select id="budget-category" required value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
-                {categories.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </Select>
-            )}
-          </div>
-        )}
-        <div>
-          <Label htmlFor="budget-amount">Monthly amount</Label>
-          <Input
-            id="budget-amount"
-            type="number"
-            step="0.01"
-            min="0.01"
-            required
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-          />
-        </div>
-        <div className="flex items-center gap-2">
-          <input
-            id="budget-rollover"
-            type="checkbox"
-            checked={rollover}
-            onChange={(e) => setRollover(e.target.checked)}
-            className="h-4 w-4 rounded border-slate-300"
-          />
-          <Label htmlFor="budget-rollover" className="mb-0">
-            Roll over unused amount to next month
-          </Label>
-        </div>
-        {!isEdit && (
-          <div className="flex items-center gap-2">
-            <input
-              id="budget-is-common"
-              type="checkbox"
-              checked={isCommon}
-              onChange={(e) => setIsCommon(e.target.checked)}
-              className="h-4 w-4 rounded border-slate-300"
-            />
-            <Label htmlFor="budget-is-common" className="mb-0">
-              Shared family (common) budget
-            </Label>
-          </div>
-        )}
-        <ErrorText>{error}</ErrorText>
-        <div className="flex justify-end gap-2 pt-2">
+    <Modal
+      title={isEdit ? "Edit budget" : "Add budget"}
+      onClose={onClose}
+      footer={
+        <div className="flex justify-end gap-2">
           <Button type="button" variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button type="submit" disabled={isSubmitting || (!isEdit && !categoryId) || !amount}>
-            {isSubmitting ? "Saving..." : "Save"}
+          <Button
+            type="submit"
+            form="budget-form"
+            loading={isSubmitting}
+            disabled={(!isEdit && !categoryId) || !amount}
+          >
+            Save
           </Button>
         </div>
+      }
+    >
+      <form id="budget-form" onSubmit={handleSubmit} className="space-y-4">
+        {!isEdit && (
+          <Field label="Category">
+            {(props) =>
+              categories.length === 0 ? (
+                <p className="text-sm text-ink-subtle">All expense categories already have a budget for this month.</p>
+              ) : (
+                <Select {...props} required value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
+                  {categories.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </Select>
+              )
+            }
+          </Field>
+        )}
+        <Field label="Monthly amount">
+          {(props) => (
+            <Input
+              {...props}
+              type="number"
+              step="0.01"
+              min="0.01"
+              required
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+            />
+          )}
+        </Field>
+        <Toggle checked={rollover} onChange={setRollover} label="Roll over unused amount" description="Carries leftover budget into next month." />
+        {!isEdit && (
+          <Toggle checked={isCommon} onChange={setIsCommon} label="Shared family budget" description="Tracked against shared spending." />
+        )}
+        <ErrorText>{error}</ErrorText>
       </form>
     </Modal>
   );

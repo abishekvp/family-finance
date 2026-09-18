@@ -1,9 +1,23 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { useOutletContext } from "react-router-dom";
+import { formatDistanceToNow } from "date-fns";
+import { Check, Copy, Mail, Users } from "lucide-react";
 import { api } from "../api/client";
 import { getErrorMessage } from "../api/errors";
-import { Button, Card, ErrorText, Input, Label } from "../components/ui";
+import {
+  Avatar,
+  Badge,
+  Button,
+  Card,
+  CardHeader,
+  EmptyState,
+  ErrorText,
+  Field,
+  Input,
+  Select,
+  useToast,
+} from "../components/ui";
 import type { LayoutContext } from "../components/Layout";
+import { useOutletContext } from "react-router-dom";
 
 interface Member {
   userId: string;
@@ -21,13 +35,27 @@ interface Invite {
   expiresAt: string;
 }
 
+const ROLE_TONE: Record<Member["role"], "brand" | "info" | "neutral"> = {
+  ADMIN: "brand",
+  MEMBER: "info",
+  VIEWER: "neutral",
+};
+
+const ROLE_HINTS: Record<string, string> = {
+  ADMIN: "Full control — manage members, categories, budgets and accounts.",
+  MEMBER: "Can add and edit transactions, accounts and categories.",
+  VIEWER: "Read-only access to family data.",
+};
+
 export function FamilySettings() {
   const { family } = useOutletContext<LayoutContext>();
+  const toast = useToast();
   const [members, setMembers] = useState<Member[]>([]);
   const [pendingInvites, setPendingInvites] = useState<Invite[]>([]);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<"MEMBER" | "VIEWER" | "ADMIN">("MEMBER");
-  const [lastInviteLink, setLastInviteLink] = useState<string | null>(null);
+  const [lastInvite, setLastInvite] = useState<Invite | null>(null);
+  const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isInviting, setIsInviting] = useState(false);
 
@@ -54,7 +82,8 @@ export function FamilySettings() {
         email: inviteEmail,
         role: inviteRole,
       });
-      setLastInviteLink(res.data.inviteLink);
+      setLastInvite(res.data);
+      setCopied(false);
       setInviteEmail("");
       await loadMembers();
     } catch (err) {
@@ -64,76 +93,107 @@ export function FamilySettings() {
     }
   }
 
+  async function copyLink() {
+    if (!lastInvite) return;
+    try {
+      await navigator.clipboard.writeText(lastInvite.inviteLink);
+      setCopied(true);
+      toast("Invite link copied");
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      toast("Couldn't copy automatically — select and copy the link manually", "error");
+    }
+  }
+
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
+    <div className="mx-auto max-w-3xl space-y-5">
       <Card>
-        <h2 className="mb-4 text-lg font-semibold">Members</h2>
-        <ul className="divide-y divide-slate-200 dark:divide-slate-800">
+        <CardHeader title="Members" subtitle={`${members.length} in ${family.name}`} icon={<Users size={17} />} />
+        <ul className="divide-y divide-line">
           {members.map((m) => (
-            <li key={m.userId} className="flex items-center justify-between py-3">
-              <div>
-                <p className="text-sm font-medium">{m.name}</p>
-                <p className="text-xs text-slate-500">{m.email}</p>
+            <li key={m.userId} className="flex items-center gap-3 py-3">
+              <Avatar name={m.name} size={38} />
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-semibold text-ink">{m.name}</p>
+                <p className="truncate text-xs text-ink-subtle">{m.email}</p>
               </div>
-              <span className="rounded-full bg-brand-50 px-2.5 py-1 text-xs font-medium text-brand-700 dark:bg-brand-500/10 dark:text-brand-300">
-                {m.role}
-              </span>
+              <div className="shrink-0 text-right">
+                <Badge tone={ROLE_TONE[m.role]}>{m.role}</Badge>
+                <p className="mt-1 text-2xs text-ink-subtle">
+                  Joined {formatDistanceToNow(new Date(m.joinedAt), { addSuffix: true })}
+                </p>
+              </div>
             </li>
           ))}
         </ul>
       </Card>
 
       <Card>
-        <h2 className="mb-4 text-lg font-semibold">Invite a family member</h2>
+        <CardHeader title="Invite a family member" icon={<Mail size={17} />} />
         <form onSubmit={handleInvite} className="flex flex-wrap items-end gap-3">
-          <div className="flex-1 min-w-[200px]">
-            <Label htmlFor="invite-email">Email</Label>
-            <Input
-              id="invite-email"
-              type="email"
-              required
-              value={inviteEmail}
-              onChange={(e) => setInviteEmail(e.target.value)}
-            />
-          </div>
-          <div>
-            <Label htmlFor="invite-role">Role</Label>
-            <select
-              id="invite-role"
-              value={inviteRole}
-              onChange={(e) => setInviteRole(e.target.value as typeof inviteRole)}
-              className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800"
-            >
-              <option value="ADMIN">Admin</option>
-              <option value="MEMBER">Member</option>
-              <option value="VIEWER">Viewer</option>
-            </select>
-          </div>
-          <Button type="submit" disabled={isInviting}>
-            {isInviting ? "Sending..." : "Send invite"}
+          <Field label="Email" className="min-w-[200px] flex-1">
+            {(props) => (
+              <Input {...props} type="email" required value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} />
+            )}
+          </Field>
+          <Field label="Role" className="w-36">
+            {(props) => (
+              <Select {...props} value={inviteRole} onChange={(e) => setInviteRole(e.target.value as typeof inviteRole)}>
+                <option value="ADMIN">Admin</option>
+                <option value="MEMBER">Member</option>
+                <option value="VIEWER">Viewer</option>
+              </Select>
+            )}
+          </Field>
+          <Button type="submit" loading={isInviting}>
+            Send invite
           </Button>
         </form>
+        <p className="mt-2 text-xs text-ink-subtle">{ROLE_HINTS[inviteRole]}</p>
+
         <ErrorText>{error}</ErrorText>
-        {lastInviteLink && (
-          <p className="mt-4 rounded-lg bg-slate-100 p-3 text-xs text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-            No email service is wired up yet — share this link with them directly:
-            <br />
-            <span className="break-all font-mono">{lastInviteLink}</span>
-          </p>
+
+        {lastInvite && (
+          <div className="mt-5 rounded-2xl border border-line bg-surface-sunken/60 p-4">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <p className="text-sm font-semibold text-ink">Invite ready for {lastInvite.email}</p>
+              <Badge tone="brand">{lastInvite.role}</Badge>
+            </div>
+            <div className="flex items-center gap-2">
+              <code className="min-w-0 flex-1 truncate rounded-lg bg-surface px-3 py-2 font-mono text-xs text-ink-muted">
+                {lastInvite.inviteLink}
+              </code>
+              <Button size="sm" variant="secondary" icon={copied ? <Check size={14} /> : <Copy size={14} />} onClick={copyLink}>
+                {copied ? "Copied" : "Copy"}
+              </Button>
+            </div>
+            <p className="mt-2 text-2xs text-ink-subtle">
+              No email service is wired up yet — share this link with them directly.
+            </p>
+          </div>
         )}
 
         {pendingInvites.length > 0 && (
           <div className="mt-6">
-            <h3 className="mb-2 text-sm font-medium text-slate-500">Pending invites</h3>
-            <ul className="space-y-2">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-subtle">Pending invites</p>
+            <ul className="space-y-1.5">
               {pendingInvites.map((inv) => (
-                <li key={inv.id} className="flex items-center justify-between text-sm">
-                  <span>{inv.email}</span>
-                  <span className="text-xs text-slate-400">{inv.role}</span>
+                <li key={inv.id} className="flex items-center justify-between rounded-lg bg-surface-sunken/50 px-3 py-2 text-sm">
+                  <span className="truncate text-ink">{inv.email}</span>
+                  <Badge tone="neutral">{inv.role}</Badge>
                 </li>
               ))}
             </ul>
           </div>
+        )}
+
+        {members.length <= 1 && pendingInvites.length === 0 && !lastInvite && (
+          <EmptyState
+            className="mt-5"
+            title="Invite the rest of the family"
+            description="Send an invite above to bring someone else into this workspace."
+            icon={<Users size={18} />}
+          />
         )}
       </Card>
     </div>

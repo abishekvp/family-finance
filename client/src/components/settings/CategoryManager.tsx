@@ -1,11 +1,41 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { Pencil, Plus } from "lucide-react";
+import { Pencil, Plus, Tag, Trash2 } from "lucide-react";
 import { api } from "../../api/client";
 import { getErrorMessage } from "../../api/errors";
-import { Button, Card, EmptyState, ErrorText, Input, Label, Modal, Segmented, Select, Spinner } from "../ui";
+import {
+  Badge,
+  Button,
+  Card,
+  CardHeader,
+  Dot,
+  EmptyState,
+  ErrorText,
+  Field,
+  IconButton,
+  Input,
+  Label,
+  Modal,
+  Segmented,
+  Select,
+  SkeletonRows,
+  Toggle,
+} from "../ui";
 import type { Category, CategoryType } from "../../api/types";
 
-const DEFAULT_COLOR = "#6366F1";
+const SWATCHES = [
+  "#6366F1",
+  "#A855F7",
+  "#22D3EE",
+  "#2DD4BF",
+  "#84CC16",
+  "#F59E0B",
+  "#FB7185",
+  "#EC4899",
+  "#0EA5E9",
+  "#10B981",
+  "#F97316",
+  "#94A3B8",
+];
 
 export function CategoryManager({ familyId }: { familyId: string }) {
   const [type, setType] = useState<CategoryType>("EXPENSE");
@@ -61,32 +91,36 @@ export function CategoryManager({ familyId }: { familyId: string }) {
 
   return (
     <Card>
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-lg font-semibold">Categories</h2>
-        <div className="flex flex-wrap items-center gap-2">
-          <Segmented
-            value={type}
-            onChange={setType}
-            options={[
-              { value: "EXPENSE", label: "Expense" },
-              { value: "INCOME", label: "Income" },
-            ]}
-          />
-          <Button variant="secondary" onClick={() => setEditing("new")}>
-            <Plus size={16} className="mr-1.5" />
-            Add
-          </Button>
-        </div>
-      </div>
+      <CardHeader
+        title="Categories"
+        subtitle="Organize income and spending"
+        icon={<Tag size={17} />}
+        actions={
+          <>
+            <Segmented
+              size="sm"
+              value={type}
+              onChange={setType}
+              options={[
+                { value: "EXPENSE", label: "Expense" },
+                { value: "INCOME", label: "Income" },
+              ]}
+            />
+            <Button variant="secondary" size="sm" icon={<Plus size={14} />} onClick={() => setEditing("new")}>
+              Add
+            </Button>
+          </>
+        }
+      />
 
       <ErrorText>{error || archiveError}</ErrorText>
 
       {isLoading ? (
-        <Spinner label="Loading categories..." />
+        <SkeletonRows rows={4} />
       ) : topLevel.length === 0 ? (
-        <EmptyState title="No categories yet" description="Add a category to start organizing transactions." />
+        <EmptyState title="No categories yet" description="Add a category to start organizing transactions." icon={<Tag size={18} />} />
       ) : (
-        <ul className="divide-y divide-slate-200 dark:divide-slate-800">
+        <ul className="divide-y divide-line">
           {topLevel.map((category) => (
             <li key={category.id}>
               <CategoryRow
@@ -98,7 +132,7 @@ export function CategoryManager({ familyId }: { familyId: string }) {
                 onArchiveConfirm={() => handleArchive(category.id)}
               />
               {(childrenByParent.get(category.id) ?? []).length > 0 && (
-                <ul className="ml-8 divide-y divide-slate-100 border-l border-slate-200 pl-3 dark:divide-slate-800/60 dark:border-slate-800">
+                <ul className="ml-5 space-y-0.5 border-l-2 border-line pl-3 sm:ml-8">
                   {(childrenByParent.get(category.id) ?? []).map((child) => (
                     <li key={child.id}>
                       <CategoryRow
@@ -148,50 +182,29 @@ function CategoryRow({
   onArchiveConfirm: () => void;
 }) {
   return (
-    <div className="flex items-center justify-between gap-3 py-2.5">
-      <span className="flex min-w-0 items-center gap-2">
-        <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: category.color }} />
-        <span className="truncate text-sm font-medium">{category.name}</span>
-        {category.ownerId && (
-          <span className="shrink-0 rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500 dark:bg-slate-800 dark:text-slate-400">
-            Private
-          </span>
-        )}
-      </span>
-      <span className="flex shrink-0 items-center gap-2">
-        <button
-          type="button"
-          onClick={onEdit}
-          aria-label={`Edit ${category.name}`}
-          className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
-        >
+    <div className="-mx-2 flex items-center justify-between gap-3 rounded-xl px-2 py-2.5 hover:bg-surface-sunken">
+      <button type="button" onClick={onEdit} className="flex min-w-0 flex-1 items-center gap-2.5 text-left">
+        <Dot color={category.color} />
+        <span className="truncate text-sm font-medium text-ink">{category.name}</span>
+        {category.ownerId && <Badge>Private</Badge>}
+      </button>
+      <span className="flex shrink-0 items-center gap-1">
+        <IconButton label={`Edit ${category.name}`} onClick={onEdit}>
           <Pencil size={14} />
-        </button>
+        </IconButton>
         {isArchiving ? (
-          <span className="flex items-center gap-1.5 text-xs">
-            <button
-              type="button"
-              onClick={onArchiveConfirm}
-              className="rounded-md bg-red-600 px-2 py-1 font-medium text-white hover:bg-red-700"
-            >
+          <span className="flex items-center gap-1.5">
+            <Button size="sm" variant="danger" onClick={onArchiveConfirm}>
               Confirm
-            </button>
-            <button
-              type="button"
-              onClick={onArchiveCancel}
-              className="rounded-md bg-slate-100 px-2 py-1 font-medium text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
-            >
+            </Button>
+            <Button size="sm" variant="ghost" onClick={onArchiveCancel}>
               Cancel
-            </button>
+            </Button>
           </span>
         ) : (
-          <button
-            type="button"
-            onClick={onArchiveStart}
-            className="text-xs font-medium text-slate-400 hover:text-red-600 dark:hover:text-red-400"
-          >
-            Archive
-          </button>
+          <IconButton label={`Archive ${category.name}`} tone="danger" onClick={onArchiveStart}>
+            <Trash2 size={14} />
+          </IconButton>
         )}
       </span>
     </div>
@@ -215,7 +228,7 @@ function CategoryFormModal({
 }) {
   const isEdit = Boolean(category);
   const [name, setName] = useState(category?.name ?? "");
-  const [color, setColor] = useState(category?.color ?? DEFAULT_COLOR);
+  const [color, setColor] = useState(category?.color ?? SWATCHES[0]);
   const [parentId, setParentId] = useState(category?.parentId ?? "");
   const [isCommon, setIsCommon] = useState(category ? category.ownerId === null : true);
   const [error, setError] = useState<string | null>(null);
@@ -253,56 +266,73 @@ function CategoryFormModal({
   const parentChoices = topLevelOptions.filter((c) => c.id !== category?.id);
 
   return (
-    <Modal title={isEdit ? "Edit category" : "Add category"} onClose={onClose}>
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div>
-          <Label htmlFor="category-name">Name</Label>
-          <Input id="category-name" required value={name} onChange={(e) => setName(e.target.value)} />
-        </div>
-        <div>
-          <Label htmlFor="category-color">Color</Label>
-          <input
-            id="category-color"
-            type="color"
-            value={color}
-            onChange={(e) => setColor(e.target.value)}
-            className="h-10 w-16 cursor-pointer rounded-lg border border-slate-300 bg-white p-1 dark:border-slate-700 dark:bg-slate-800"
-          />
-        </div>
-        <div>
-          <Label htmlFor="category-parent">Parent category</Label>
-          <Select id="category-parent" value={parentId} onChange={(e) => setParentId(e.target.value)}>
-            <option value="">None (top-level)</option>
-            {parentChoices.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </Select>
-        </div>
-        {!isEdit && (
-          <div className="flex items-center gap-2">
-            <input
-              id="category-is-common"
-              type="checkbox"
-              checked={isCommon}
-              onChange={(e) => setIsCommon(e.target.checked)}
-              className="h-4 w-4 rounded border-slate-300"
-            />
-            <Label htmlFor="category-is-common" className="mb-0">
-              Shared family (common) category
-            </Label>
-          </div>
-        )}
-        <ErrorText>{error}</ErrorText>
-        <div className="flex justify-end gap-2 pt-2">
+    <Modal
+      title={isEdit ? "Edit category" : "Add category"}
+      onClose={onClose}
+      footer={
+        <div className="flex justify-end gap-2">
           <Button type="button" variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button type="submit" disabled={isSubmitting || !name.trim()}>
-            {isSubmitting ? "Saving..." : "Save"}
+          <Button type="submit" form="category-form" loading={isSubmitting} disabled={!name.trim()}>
+            Save
           </Button>
         </div>
+      }
+    >
+      <form id="category-form" onSubmit={handleSubmit} className="space-y-4">
+        <Field label="Name">
+          {(props) => <Input {...props} required value={name} onChange={(e) => setName(e.target.value)} />}
+        </Field>
+
+        <div>
+          <Label>Color</Label>
+          <div className="flex flex-wrap items-center gap-2">
+            {SWATCHES.map((swatch) => (
+              <button
+                key={swatch}
+                type="button"
+                onClick={() => setColor(swatch)}
+                aria-label={`Use ${swatch}`}
+                style={{ backgroundColor: swatch }}
+                className={`h-8 w-8 rounded-full transition duration-150 ease-swift ${
+                  color === swatch ? "ring-2 ring-ink ring-offset-2 ring-offset-surface" : "hover:scale-110"
+                }`}
+              />
+            ))}
+            <input
+              type="color"
+              value={color}
+              onChange={(e) => setColor(e.target.value)}
+              aria-label="Custom color"
+              className="h-8 w-8 cursor-pointer rounded-full border border-line bg-surface p-0.5"
+            />
+          </div>
+        </div>
+
+        <Field label="Parent category">
+          {(props) => (
+            <Select {...props} value={parentId} onChange={(e) => setParentId(e.target.value)}>
+              <option value="">None (top-level)</option>
+              {parentChoices.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </Select>
+          )}
+        </Field>
+
+        {!isEdit && (
+          <Toggle
+            checked={isCommon}
+            onChange={setIsCommon}
+            label="Shared family category"
+            description="Visible to the whole family rather than just you."
+          />
+        )}
+
+        <ErrorText>{error}</ErrorText>
       </form>
     </Modal>
   );

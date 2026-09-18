@@ -1,8 +1,9 @@
 import { Fragment } from "react";
 import { Text, View } from "react-native";
+import { CalendarX } from "lucide-react-native";
 import type { Account, Transaction } from "../../api/types";
-import { colors } from "../../components/ui";
-import { formatCurrency } from "../../lib/format";
+import { useTheme } from "../../context/ThemeContext";
+import { EmptyState, Money } from "../ui";
 import { CarryOverRow } from "./CarryOverRow";
 import { TransactionRow } from "./TransactionRow";
 
@@ -12,7 +13,7 @@ function dayKey(dateStr: string) {
 
 function dayLabel(key: string) {
   const d = new Date(`${key}T00:00:00`);
-  return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric" });
+  return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
 }
 
 export function DailyView({
@@ -34,26 +35,18 @@ export function DailyView({
   accountIds: Set<string>;
   onPressTransaction: (t: Transaction) => void;
 }) {
+  const { colors } = useTheme();
+
   if (transactions.length === 0) {
     if (carryOver) {
-      return (
-        <View style={{ paddingTop: 8 }}>
-          <CarryOverRow
-            familyId={familyId}
-            periodStart={periodStart}
-            accounts={accounts}
-            accountIds={accountIds}
-            currency={currency}
-          />
-        </View>
-      );
+      return <CarryOverRow familyId={familyId} periodStart={periodStart} accounts={accounts} accountIds={accountIds} currency={currency} />;
     }
     return (
-      <View style={{ paddingVertical: 40, alignItems: "center" }}>
-        <Text style={{ color: colors.slate400, fontSize: 13, textAlign: "center" }}>
-          No transactions this month. Tap + to add your first one.
-        </Text>
-      </View>
+      <EmptyState
+        icon={<CalendarX size={20} color={colors.brand600} />}
+        title="No transactions this month"
+        description="Tap the + button to add your first one."
+      />
     );
   }
 
@@ -67,7 +60,7 @@ export function DailyView({
   const orderedKeys = Array.from(groups.keys()).sort((a, b) => (a < b ? 1 : -1));
 
   return (
-    <View>
+    <View style={{ gap: 4 }}>
       {orderedKeys.map((key) => {
         const dayTransactions = groups.get(key)!;
         let income = 0;
@@ -83,22 +76,16 @@ export function DailyView({
                 flexDirection: "row",
                 justifyContent: "space-between",
                 alignItems: "center",
-                marginTop: 16,
-                marginBottom: 4,
+                marginTop: 14,
+                marginBottom: 2,
               }}
             >
-              <Text style={{ fontWeight: "700", fontSize: 13, color: colors.slate700 }}>{dayLabel(key)}</Text>
+              <Text style={{ fontWeight: "800", fontSize: 12, color: colors.inkMuted, textTransform: "uppercase", letterSpacing: 0.3 }}>
+                {dayLabel(key)}
+              </Text>
               <View style={{ flexDirection: "row", gap: 8 }}>
-                {income > 0 && (
-                  <Text style={{ color: colors.green600, fontSize: 12, fontWeight: "600" }}>
-                    +{formatCurrency(income, currency)}
-                  </Text>
-                )}
-                {expense > 0 && (
-                  <Text style={{ color: colors.red600, fontSize: 12, fontWeight: "600" }}>
-                    -{formatCurrency(expense, currency)}
-                  </Text>
-                )}
+                {income > 0 && <Money amount={income} currency={currency} tone="income" signed style={{ fontSize: 12, fontWeight: "700" }} />}
+                {expense > 0 && <Money amount={-expense} currency={currency} tone="expense" signed style={{ fontSize: 12, fontWeight: "700" }} />}
               </View>
             </View>
             {dayTransactions.map((t) => (

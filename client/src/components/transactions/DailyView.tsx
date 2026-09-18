@@ -3,9 +3,9 @@ import { format } from "date-fns";
 import type { Account, Transaction } from "../../api/types";
 import { TransactionRow } from "./TransactionRow";
 import { EmptyOrCarryOver } from "./EmptyOrCarryOver";
-import { formatCurrency } from "../../lib/format";
+import { Money } from "../figures";
 import { cumulativeBalance } from "../../lib/carryOver";
-import { Spinner } from "../ui";
+import { SkeletonRows } from "../ui";
 
 interface DailyGroup {
   key: string;
@@ -54,7 +54,7 @@ export function DailyView({
   }, [transactions]);
 
   if (isLoading) {
-    return <Spinner label="Loading transactions..." />;
+    return <SkeletonRows rows={5} />;
   }
 
   if (groups.length === 0) {
@@ -73,19 +73,17 @@ export function DailyView({
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       {groups.map((group) => (
         <div key={group.key}>
           <div className="mb-2 flex items-center justify-between px-1">
-            <p className="text-sm font-semibold text-slate-600 dark:text-slate-300">
-              {format(group.date, "EEEE, MMM d")}
-            </p>
-            <div className="flex gap-3 text-xs">
-              {group.income > 0 && <span className="text-income">+{formatCurrency(group.income, currency)}</span>}
-              {group.expense > 0 && <span className="text-expense">-{formatCurrency(group.expense, currency)}</span>}
+            <p className="text-sm font-semibold text-ink-muted">{format(group.date, "EEEE, MMM d")}</p>
+            <div className="flex gap-3 text-xs font-semibold tnum">
+              {group.income > 0 && <Money amount={group.income} currency={currency} tone="income" signed />}
+              {group.expense > 0 && <Money amount={-group.expense} currency={currency} tone="expense" signed />}
             </div>
           </div>
-          <div className="divide-y divide-slate-200 rounded-xl border border-slate-200 bg-white px-3 dark:divide-slate-800 dark:border-slate-800 dark:bg-slate-900">
+          <div className="divide-y divide-line rounded-2xl border border-line bg-surface/40 px-3">
             {group.transactions.map((t) => (
               <TransactionRow key={t.id} transaction={t} onClick={() => onRowClick(t)} />
             ))}

@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { ActivityIndicator, Text, View } from "react-native";
+import { ArrowLeftRight } from "lucide-react-native";
 import { api } from "../../api/client";
 import type { Account, Transaction } from "../../api/types";
-import { colors } from "../../components/ui";
+import { useTheme } from "../../context/ThemeContext";
+import { Money } from "../ui";
 import { computeCumulativeBalance } from "../../lib/balance";
-import { formatCurrency } from "../../lib/format";
 
 /**
  * Shown instead of a bare empty state when Settings' carry-over pref is ON and the viewed
@@ -24,6 +25,7 @@ export function CarryOverRow({
   accountIds: Set<string>;
   currency: string;
 }) {
+  const { colors } = useTheme();
   const [isLoading, setIsLoading] = useState(true);
   const [balance, setBalance] = useState(0);
   const [error, setError] = useState(false);
@@ -58,24 +60,35 @@ export function CarryOverRow({
     <View
       style={{
         flexDirection: "row",
-        justifyContent: "space-between",
         alignItems: "center",
-        paddingVertical: 12,
-        paddingHorizontal: 4,
-        borderTopWidth: 1,
-        borderTopColor: colors.slate200,
+        gap: 12,
+        borderRadius: 16,
+        borderWidth: 1,
+        borderStyle: "dashed",
+        borderColor: colors.lineStrong,
+        padding: 14,
       }}
     >
-      <View>
-        <Text style={{ fontWeight: "600" }}>Carry-over</Text>
-        <Text style={{ color: colors.slate500, fontSize: 12, marginTop: 2 }}>Balance brought into this period</Text>
+      <View
+        style={{
+          width: 36,
+          height: 36,
+          borderRadius: 12,
+          backgroundColor: colors.surfaceSunken,
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <ArrowLeftRight size={15} color={colors.inkSubtle} />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={{ fontWeight: "700", color: colors.ink, fontSize: 13 }}>Carried over</Text>
+        <Text style={{ color: colors.inkSubtle, fontSize: 11, marginTop: 1 }}>Balance brought into this period</Text>
       </View>
       {isLoading ? (
         <ActivityIndicator color={colors.brand600} />
       ) : (
-        <Text style={{ fontWeight: "700", color: balance < 0 ? colors.red600 : colors.slate900 }}>
-          {formatCurrency(balance, currency)}
-        </Text>
+        <Money amount={balance} currency={currency} tone="auto" style={{ fontWeight: "800", fontSize: 14 }} />
       )}
     </View>
   );

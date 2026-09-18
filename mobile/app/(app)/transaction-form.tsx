@@ -1,14 +1,23 @@
 import { useEffect, useLayoutEffect, useMemo, useState } from "react";
-import { KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, View } from "react-native";
+import { KeyboardAvoidingView, Platform, ScrollView, Text, View } from "react-native";
 import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
+import { ArrowRightLeft, MinusCircle, PlusCircle } from "lucide-react-native";
 import { api } from "../../src/api/client";
 import type { Account, Category, Transaction, TransactionType } from "../../src/api/types";
 import { useAuth } from "../../src/context/AuthContext";
+import { useTheme } from "../../src/context/ThemeContext";
 import { getErrorMessage } from "../../src/api/errors";
-import { Button, Card, ErrorText, Input, Label, colors, pillStyle, pillTextStyle } from "../../src/components/ui";
+import { Button, Chip, ErrorText, Field, Input, Segmented, SkeletonRows } from "../../src/components/ui";
 import { CategoryPicker } from "../../src/components/CategoryPicker";
+import { currencySymbol } from "../../src/lib/format";
 
-const TRANSACTION_TYPES: TransactionType[] = ["INCOME", "EXPENSE", "TRANSFER"];
+const TYPE_OPTIONS: { value: TransactionType; label: string }[] = [
+  { value: "INCOME", label: "Income" },
+  { value: "EXPENSE", label: "Expense" },
+  { value: "TRANSFER", label: "Transfer" },
+];
+
+const TYPE_ICON = { INCOME: PlusCircle, EXPENSE: MinusCircle, TRANSFER: ArrowRightLeft };
 
 function todayIso() {
   return new Date().toISOString().slice(0, 10);
@@ -16,6 +25,7 @@ function todayIso() {
 
 export default function TransactionForm() {
   const { user } = useAuth();
+  const { colors } = useTheme();
   const family = user!.families[0];
   const router = useRouter();
   const navigation = useNavigation();
@@ -42,10 +52,7 @@ export default function TransactionForm() {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([
-      api.get<Account[]>(`/families/${family.id}/accounts`),
-      api.get<Category[]>(`/families/${family.id}/categories`),
-    ])
+    Promise.all([api.get<Account[]>(`/families/${family.id}/accounts`), api.get<Category[]>(`/families/${family.id}/categories`)])
       .then(([accountsRes, categoriesRes]) => {
         if (cancelled) return;
         setAccounts(accountsRes.data);
@@ -74,21 +81,17 @@ export default function TransactionForm() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
-    if (!accountId && accounts.length > 0) {
-      setAccountId(accounts[0].id);
-    }
+    if (!accountId && accounts.length > 0) setAccountId(accounts[0].id);
   }, [accounts, accountId]);
 
   const categoriesForType = categories.filter((c) => c.type === (type === "TRANSFER" ? "EXPENSE" : type));
   const transferTargets = accounts.filter((a) => a.id !== accountId);
+  const selectedAccount = accounts.find((a) => a.id === accountId);
+  const symbol = currencySymbol(selectedAccount?.currency ?? "USD");
 
   const amountValue = Number(amount);
   const canSubmit =
-    !!accountId &&
-    amount.trim().length > 0 &&
-    amountValue > 0 &&
-    date.trim().length > 0 &&
-    (type !== "TRANSFER" || (!!transferToAccountId && transferToAccountId !== accountId));
+    !!accountId && amount.trim().length > 0 && amountValue > 0 && date.trim().length > 0 && (type !== "TRANSFER" || (!!transferToAccountId && transferToAccountId !== accountId));
 
   function handleSelectType(next: TransactionType) {
     setType(next);
@@ -149,119 +152,108 @@ export default function TransactionForm() {
 
   if (isLoading) {
     return (
-      <View style={{ flex: 1, backgroundColor: colors.slate50, padding: 16 }}>
-        <Text style={{ color: colors.slate400 }}>Loading...</Text>
+      <View style={{ flex: 1, backgroundColor: colors.canvas, padding: 16 }}>
+        <SkeletonRows rows={5} />
       </View>
     );
   }
 
+  const typeTone = type === "INCOME" ? colors.income : type === "EXPENSE" ? colors.expense : colors.brand600;
+
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: colors.slate50 }}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-    >
-      <ScrollView contentContainerStyle={{ padding: 16, gap: 16 }}>
+    <KeyboardAvoidingView style={{ flex: 1, backgroundColor: colors.canvas }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+      <ScrollView contentContainerStyle={{ padding: 16, gap: 18 }}>
         <ErrorText>{loadError}</ErrorText>
 
-        <Card style={{ gap: 16 }}>
-          <View>
-            <Label>Type</Label>
-            <View style={{ flexDirection: "row", gap: 8 }}>
-              {TRANSACTION_TYPES.map((t) => (
-                <Pressable key={t} onPress={() => handleSelectType(t)} style={pillStyle(type === t)}>
-                  <Text style={pillTextStyle(type === t)}>{t}</Text>
-                </Pressable>
-              ))}
-            </View>
-          </View>
+        <Segmented
+          fullWidth
+          value={type}
+          onChange={handleSelectType}
+          options={TYPE_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
+        />
 
-          <View>
-            <Label>Date</Label>
-            <Input value={date} onChangeText={setDate} placeholder="YYYY-MM-DD" autoCapitalize="none" />
-          </View>
-
-          <View>
-            <Label>Amount</Label>
-            <Input keyboardType="decimal-pad" value={amount} onChangeText={setAmount} placeholder="0.00" />
-          </View>
-
-          <View>
-            <Label>Account</Label>
-            {accounts.length === 0 ? (
-              <Text style={{ color: colors.slate400, fontSize: 13 }}>Add an account first.</Text>
-            ) : (
-              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                <View style={{ flexDirection: "row", gap: 8 }}>
-                  {accounts.map((a) => (
-                    <Pressable key={a.id} onPress={() => handleSelectAccount(a.id)} style={pillStyle(accountId === a.id)}>
-                      <Text style={pillTextStyle(accountId === a.id)}>{a.name}</Text>
-                    </Pressable>
-                  ))}
-                </View>
-              </ScrollView>
-            )}
-          </View>
-
-          {type === "TRANSFER" ? (
-            <View>
-              <Label>Transfer to</Label>
-              {transferTargets.length === 0 ? (
-                <Text style={{ color: colors.slate400, fontSize: 13 }}>Add another account to transfer to.</Text>
-              ) : (
-                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                  <View style={{ flexDirection: "row", gap: 8 }}>
-                    {transferTargets.map((a) => (
-                      <Pressable
-                        key={a.id}
-                        onPress={() => setTransferToAccountId(a.id)}
-                        style={pillStyle(transferToAccountId === a.id)}
-                      >
-                        <Text style={pillTextStyle(transferToAccountId === a.id)}>{a.name}</Text>
-                      </Pressable>
-                    ))}
-                  </View>
-                </ScrollView>
-              )}
-            </View>
-          ) : (
-            <View>
-              <Label>Category</Label>
-              {categoriesForType.length === 0 ? (
-                <Text style={{ color: colors.slate400, fontSize: 13 }}>No {type.toLowerCase()} categories yet.</Text>
-              ) : (
-                <CategoryPicker categories={categoriesForType} selectedId={categoryId} onSelect={setCategoryId} />
-              )}
-            </View>
-          )}
-
-          <View>
-            <Label>Payee</Label>
-            <Input value={payee} onChangeText={setPayee} placeholder="Optional" />
-          </View>
-
-          <View>
-            <Label>Notes</Label>
-            <Input value={notes} onChangeText={setNotes} placeholder="Optional" />
-          </View>
-
-          <ErrorText>{error}</ErrorText>
-
-          <View style={{ gap: 8 }}>
-            <Button
-              title={isSubmitting ? "Saving..." : isEdit ? "Save changes" : "Save"}
-              onPress={() => handleSave(false)}
-              disabled={isSubmitting || !canSubmit}
+        <View style={{ alignItems: "center", backgroundColor: colors.surfaceSunken, borderRadius: 20, paddingVertical: 22 }}>
+          <Text style={{ fontSize: 11, fontWeight: "700", color: colors.inkSubtle, textTransform: "uppercase", letterSpacing: 0.4 }}>Amount</Text>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 6 }}>
+            <Text style={{ fontSize: 22, color: typeTone, opacity: 0.7 }}>{symbol}</Text>
+            <Input
+              keyboardType="decimal-pad"
+              value={amount}
+              onChangeText={setAmount}
+              placeholder="0.00"
+              style={{
+                borderWidth: 0,
+                backgroundColor: "transparent",
+                height: 48,
+                fontSize: 34,
+                fontWeight: "800",
+                color: typeTone,
+                textAlign: "center",
+                minWidth: 140,
+              }}
             />
-            {!isEdit && (
-              <Button
-                title="Save & add another"
-                variant="secondary"
-                onPress={() => handleSave(true)}
-                disabled={isSubmitting || !canSubmit}
-              />
-            )}
           </View>
-        </Card>
+        </View>
+
+        <View style={{ flexDirection: "row", gap: 12 }}>
+          <View style={{ flex: 1 }}>
+            <Field label="Date">
+              <Input value={date} onChangeText={setDate} placeholder="YYYY-MM-DD" autoCapitalize="none" />
+            </Field>
+          </View>
+          <View style={{ flex: 1 }}>
+            <Field label="Payee" hint="Optional">
+              <Input value={payee} onChangeText={setPayee} placeholder="Optional" />
+            </Field>
+          </View>
+        </View>
+
+        <Field label="Account">
+          {accounts.length === 0 ? (
+            <Text style={{ color: colors.inkSubtle, fontSize: 13 }}>Add an account first.</Text>
+          ) : (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+              <View style={{ flexDirection: "row", gap: 8 }}>
+                {accounts.map((a) => (
+                  <Chip key={a.id} label={a.name} selected={accountId === a.id} onPress={() => handleSelectAccount(a.id)} />
+                ))}
+              </View>
+            </ScrollView>
+          )}
+        </Field>
+
+        {type === "TRANSFER" ? (
+          <Field label="Transfer to">
+            {transferTargets.length === 0 ? (
+              <Text style={{ color: colors.inkSubtle, fontSize: 13 }}>Add another account to transfer to.</Text>
+            ) : (
+              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                {transferTargets.map((a) => (
+                  <Chip key={a.id} label={a.name} selected={transferToAccountId === a.id} onPress={() => setTransferToAccountId(a.id)} />
+                ))}
+              </View>
+            )}
+          </Field>
+        ) : (
+          <Field label="Category">
+            {categoriesForType.length === 0 ? (
+              <Text style={{ color: colors.inkSubtle, fontSize: 13 }}>No {type.toLowerCase()} categories yet.</Text>
+            ) : (
+              <CategoryPicker categories={categoriesForType} selectedId={categoryId} onSelect={setCategoryId} />
+            )}
+          </Field>
+        )}
+
+        <Field label="Notes" hint="Optional">
+          <Input value={notes} onChangeText={setNotes} placeholder="Optional" />
+        </Field>
+
+        <ErrorText>{error}</ErrorText>
+
+        <View style={{ gap: 10 }}>
+          <Button title={isEdit ? "Save changes" : "Save"} size="lg" loading={isSubmitting} disabled={!canSubmit} onPress={() => handleSave(false)} />
+          {!isEdit && <Button title="Save & add another" variant="secondary" disabled={isSubmitting || !canSubmit} onPress={() => handleSave(true)} />}
+        </View>
       </ScrollView>
     </KeyboardAvoidingView>
   );

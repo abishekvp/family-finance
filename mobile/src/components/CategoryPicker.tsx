@@ -1,20 +1,22 @@
-import { ScrollView, Pressable, Text, View } from "react-native";
+import { Fragment } from "react";
+import { ScrollView, Text, View } from "react-native";
 import type { Category } from "../api/types";
-import { colors } from "./ui";
-import { CategoryBadge } from "./transactions/TransactionRow";
+import { useTheme } from "../context/ThemeContext";
+import { Chip } from "./ui";
 
-/** Vertical list of categories, flat but visually grouped by parent, including subcategories. */
+/** Wrapping grid of category chips, grouped by parent, including subcategories. */
 export function CategoryPicker({
   categories,
   selectedId,
   onSelect,
-  maxHeight = 260,
+  maxHeight = 220,
 }: {
   categories: Category[];
   selectedId: string | null;
   onSelect: (id: string) => void;
   maxHeight?: number;
 }) {
+  const { colors } = useTheme();
   const parents = categories.filter((c) => c.parentId === null);
   const childrenByParent = new Map<string, Category[]>();
   for (const c of categories) {
@@ -24,44 +26,33 @@ export function CategoryPicker({
     childrenByParent.set(c.parentId, list);
   }
 
-  function Row({ category, indent }: { category: Category; indent: boolean }) {
-    const selected = selectedId === category.id;
-    return (
-      <Pressable
-        onPress={() => onSelect(category.id)}
-        style={{
-          flexDirection: "row",
-          alignItems: "center",
-          gap: 10,
-          paddingVertical: 8,
-          paddingHorizontal: 8,
-          paddingLeft: indent ? 32 : 8,
-          borderRadius: 8,
-          backgroundColor: selected ? colors.brand50 : "transparent",
-        }}
-      >
-        <CategoryBadge color={category.color} label={category.name[0]?.toUpperCase() ?? "?"} size={24} />
-        <Text style={{ fontSize: 14, color: selected ? colors.brand700 : colors.slate900, fontWeight: selected ? "700" : "500" }}>
-          {category.name}
-        </Text>
-      </Pressable>
-    );
-  }
-
   if (parents.length === 0) {
-    return <Text style={{ color: colors.slate400, fontSize: 13 }}>No categories yet.</Text>;
+    return <Text style={{ color: colors.inkSubtle, fontSize: 13 }}>No categories yet.</Text>;
   }
 
   return (
     <ScrollView style={{ maxHeight }} nestedScrollEnabled>
-      {parents.map((parent) => (
-        <View key={parent.id}>
-          <Row category={parent} indent={false} />
-          {(childrenByParent.get(parent.id) ?? []).map((child) => (
-            <Row key={child.id} category={child} indent />
-          ))}
-        </View>
-      ))}
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+        {parents.map((parent) => (
+          <Fragment key={parent.id}>
+            <Chip
+              label={parent.name}
+              color={parent.color}
+              selected={selectedId === parent.id}
+              onPress={() => onSelect(parent.id)}
+            />
+            {(childrenByParent.get(parent.id) ?? []).map((child) => (
+              <Chip
+                key={child.id}
+                label={child.name}
+                color={child.color}
+                selected={selectedId === child.id}
+                onPress={() => onSelect(child.id)}
+              />
+            ))}
+          </Fragment>
+        ))}
+      </View>
     </ScrollView>
   );
 }

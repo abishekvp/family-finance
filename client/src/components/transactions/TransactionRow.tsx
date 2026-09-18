@@ -1,6 +1,6 @@
 import { ArrowRightLeft } from "lucide-react";
 import type { Transaction } from "../../api/types";
-import { formatCurrency } from "../../lib/format";
+import { Money } from "../figures";
 
 export function TransactionRow({
   transaction,
@@ -14,46 +14,41 @@ export function TransactionRow({
     transaction.category?.name ||
     (transaction.type === "TRANSFER" ? "Transfer" : "Transaction");
 
-  const amountClass =
-    transaction.type === "INCOME"
-      ? "text-income"
-      : transaction.type === "EXPENSE"
-        ? "text-expense"
-        : "text-slate-700 dark:text-slate-200";
-
-  const sign = transaction.type === "INCOME" ? "+" : transaction.type === "EXPENSE" ? "-" : "";
+  const isTransfer = transaction.type === "TRANSFER";
+  const isExpense = transaction.type === "EXPENSE";
+  const tone = transaction.type === "INCOME" ? "income" : isExpense ? "expense" : undefined;
+  const displayAmount = isExpense ? -transaction.amount : transaction.amount;
 
   return (
     <button
       type="button"
       onClick={onClick}
-      className="flex w-full items-center justify-between gap-3 py-3 text-left transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/60"
+      className="-mx-2 flex w-full items-center justify-between gap-3 rounded-xl px-2 py-3 text-left transition-colors duration-150 hover:bg-surface-sunken"
     >
       <div className="flex min-w-0 items-center gap-3">
         <span
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold text-white"
-          style={{ backgroundColor: transaction.category?.color ?? "#94A3B8" }}
+          className="grid h-10 w-10 shrink-0 place-items-center rounded-xl text-sm font-bold text-white"
+          style={{ backgroundColor: isTransfer ? undefined : transaction.category?.color ?? "#94A3B8" }}
         >
-          {transaction.type === "TRANSFER" ? (
-            <ArrowRightLeft size={14} />
+          {isTransfer ? (
+            <ArrowRightLeft size={15} className="text-ink-muted" />
           ) : (
             description.slice(0, 1).toUpperCase()
           )}
         </span>
         <div className="min-w-0">
-          <p className="truncate text-sm font-medium">{description}</p>
-          <p className="truncate text-xs text-slate-500 dark:text-slate-400">
-            {transaction.account.name}
-            {transaction.type === "TRANSFER" && transaction.transferToAccount
-              ? ` → ${transaction.transferToAccount.name}`
-              : ""}
-            {transaction.category && transaction.type !== "TRANSFER" ? ` · ${transaction.category.name}` : ""}
+          <p className="truncate text-sm font-semibold text-ink">{description}</p>
+          <p className="truncate text-xs text-ink-subtle">
+            {isTransfer && transaction.transferToAccount
+              ? `${transaction.account.name} → ${transaction.transferToAccount.name}`
+              : transaction.category
+                ? `${transaction.account.name} · ${transaction.category.name}`
+                : transaction.account.name}
           </p>
         </div>
       </div>
-      <p className={`shrink-0 text-sm font-semibold ${amountClass}`}>
-        {sign}
-        {formatCurrency(transaction.amount, transaction.account.currency)}
+      <p className="tnum shrink-0 text-sm font-bold">
+        <Money amount={displayAmount} currency={transaction.account.currency} tone={tone} signed={!isTransfer} />
       </p>
     </button>
   );

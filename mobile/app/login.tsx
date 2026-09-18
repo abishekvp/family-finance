@@ -1,15 +1,20 @@
 import { useState } from "react";
 import { KeyboardAvoidingView, Platform, ScrollView, Text, View } from "react-native";
 import { Link, useRouter } from "expo-router";
+import { Eye, EyeOff } from "lucide-react-native";
 import { useAuth } from "../src/context/AuthContext";
+import { useTheme } from "../src/context/ThemeContext";
 import { getErrorMessage } from "../src/api/errors";
-import { Button, Card, ErrorText, Input, Label } from "../src/components/ui";
+import { Button, ErrorText, Field, IconButton, Input } from "../src/components/ui";
+import { Logo } from "../src/components/Logo";
 
 export default function Login() {
   const { login } = useAuth();
+  const { colors } = useTheme();
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -27,44 +32,43 @@ export default function Login() {
   }
 
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: "#F8FAFC" }}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-    >
-      <ScrollView contentContainerStyle={{ flexGrow: 1, justifyContent: "center", padding: 20 }}>
-        <Card>
-          <Text style={{ fontSize: 20, fontWeight: "700", marginBottom: 4 }}>Welcome back</Text>
-          <Text style={{ color: "#64748B", marginBottom: 20 }}>Sign in to your family finance workspace.</Text>
+    <View style={{ flex: 1, backgroundColor: colors.canvas }}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+        <ScrollView contentContainerStyle={{ flexGrow: 1, justifyContent: "center", padding: 24 }}>
+          <Logo size={56} style={{ alignSelf: "center", marginBottom: 24 }} />
+          <Text style={{ fontSize: 24, fontWeight: "900", color: colors.ink, textAlign: "center" }}>Welcome back</Text>
+          <Text style={{ color: colors.inkMuted, textAlign: "center", marginTop: 6, marginBottom: 28 }}>
+            Sign in to your family finance workspace.
+          </Text>
 
-          <View style={{ marginBottom: 14 }}>
-            <Label>Email</Label>
-            <Input
-              autoCapitalize="none"
-              keyboardType="email-address"
-              value={email}
-              onChangeText={setEmail}
-              placeholder="you@example.com"
-            />
+          <View style={{ gap: 16 }}>
+            <Field label="Email">
+              <Input autoCapitalize="none" keyboardType="email-address" value={email} onChangeText={setEmail} placeholder="you@example.com" />
+            </Field>
+            <Field label="Password">
+              <View style={{ position: "relative", justifyContent: "center" }}>
+                <Input secureTextEntry={!showPassword} value={password} onChangeText={setPassword} placeholder="••••••••" style={{ paddingRight: 44 }} />
+                <View style={{ position: "absolute", right: 6 }}>
+                  <IconButton size={34} onPress={() => setShowPassword((v) => !v)}>
+                    {showPassword ? <EyeOff size={17} color={colors.inkSubtle} /> : <Eye size={17} color={colors.inkSubtle} />}
+                  </IconButton>
+                </View>
+              </View>
+            </Field>
+
+            <ErrorText>{error}</ErrorText>
+
+            <Button title={isSubmitting ? "Signing in…" : "Sign in"} size="lg" loading={isSubmitting} onPress={handleSubmit} />
           </View>
-          <View style={{ marginBottom: 8 }}>
-            <Label>Password</Label>
-            <Input secureTextEntry value={password} onChangeText={setPassword} placeholder="••••••••" />
-          </View>
 
-          <ErrorText>{error}</ErrorText>
-
-          <View style={{ marginTop: 16 }}>
-            <Button title="Sign in" onPress={handleSubmit} disabled={isSubmitting} />
-          </View>
-
-          <View style={{ flexDirection: "row", justifyContent: "center", marginTop: 20 }}>
-            <Text style={{ color: "#64748B" }}>Don't have an account? </Text>
-            <Link href="/register" style={{ color: "#4F46E5", fontWeight: "600" }}>
+          <View style={{ flexDirection: "row", justifyContent: "center", marginTop: 24 }}>
+            <Text style={{ color: colors.inkMuted }}>Don't have an account? </Text>
+            <Link href="/register" style={{ color: colors.brand600, fontWeight: "700" }}>
               Create one
             </Link>
           </View>
-        </Card>
-      </ScrollView>
-    </KeyboardAvoidingView>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </View>
   );
 }

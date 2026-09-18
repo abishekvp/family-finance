@@ -1,21 +1,26 @@
 import { useEffect, useMemo, useState } from "react";
 import { useOutletContext } from "react-router-dom";
 import { addMonths, addYears, format, subMonths, subYears } from "date-fns";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ArrowDownRight, ArrowUpRight, ChevronLeft, ChevronRight, PieChart as PieChartIcon } from "lucide-react";
 import { api } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { getErrorMessage } from "../api/errors";
-import { Card, EmptyState, ErrorText, Segmented, Spinner } from "../components/ui";
+import { Button, Card, Dot, EmptyState, ErrorText, ProgressBar, Segmented, SkeletonRows } from "../components/ui";
+import { Money } from "../components/figures";
 import type { LayoutContext } from "../components/Layout";
 import type { Account, Transaction } from "../api/types";
 import { monthRange, yearRange } from "../lib/dateUtils";
-import { formatCurrency, formatPercent } from "../lib/format";
+import { formatPercent } from "../lib/format";
 import { CategoryPie, type CategorySlice } from "../components/stats/CategoryPie";
 
 type Metric = "Income" | "Expenses";
 type Period = "Monthly" | "Yearly";
 
 const UNCATEGORIZED_COLOR = "#94A3B8";
+
+function totalFor(transactions: Transaction[], accountIds: Set<string>) {
+  return transactions.filter((t) => accountIds.has(t.accountId)).reduce((s, t) => s + t.amount, 0);
+}
 
 export function Stats() {
   const { family, scope } = useOutletContext<LayoutContext>();
@@ -25,10 +30,13 @@ export function Stats() {
   const [anchor, setAnchor] = useState(() => new Date());
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [previousTransactions, setPreviousTransactions] = useState<Transaction[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const range = period === "Yearly" ? yearRange(anchor.getFullYear()) : monthRange(anchor);
+  const previousAnchor = period === "Yearly" ? subYears(anchor, 1) : subMonths(anchor, 1);
+  const previousRange = period === "Yearly" ? yearRange(previousAnchor.getFullYear()) : monthRange(previousAnchor);
   const periodLabel = period === "Yearly" ? String(anchor.getFullYear()) : format(anchor, "MMMM yyyy");
   const type = metric === "Income" ? "INCOME" : "EXPENSE";
 
@@ -43,12 +51,20 @@ export function Stats() {
     let cancelled = false;
     setIsLoading(true);
     setError(null);
-    api
-      .get<Transaction[]>(`/families/${family.id}/transactions`, {
+    Promise.all([
+      api.get<Transaction[]>(`/families/${family.id}/transactions`, {
         params: { type, from: range.from.toISOString(), to: range.to.toISOString(), limit: 1000 },
-      })
-      .then((res) => {
-        if (!cancelled) setTransactions(res.data);
+      }),
+      api
+        .get<Transaction[]>(`/families/${family.id}/transactions`, {
+          params: { type, from: previousRange.from.toISOString(), to: previousRange.to.toISOString(), limit: 1000 },
+        })
+        .catch(() => ({ data: [] as Transaction[] })),
+    ])
+      .then(([current, previous]) => {
+        if (cancelled) return;
+        setTransactions(current.data);
+        setPreviousTransactions(previous.data);
       })
       .catch((err) => {
         if (!cancelled) setError(getErrorMessage(err, "Unable to load stats"));
@@ -59,6 +75,7 @@ export function Stats() {
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [family.id, type, range.from.getTime(), range.to.getTime()]);
 
   const scopedAccountIds = useMemo(() => {
@@ -92,6 +109,14 @@ export function Stats() {
   }, [transactions, scopedAccountIds]);
 
   const total = slices.reduce((s, v) => s + v.amount, 0);
+  const previousTotal = useMemo(
+    () => totalFor(previousTransactions, scopedAccountIds),
+    [previousTransactions, scopedAccountIds]
+  );
+
+  const delta = total - previousTotal;
+  const deltaGood = metric === "Income" ? delta >= 0 : delta <= 0;
+  const previousLabel = period === "Yearly" ? "last year" : "last month";
 
   function goPrev() {
     setAnchor((d) => (period === "Yearly" ? subYears(d, 1) : subMonths(d, 1)));
@@ -122,49 +147,67 @@ export function Stats() {
       </div>
 
       <Card>
-        <div className="mb-4 flex items-center justify-between">
-          <button
-            type="button"
-            onClick={goPrev}
-            aria-label="Previous period"
-            className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800"
-          >
+        <div className="mb-5 flex items-center justify-between gap-2">
+          <Button variant="ghost" size="sm" className="!px-2" onClick={goPrev} aria-label="Previous period">
             <ChevronLeft size={18} />
-          </button>
-          <p className="text-sm font-semibold">{periodLabel}</p>
-          <button
-            type="button"
-            onClick={goNext}
-            aria-label="Next period"
-            className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800"
-          >
+          </Button>
+          <p className="text-sm font-semibold text-ink">{periodLabel}</p>
+          <Button variant="ghost" size="sm" className="!px-2" onClick={goNext} aria-label="Next period">
             <ChevronRight size={18} />
-          </button>
+          </Button>
         </div>
 
         <ErrorText>{error}</ErrorText>
 
         {isLoading ? (
-          <Spinner label="Loading stats..." />
+          <SkeletonRows rows={5} />
         ) : total === 0 ? (
           <EmptyState
             title={`No ${metric.toLowerCase()} recorded`}
             description="Add a transaction to see it broken down by category here."
+            icon={<PieChartIcon size={20} />}
           />
         ) : (
           <div className="space-y-6">
-            <CategoryPie slices={slices} currency={family.currency} />
-            <ul className="divide-y divide-slate-200 dark:divide-slate-800">
-              {slices.map((slice) => (
-                <li key={slice.key} className="flex items-center justify-between gap-3 py-2.5">
-                  <span className="flex min-w-0 items-center gap-2">
-                    <span className="h-3 w-3 shrink-0 rounded-full" style={{ backgroundColor: slice.color }} />
-                    <span className="truncate text-sm font-medium">{slice.name}</span>
-                  </span>
-                  <span className="flex shrink-0 items-center gap-3 text-sm">
-                    <span className="text-slate-400 dark:text-slate-500">{formatPercent(slice.fraction)}</span>
-                    <span className="font-semibold">{formatCurrency(slice.amount, family.currency)}</span>
-                  </span>
+            <div className="flex flex-col items-center gap-4 sm:flex-row sm:items-center sm:justify-around">
+              <CategoryPie slices={slices} currency={family.currency} metricLabel={`Total ${metric.toLowerCase()}`} />
+              {(delta !== 0 || previousTotal !== 0) && (
+                <div className="text-center sm:text-left">
+                  <p className="text-2xs font-semibold uppercase tracking-wide text-ink-subtle">vs {previousLabel}</p>
+                  <p
+                    className={`mt-1 flex items-center justify-center gap-1 text-sm font-bold sm:justify-start ${
+                      deltaGood ? "text-income" : "text-expense"
+                    }`}
+                  >
+                    {delta >= 0 ? <ArrowUpRight size={15} /> : <ArrowDownRight size={15} />}
+                    {formatPercent(previousTotal === 0 ? 1 : Math.abs(delta) / previousTotal)}
+                  </p>
+                  <p className="tnum mt-0.5 text-xs text-ink-subtle">
+                    <Money amount={previousTotal} currency={family.currency} compact /> {previousLabel}
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <ul className="divide-y divide-line">
+              {slices.map((slice, index) => (
+                <li key={slice.key} className="flex items-center gap-3 py-3">
+                  <span className="w-5 shrink-0 text-center text-xs font-bold text-ink-subtle">{index + 1}</span>
+                  <Dot color={slice.color} />
+                  <div className="min-w-0 flex-1">
+                    <div className="mb-1 flex items-center justify-between gap-2">
+                      <span className="truncate text-sm font-medium text-ink">{slice.name}</span>
+                      <span className="tnum shrink-0 text-sm font-bold">
+                        <Money amount={slice.amount} currency={family.currency} />
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <ProgressBar value={slice.fraction} className="flex-1" />
+                      <span className="w-10 shrink-0 text-right text-2xs font-semibold text-ink-subtle">
+                        {formatPercent(slice.fraction)}
+                      </span>
+                    </div>
+                  </div>
                 </li>
               ))}
             </ul>

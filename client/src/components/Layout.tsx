@@ -104,7 +104,7 @@ export function Layout() {
 
 function DesktopSidebar({ family }: { family: FamilySummary }) {
   return (
-    <aside className="sticky top-0 hidden h-dvh w-[236px] shrink-0 flex-col border-r border-line bg-surface/50 px-3 py-5 backdrop-blur-glass lg:flex">
+    <aside className="sticky top-0 hidden h-dvh w-[236px] shrink-0 flex-col border-r border-line bg-surface/80 px-3 py-5 backdrop-blur-glass transform-gpu lg:flex">
       <div className="mb-7 flex items-center gap-2.5 px-2">
         <Logo size={32} />
         <div className="min-w-0">
@@ -173,7 +173,7 @@ function TopBar({
   onLogout: () => void;
 }) {
   return (
-    <header className="sticky top-0 z-30 border-b border-line bg-canvas/70 backdrop-blur-glass">
+    <header className="sticky top-0 z-30 border-b border-line bg-canvas/80 backdrop-blur-glass transform-gpu">
       <div className="mx-auto flex w-full max-w-6xl items-center gap-3 px-4 py-3 sm:px-6 lg:px-8">
         <div className="flex min-w-0 items-center gap-2.5">
           <span className="lg:hidden">
@@ -291,7 +291,7 @@ function MobileTabBar() {
 
   return (
     <>
-      <nav className="safe-bottom fixed inset-x-0 bottom-0 z-40 border-t border-line bg-surface/80 backdrop-blur-glass lg:hidden">
+      <nav className="safe-bottom fixed inset-x-0 bottom-0 z-40 border-t border-line bg-surface/85 backdrop-blur-glass transform-gpu lg:hidden">
         <div className="mx-auto flex max-w-lg items-stretch">
           {primary.map((item) => (
             <TabLink key={item.to} item={item} />

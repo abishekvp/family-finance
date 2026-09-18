@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
-import { Download } from "lucide-react";
+import { Download, Landmark } from "lucide-react";
 import type { Account, Budget, Transaction } from "../../api/types";
-import { formatCurrency } from "../../lib/format";
+import { Money } from "../figures";
 import { cumulativeBalance } from "../../lib/carryOver";
-import { Button, Card, ErrorText, Spinner } from "../ui";
+import { Button, Card, Dot, ErrorText, ProgressBar, SkeletonRows } from "../ui";
 import { EmptyOrCarryOver } from "./EmptyOrCarryOver";
 import { api } from "../../api/client";
 import { getErrorMessage } from "../../api/errors";
@@ -99,26 +99,23 @@ export function TotalView({
   }
 
   if (isLoading) {
-    return <Spinner label="Loading summary..." />;
+    return <SkeletonRows rows={4} />;
   }
 
   return (
     <div className="space-y-4">
-      <div>
-        <p className="mb-3 text-sm font-semibold text-slate-600 dark:text-slate-300">{periodLabel}</p>
-        <div className="grid grid-cols-3 gap-3 text-center">
-          <div>
-            <p className="text-xs text-slate-500">Income</p>
-            <p className="mt-1 text-lg font-semibold text-income">{formatCurrency(income, currency)}</p>
-          </div>
-          <div>
-            <p className="text-xs text-slate-500">Expense</p>
-            <p className="mt-1 text-lg font-semibold text-expense">{formatCurrency(expense, currency)}</p>
-          </div>
-          <div>
-            <p className="text-xs text-slate-500">Total</p>
-            <p className="mt-1 text-lg font-semibold">{formatCurrency(income - expense, currency)}</p>
-          </div>
+      <div className="rounded-2xl border border-line bg-surface-sunken/50 py-5 text-center">
+        <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-ink-subtle">{periodLabel}</p>
+        <p className="tnum text-3xl font-extrabold tracking-tight text-ink">
+          <Money amount={income - expense} currency={currency} signed />
+        </p>
+        <div className="mt-4 flex items-center justify-center gap-6 text-sm">
+          <span className="tnum font-semibold text-income">
+            +<Money amount={income} currency={currency} />
+          </span>
+          <span className="tnum font-semibold text-expense">
+            −<Money amount={expense} currency={currency} />
+          </span>
         </div>
       </div>
 
@@ -132,36 +129,29 @@ export function TotalView({
       )}
 
       <Card>
-        <h3 className="mb-3 text-sm font-semibold">Budgets</h3>
+        <h3 className="mb-3 text-sm font-semibold text-ink">Budgets</h3>
         <ErrorText>{budgetsError}</ErrorText>
         {isLoadingBudgets ? (
-          <Spinner label="Loading budgets..." />
+          <SkeletonRows rows={2} />
         ) : budgets.length === 0 ? (
-          <p className="text-sm text-slate-400 dark:text-slate-500">
-            No budgets set for this month yet. Set one up in Settings.
-          </p>
+          <p className="text-sm text-ink-subtle">No budgets set for this month yet. Set one up in Settings.</p>
         ) : (
-          <ul className="space-y-3">
+          <ul className="space-y-3.5">
             {budgets.map((b) => {
-              const pct = b.amount > 0 ? Math.min(1, b.spent / b.amount) : 0;
+              const pct = b.amount > 0 ? b.spent / b.amount : 0;
               const over = b.spent > b.amount;
               return (
                 <li key={b.id}>
-                  <div className="mb-1 flex items-center justify-between text-xs">
-                    <span className="flex items-center gap-1.5 font-medium text-slate-700 dark:text-slate-200">
-                      <span className="h-2 w-2 rounded-full" style={{ backgroundColor: b.category.color }} />
+                  <div className="mb-1.5 flex items-center justify-between gap-2 text-xs">
+                    <span className="flex items-center gap-1.5 font-semibold text-ink">
+                      <Dot color={b.category.color} size={8} />
                       {b.category.name}
                     </span>
-                    <span className={over ? "text-expense" : "text-slate-500"}>
-                      {formatCurrency(b.spent, currency)} / {formatCurrency(b.amount, currency)}
+                    <span className={over ? "tnum text-expense" : "tnum text-ink-subtle"}>
+                      <Money amount={b.spent} currency={currency} /> / <Money amount={b.amount} currency={currency} />
                     </span>
                   </div>
-                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
-                    <div
-                      className={`h-full rounded-full ${over ? "bg-expense" : "bg-brand-500"}`}
-                      style={{ width: `${pct * 100}%` }}
-                    />
-                  </div>
+                  <ProgressBar value={pct} tone={over ? "expense" : "brand"} />
                 </li>
               );
             })}
@@ -171,22 +161,28 @@ export function TotalView({
 
       <Card>
         <div className="mb-3 flex items-center justify-between">
-          <h3 className="text-sm font-semibold">Accounts</h3>
-          <Button variant="secondary" onClick={handleExport} disabled={transactions.length === 0}>
-            <Download size={14} className="mr-1.5" />
+          <h3 className="text-sm font-semibold text-ink">Accounts</h3>
+          <Button variant="secondary" size="sm" icon={<Download size={14} />} onClick={handleExport} disabled={transactions.length === 0}>
             Export
           </Button>
         </div>
         {accountTotals.length === 0 ? (
-          <p className="text-sm text-slate-400 dark:text-slate-500">No accounts selected.</p>
+          <p className="text-sm text-ink-subtle">No accounts selected.</p>
         ) : (
-          <ul className="divide-y divide-slate-200 dark:divide-slate-800">
+          <ul className="divide-y divide-line">
             {accountTotals.map(({ account, income: accIncome, expense: accExpense }) => (
-              <li key={account.id} className="flex items-center justify-between py-2.5 text-sm">
-                <span className="font-medium">{account.name}</span>
-                <span className="flex gap-3 text-xs">
-                  <span className="text-income">+{formatCurrency(accIncome, account.currency)}</span>
-                  <span className="text-expense">-{formatCurrency(accExpense, account.currency)}</span>
+              <li key={account.id} className="flex items-center gap-3 py-2.5 text-sm">
+                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-brand-soft text-brand-600">
+                  <Landmark size={14} />
+                </span>
+                <span className="min-w-0 flex-1 truncate font-medium text-ink">{account.name}</span>
+                <span className="tnum flex shrink-0 gap-3 text-xs">
+                  <span className="text-income">
+                    +<Money amount={accIncome} currency={account.currency} />
+                  </span>
+                  <span className="text-expense">
+                    −<Money amount={accExpense} currency={account.currency} />
+                  </span>
                 </span>
               </li>
             ))}

@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, Text, View } from "react-native";
+import { Pressable, ScrollView, Text, View } from "react-native";
 import { useFocusEffect, useNavigation, useRouter } from "expo-router";
+import { ChevronLeft, ChevronRight, Filter as FilterIcon, Plus } from "lucide-react-native";
 import { api } from "../../../src/api/client";
 import type { Account, Transaction } from "../../../src/api/types";
 import { useAuth } from "../../../src/context/AuthContext";
 import { usePrefs } from "../../../src/context/PrefsContext";
+import { useTheme } from "../../../src/context/ThemeContext";
 import { getErrorMessage } from "../../../src/api/errors";
-import { ErrorText, Segmented, colors } from "../../../src/components/ui";
+import { ErrorText, IconButton, Money, Segmented, SkeletonRows, tap } from "../../../src/components/ui";
 import { monthRange, yearRange } from "../../../src/lib/dateUtils";
 import { href } from "../../../src/lib/nav";
 import { DailyView } from "../../../src/components/transactions/DailyView";
@@ -14,6 +16,7 @@ import { CalendarView } from "../../../src/components/transactions/CalendarView"
 import { MonthlyView } from "../../../src/components/transactions/MonthlyView";
 import { TotalView } from "../../../src/components/transactions/TotalView";
 import { FilterModal } from "../../../src/components/transactions/FilterModal";
+import * as Haptics from "expo-haptics";
 
 type SubView = "daily" | "calendar" | "monthly" | "total";
 
@@ -27,6 +30,7 @@ const SUB_VIEW_OPTIONS: { value: SubView; label: string }[] = [
 export default function TransactionsHub() {
   const { user } = useAuth();
   const family = user!.families[0];
+  const { colors } = useTheme();
   const router = useRouter();
   const navigation = useNavigation();
   const { prefs, isLoading: prefsLoading } = usePrefs();
@@ -34,7 +38,6 @@ export default function TransactionsHub() {
   const [subView, setSubView] = useState<SubView>("daily");
   const didInitFromPrefs = useRef(false);
   useEffect(() => {
-    // One-time sync from the persisted default landing view, before the user touches the toggle.
     if (!prefsLoading && !didInitFromPrefs.current) {
       didInitFromPrefs.current = true;
       setSubView(prefs.landingView);
@@ -88,70 +91,90 @@ export default function TransactionsHub() {
   useLayoutEffect(() => {
     navigation.setOptions({
       headerRight: () => (
-        <Pressable onPress={() => setFilterVisible(true)} hitSlop={10} style={{ paddingHorizontal: 8 }}>
-          <Text style={{ fontSize: 14, fontWeight: "600", color: selectedAccountIds ? colors.brand600 : colors.slate700 }}>
-            Filter{selectedAccountIds ? ` (${selectedAccountIds.size})` : ""}
+        <Pressable onPress={() => setFilterVisible(true)} hitSlop={10} style={{ paddingHorizontal: 8, flexDirection: "row", alignItems: "center", gap: 4 }}>
+          <FilterIcon size={15} color={selectedAccountIds ? colors.brand600 : colors.inkMuted} />
+          <Text style={{ fontSize: 13, fontWeight: "700", color: selectedAccountIds ? colors.brand600 : colors.inkMuted }}>
+            {selectedAccountIds ? `(${selectedAccountIds.size})` : "Filter"}
           </Text>
         </Pressable>
       ),
     });
-  }, [navigation, selectedAccountIds]);
+  }, [navigation, selectedAccountIds, colors]);
 
   const filteredTransactions = useMemo(() => {
     if (selectedAccountIds === null) return periodTransactions;
     return periodTransactions.filter((t) => selectedAccountIds.has(t.accountId));
   }, [periodTransactions, selectedAccountIds]);
 
-  const scopedAccountIds = useMemo(
-    () => selectedAccountIds ?? new Set(accounts.map((a) => a.id)),
-    [selectedAccountIds, accounts]
-  );
+  const scopedAccountIds = useMemo(() => selectedAccountIds ?? new Set(accounts.map((a) => a.id)), [selectedAccountIds, accounts]);
+
+  const periodTotals = useMemo(() => {
+    let income = 0;
+    let expense = 0;
+    for (const t of filteredTransactions) {
+      if (t.type === "INCOME") income += t.amount;
+      else if (t.type === "EXPENSE") expense += t.amount;
+    }
+    return { income, expense, net: income - expense };
+  }, [filteredTransactions]);
 
   function openTransaction(t: Transaction) {
     router.push(href("/transaction-form", { id: t.id, transaction: JSON.stringify(t) }));
   }
 
   function openNewTransaction() {
+    tap(Haptics.ImpactFeedbackStyle.Medium);
     router.push(href("/transaction-form"));
   }
 
   const monthLabel = anchorMonth.toLocaleDateString(undefined, { month: "long", year: "numeric" });
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.slate50 }}>
-      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 100, gap: 12 }}>
-        <Segmented options={SUB_VIEW_OPTIONS} value={subView} onChange={setSubView} />
+    <View style={{ flex: 1, backgroundColor: colors.canvas }}>
+      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 100, gap: 14 }}>
+        <Segmented options={SUB_VIEW_OPTIONS} value={subView} onChange={setSubView} fullWidth />
 
-        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 20 }}>
-          <Pressable
-            hitSlop={10}
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 }}>
+          <IconButton
             onPress={() =>
-              subView === "monthly"
-                ? setSelectedYear((y) => y - 1)
-                : setAnchorMonth((d) => new Date(d.getFullYear(), d.getMonth() - 1, 1))
+              subView === "monthly" ? setSelectedYear((y) => y - 1) : setAnchorMonth((d) => new Date(d.getFullYear(), d.getMonth() - 1, 1))
             }
           >
-            <Text style={{ fontSize: 18, color: colors.slate500 }}>‹</Text>
-          </Pressable>
-          <Text style={{ fontWeight: "700", fontSize: 15 }}>{subView === "monthly" ? selectedYear : monthLabel}</Text>
-          <Pressable
-            hitSlop={10}
+            <ChevronLeft size={19} color={colors.inkMuted} />
+          </IconButton>
+          <Text style={{ fontWeight: "800", fontSize: 15, color: colors.ink, minWidth: 140, textAlign: "center" }}>
+            {subView === "monthly" ? selectedYear : monthLabel}
+          </Text>
+          <IconButton
             onPress={() =>
-              subView === "monthly"
-                ? setSelectedYear((y) => y + 1)
-                : setAnchorMonth((d) => new Date(d.getFullYear(), d.getMonth() + 1, 1))
+              subView === "monthly" ? setSelectedYear((y) => y + 1) : setAnchorMonth((d) => new Date(d.getFullYear(), d.getMonth() + 1, 1))
             }
           >
-            <Text style={{ fontSize: 18, color: colors.slate500 }}>›</Text>
-          </Pressable>
+            <ChevronRight size={19} color={colors.inkMuted} />
+          </IconButton>
         </View>
+
+        {subView !== "total" && (
+          <View style={{ flexDirection: "row", justifyContent: "space-around", backgroundColor: colors.surfaceSunken, borderRadius: 14, paddingVertical: 12 }}>
+            <View style={{ alignItems: "center" }}>
+              <Text style={{ fontSize: 10, fontWeight: "700", color: colors.inkSubtle, textTransform: "uppercase" }}>Income</Text>
+              <Money amount={periodTotals.income} currency={family.currency} tone="income" style={{ fontWeight: "800", marginTop: 2 }} />
+            </View>
+            <View style={{ alignItems: "center" }}>
+              <Text style={{ fontSize: 10, fontWeight: "700", color: colors.inkSubtle, textTransform: "uppercase" }}>Expenses</Text>
+              <Money amount={periodTotals.expense} currency={family.currency} tone="expense" style={{ fontWeight: "800", marginTop: 2 }} />
+            </View>
+            <View style={{ alignItems: "center" }}>
+              <Text style={{ fontSize: 10, fontWeight: "700", color: colors.inkSubtle, textTransform: "uppercase" }}>Net</Text>
+              <Money amount={periodTotals.net} currency={family.currency} signed style={{ fontWeight: "800", marginTop: 2 }} />
+            </View>
+          </View>
+        )}
 
         <ErrorText>{error}</ErrorText>
 
         {isLoading ? (
-          <View style={{ paddingVertical: 60, alignItems: "center" }}>
-            <ActivityIndicator color={colors.brand600} size="large" />
-          </View>
+          <SkeletonRows rows={5} />
         ) : subView === "daily" ? (
           <DailyView
             transactions={filteredTransactions}
@@ -206,21 +229,21 @@ export default function TransactionsHub() {
           position: "absolute",
           right: 20,
           bottom: 24,
-          width: 56,
-          height: 56,
-          borderRadius: 28,
-          backgroundColor: colors.brand600,
+          width: 58,
+          height: 58,
+          borderRadius: 29,
           alignItems: "center",
           justifyContent: "center",
-          opacity: pressed ? 0.85 : 1,
-          shadowColor: "#000",
-          shadowOffset: { width: 0, height: 2 },
-          shadowOpacity: 0.2,
-          shadowRadius: 6,
-          elevation: 4,
+          backgroundColor: colors.brand600,
+          shadowColor: colors.brand600,
+          shadowOffset: { width: 0, height: 6 },
+          shadowOpacity: 0.4,
+          shadowRadius: 12,
+          elevation: 6,
+          transform: [{ scale: pressed ? 0.94 : 1 }],
         })}
       >
-        <Text style={{ color: colors.white, fontSize: 28, fontWeight: "300", marginTop: -2 }}>+</Text>
+        <Plus size={26} color="#fff" />
       </Pressable>
 
       <FilterModal

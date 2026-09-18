@@ -1,17 +1,19 @@
 import { useCallback, useMemo, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, Text, View } from "react-native";
+import { Pressable, ScrollView, Text, View } from "react-native";
 import { useFocusEffect } from "expo-router";
+import { Tag } from "lucide-react-native";
 import { api } from "../../src/api/client";
 import type { Category, CategoryType } from "../../src/api/types";
 import { useAuth } from "../../src/context/AuthContext";
+import { useTheme } from "../../src/context/ThemeContext";
 import { getErrorMessage } from "../../src/api/errors";
-import { Button, Card, ErrorText, Input, Label, Segmented, colors, pillStyle, pillTextStyle } from "../../src/components/ui";
+import { Badge, Button, Card, Chip, EmptyState, ErrorText, Field, Input, Segmented, SkeletonRows, Toggle } from "../../src/components/ui";
 import { CategoryBadge } from "../../src/components/transactions/TransactionRow";
-
-const SWATCHES = ["#4F46E5", "#0EA5E9", "#F59E0B", "#EC4899", "#10B981", "#8B5CF6", "#F97316", "#14B8A6", "#DC2626", "#64748B"];
+import { CHART_SWATCHES } from "../../src/theme";
 
 export default function Categories() {
   const { user } = useAuth();
+  const { colors } = useTheme();
   const family = user!.families[0];
   const [categories, setCategories] = useState<Category[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -90,30 +92,18 @@ export default function Categories() {
           setShowAddForm(false);
           setEditing(category);
         }}
-        style={{
-          flexDirection: "row",
-          alignItems: "center",
-          gap: 10,
-          paddingVertical: 12,
-          paddingLeft: indent ? 32 : 0,
-        }}
+        style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 12, paddingLeft: indent ? 32 : 0 }}
       >
-        <CategoryBadge color={category.color} label={category.name[0]?.toUpperCase() ?? "?"} size={30} />
-        <Text style={{ flex: 1, fontSize: 14, fontWeight: indent ? "500" : "600" }} numberOfLines={1}>
+        <CategoryBadge color={category.color} label={category.name[0]?.toUpperCase() ?? "?"} size={32} />
+        <Text style={{ flex: 1, fontSize: 14, fontWeight: indent ? "600" : "700", color: colors.ink }} numberOfLines={1}>
           {category.name}
         </Text>
+        {category.ownerId && <Badge>Private</Badge>}
         {confirmArchiveId === category.id ? (
-          <View style={{ flexDirection: "row", gap: 12 }}>
-            <Pressable onPress={() => handleArchive(category.id)} hitSlop={8}>
-              <Text style={{ color: colors.red600, fontSize: 11, fontWeight: "700" }}>Confirm</Text>
-            </Pressable>
-            <Pressable onPress={() => setConfirmArchiveId(null)} hitSlop={8}>
-              <Text style={{ color: colors.slate500, fontSize: 11, fontWeight: "600" }}>Cancel</Text>
-            </Pressable>
-          </View>
+          <Button title="Confirm" size="sm" variant="danger" onPress={() => handleArchive(category.id)} />
         ) : (
           <Pressable onPress={() => setConfirmArchiveId(category.id)} hitSlop={8}>
-            <Text style={{ color: colors.slate400, fontSize: 11, fontWeight: "600" }}>Archive</Text>
+            <Text style={{ color: colors.inkSubtle, fontSize: 11, fontWeight: "700" }}>Archive</Text>
           </Pressable>
         )}
       </Pressable>
@@ -121,7 +111,7 @@ export default function Categories() {
   }
 
   return (
-    <ScrollView style={{ backgroundColor: colors.slate50 }} contentContainerStyle={{ padding: 16, gap: 16 }}>
+    <ScrollView style={{ backgroundColor: colors.canvas }} contentContainerStyle={{ padding: 16, gap: 16 }}>
       <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
         <Segmented
           options={[
@@ -138,6 +128,7 @@ export default function Categories() {
         <Button
           title={showAddForm ? "Cancel" : "Add"}
           variant="secondary"
+          size="sm"
           onPress={() => {
             setEditing(null);
             setShowAddForm((v) => !v);
@@ -162,17 +153,13 @@ export default function Categories() {
       <ErrorText>{archiveError}</ErrorText>
 
       {isLoading ? (
-        <ActivityIndicator color={colors.brand600} size="large" style={{ marginTop: 40 }} />
+        <SkeletonRows rows={4} />
       ) : parents.length === 0 ? (
-        <Card>
-          <Text style={{ color: colors.slate400, fontSize: 13, textAlign: "center" }}>
-            No {type.toLowerCase()} categories yet. Add one to start organizing transactions.
-          </Text>
-        </Card>
+        <EmptyState icon={<Tag size={20} color={colors.brand600} />} title={`No ${type.toLowerCase()} categories yet`} description="Add one to start organizing transactions." />
       ) : (
-        <Card style={{ padding: 0, paddingHorizontal: 16 }}>
+        <Card style={{ paddingVertical: 4, paddingHorizontal: 16 }}>
           {parents.map((parent, i) => (
-            <View key={parent.id} style={{ borderTopWidth: i === 0 ? 0 : 1, borderTopColor: colors.slate200 }}>
+            <View key={parent.id} style={{ borderTopWidth: i === 0 ? 0 : 1, borderTopColor: colors.line }}>
               {renderRow(parent, false)}
               {(childrenByParent.get(parent.id) ?? []).map((child) => renderRow(child, true))}
             </View>
@@ -198,9 +185,10 @@ function CategoryForm({
   onDone: () => void;
   onCancel: () => void;
 }) {
+  const { colors } = useTheme();
   const isEdit = !!initial;
   const [name, setName] = useState(initial?.name ?? "");
-  const [color, setColor] = useState(initial?.color ?? SWATCHES[0]);
+  const [color, setColor] = useState(initial?.color ?? CHART_SWATCHES[0]);
   const [parentId, setParentId] = useState<string | null>(initial?.parentId ?? null);
   const [isCommon, setIsCommon] = useState(initial ? initial.ownerId === null : true);
   const [error, setError] = useState<string | null>(null);
@@ -213,19 +201,9 @@ function CategoryForm({
     setIsSubmitting(true);
     try {
       if (isEdit && initial) {
-        await api.patch(`/families/${familyId}/categories/${initial.id}`, {
-          name,
-          color,
-          parentId,
-        });
+        await api.patch(`/families/${familyId}/categories/${initial.id}`, { name, color, parentId });
       } else {
-        await api.post(`/families/${familyId}/categories`, {
-          name,
-          type,
-          color,
-          parentId,
-          isCommon,
-        });
+        await api.post(`/families/${familyId}/categories`, { name, type, color, parentId, isCommon });
       }
       onDone();
     } catch (err) {
@@ -236,65 +214,45 @@ function CategoryForm({
   }
 
   return (
-    <Card style={{ gap: 12 }}>
-      <View>
-        <Label>Name</Label>
+    <Card style={{ gap: 14 }}>
+      <Field label="Name">
         <Input value={name} onChangeText={setName} placeholder={type === "EXPENSE" ? "Groceries" : "Salary"} />
-      </View>
+      </Field>
 
-      <View>
-        <Label>Color</Label>
-        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-          {SWATCHES.map((c) => (
+      <Field label="Color">
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
+          {CHART_SWATCHES.map((c) => (
             <Pressable
               key={c}
               onPress={() => setColor(c)}
-              style={{
-                width: 28,
-                height: 28,
-                borderRadius: 14,
-                backgroundColor: c,
-                borderWidth: color === c ? 3 : 0,
-                borderColor: colors.slate900,
-              }}
+              style={{ width: 30, height: 30, borderRadius: 15, backgroundColor: c, borderWidth: color === c ? 3 : 0, borderColor: colors.ink }}
             />
           ))}
         </View>
-      </View>
+      </Field>
 
       {availableParents.length > 0 && (
-        <View>
-          <Label>Parent category</Label>
+        <Field label="Parent category">
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-            <Pressable onPress={() => setParentId(null)} style={pillStyle(parentId === null)}>
-              <Text style={pillTextStyle(parentId === null)}>None (top-level)</Text>
-            </Pressable>
+            <Chip label="None (top-level)" selected={parentId === null} onPress={() => setParentId(null)} />
             {availableParents.map((p) => (
-              <Pressable key={p.id} onPress={() => setParentId(p.id)} style={pillStyle(parentId === p.id)}>
-                <Text style={pillTextStyle(parentId === p.id)}>{p.name}</Text>
-              </Pressable>
+              <Chip key={p.id} label={p.name} selected={parentId === p.id} onPress={() => setParentId(p.id)} />
             ))}
           </View>
-        </View>
+        </Field>
       )}
 
       {!isEdit && (
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-          <Label>Shared family category</Label>
-          <Pressable onPress={() => setIsCommon((v) => !v)} style={[pillStyle(isCommon), { paddingHorizontal: 16 }]}>
-            <Text style={pillTextStyle(isCommon)}>{isCommon ? "Shared" : "Private"}</Text>
-          </Pressable>
+          <Text style={{ fontSize: 13, fontWeight: "600", color: colors.ink }}>Shared family category</Text>
+          <Toggle value={isCommon} onChange={setIsCommon} />
         </View>
       )}
 
       <ErrorText>{error}</ErrorText>
       <View style={{ flexDirection: "row", gap: 8 }}>
         <View style={{ flex: 1 }}>
-          <Button
-            title={isSubmitting ? "Saving..." : isEdit ? "Save changes" : "Add category"}
-            onPress={handleSubmit}
-            disabled={isSubmitting || !name.trim()}
-          />
+          <Button title={isEdit ? "Save changes" : "Add category"} loading={isSubmitting} disabled={!name.trim()} onPress={handleSubmit} />
         </View>
         <View style={{ flex: 1 }}>
           <Button title="Cancel" variant="secondary" onPress={onCancel} />

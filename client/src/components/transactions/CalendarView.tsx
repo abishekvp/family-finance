@@ -1,12 +1,12 @@
 import { useMemo, useState } from "react";
-import { addDays, endOfMonth, endOfWeek, format, isSameDay, isSameMonth, startOfMonth, startOfWeek } from "date-fns";
+import { addDays, endOfMonth, endOfWeek, format, isSameDay, isSameMonth, isToday, startOfMonth, startOfWeek } from "date-fns";
 import type { Account, Transaction } from "../../api/types";
 import { TransactionRow } from "./TransactionRow";
 import { EmptyOrCarryOver } from "./EmptyOrCarryOver";
-import { formatCurrency } from "../../lib/format";
+import { Money } from "../figures";
+import { cn, SkeletonRows } from "../ui";
 import { cumulativeBalance } from "../../lib/carryOver";
 import { weekStartsOn, type WeekStart } from "../../lib/prefs";
-import { Spinner } from "../ui";
 
 const WEEKDAY_LABELS_SUNDAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const WEEKDAY_LABELS_MONDAY = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -64,7 +64,7 @@ export function CalendarView({
   }, [transactions]);
 
   if (isLoading) {
-    return <Spinner label="Loading transactions..." />;
+    return <SkeletonRows rows={5} />;
   }
 
   const weekdayLabels = wsOn === 1 ? WEEKDAY_LABELS_MONDAY : WEEKDAY_LABELS_SUNDAY;
@@ -84,12 +84,9 @@ export function CalendarView({
         />
       )}
 
-      <div className="grid grid-cols-7 gap-px overflow-hidden rounded-xl border border-slate-200 bg-slate-200 text-[11px] dark:border-slate-800 dark:bg-slate-800">
+      <div className="grid grid-cols-7 gap-px overflow-hidden rounded-2xl border border-line bg-line text-2xs">
         {weekdayLabels.map((label) => (
-          <div
-            key={label}
-            className="bg-slate-100 px-2 py-1.5 text-center font-medium text-slate-500 dark:bg-slate-900 dark:text-slate-400"
-          >
+          <div key={label} className="bg-surface-sunken px-1 py-1.5 text-center font-semibold text-ink-subtle">
             {label}
           </div>
         ))}
@@ -98,40 +95,54 @@ export function CalendarView({
           const totals = totalsByDay.get(key);
           const inMonth = isSameMonth(day, monthDate);
           const isSelected = selectedDay ? isSameDay(day, selectedDay) : false;
+          const today = isToday(day);
           return (
             <button
               type="button"
               key={key}
               onClick={() => setSelectedDay(day)}
-              className={`flex min-h-[64px] flex-col items-start gap-0.5 bg-white px-1.5 py-1.5 text-left transition-colors dark:bg-slate-900 ${
-                inMonth ? "" : "opacity-40"
-              } ${
-                isSelected
-                  ? "ring-2 ring-inset ring-brand-500"
-                  : "hover:bg-slate-50 dark:hover:bg-slate-800/60"
-              }`}
+              className={cn(
+                "flex min-h-[58px] flex-col items-start gap-0.5 bg-surface px-1.5 py-1.5 text-left transition-colors duration-150 sm:min-h-[72px]",
+                !inMonth && "opacity-35",
+                isSelected ? "brand-gradient" : "hover:bg-surface-sunken"
+              )}
             >
               <span
-                className={`text-[11px] font-medium ${inMonth ? "text-slate-700 dark:text-slate-200" : "text-slate-400 dark:text-slate-600"}`}
+                className={cn(
+                  "grid h-5 w-5 place-items-center rounded-full text-2xs font-bold",
+                  isSelected
+                    ? "bg-white/25 text-white"
+                    : today
+                      ? "bg-brand-soft text-brand-600"
+                      : "text-ink-muted"
+                )}
               >
                 {format(day, "d")}
               </span>
-              {totals?.income ? <span className="text-income">+{formatCurrency(totals.income, currency)}</span> : null}
-              {totals?.expense ? <span className="text-expense">-{formatCurrency(totals.expense, currency)}</span> : null}
+              <span className="flex flex-col gap-0.5 leading-tight">
+                {totals?.income ? (
+                  <span className={cn("tnum text-2xs font-semibold", isSelected ? "text-white" : "text-income")}>
+                    +<Money amount={totals.income} currency={currency} compact />
+                  </span>
+                ) : null}
+                {totals?.expense ? (
+                  <span className={cn("tnum text-2xs font-semibold", isSelected ? "text-white/90" : "text-expense")}>
+                    −<Money amount={totals.expense} currency={currency} compact />
+                  </span>
+                ) : null}
+              </span>
             </button>
           );
         })}
       </div>
 
       {selectedDay && (
-        <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
-          <p className="mb-2 text-sm font-semibold text-slate-600 dark:text-slate-300">
-            {format(selectedDay, "EEEE, MMM d")}
-          </p>
+        <div className="rounded-2xl border border-line bg-surface/40 p-4">
+          <p className="mb-2 text-sm font-semibold text-ink-muted">{format(selectedDay, "EEEE, MMM d")}</p>
           {selectedDayTransactions.length === 0 ? (
-            <p className="text-sm text-slate-400 dark:text-slate-500">No transactions on this day.</p>
+            <p className="text-sm text-ink-subtle">No transactions on this day.</p>
           ) : (
-            <div className="divide-y divide-slate-200 dark:divide-slate-800">
+            <div className="divide-y divide-line">
               {selectedDayTransactions.map((t) => (
                 <TransactionRow key={t.id} transaction={t} onClick={() => onRowClick(t)} />
               ))}

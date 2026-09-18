@@ -1,51 +1,65 @@
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { useRouter } from "expo-router";
+import { ChevronRight, LogOut, type LucideIcon, PiggyBank, Settings as SettingsIcon, Tag, Users } from "lucide-react-native";
 import { useAuth } from "../../../src/context/AuthContext";
-import { Button, Card, colors } from "../../../src/components/ui";
+import { useTheme } from "../../../src/context/ThemeContext";
+import { Avatar, Button, Card } from "../../../src/components/ui";
 import { href } from "../../../src/lib/nav";
+import { ThemePicker } from "../../../src/components/ThemePicker";
 
-const MENU_ITEMS: { path: string; label: string; hint: string }[] = [
-  { path: "/family", label: "Family", hint: "Members, roles, and invites" },
-  { path: "/settings", label: "Settings", hint: "Currency, defaults, and preferences" },
-  { path: "/categories", label: "Categories", hint: "Manage income and expense categories" },
-  { path: "/budgets", label: "Budgets", hint: "Set and track monthly budgets" },
+const MENU_ITEMS: { path: string; label: string; hint: string; icon: LucideIcon }[] = [
+  { path: "/family", label: "Family", hint: "Members, roles, and invites", icon: Users },
+  { path: "/settings", label: "Settings", hint: "Currency, defaults, and preferences", icon: SettingsIcon },
+  { path: "/categories", label: "Categories", hint: "Manage income and expense categories", icon: Tag },
+  { path: "/budgets", label: "Budgets", hint: "Set and track monthly budgets", icon: PiggyBank },
 ];
 
 export default function More() {
   const router = useRouter();
   const { user, logout } = useAuth();
+  const { colors } = useTheme();
 
   return (
-    <ScrollView style={{ backgroundColor: colors.slate50 }} contentContainerStyle={{ padding: 16, gap: 16 }}>
-      <Card style={{ gap: 2 }}>
-        <Text style={{ fontWeight: "700", fontSize: 16 }}>{user?.name}</Text>
-        <Text style={{ color: colors.slate500, fontSize: 13 }}>{user?.email}</Text>
+    <ScrollView style={{ backgroundColor: colors.canvas }} contentContainerStyle={{ padding: 16, gap: 16 }}>
+      <Card style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+        <Avatar name={user?.name ?? "?"} size={44} />
+        <View style={{ flex: 1 }}>
+          <Text style={{ fontWeight: "800", fontSize: 15, color: colors.ink }}>{user?.name}</Text>
+          <Text style={{ color: colors.inkSubtle, fontSize: 12, marginTop: 1 }}>{user?.email}</Text>
+        </View>
       </Card>
 
       <Card style={{ padding: 0 }}>
-        {MENU_ITEMS.map((item, i) => (
-          <Pressable
-            key={item.path}
-            onPress={() => router.push(href(item.path))}
-            style={{
-              flexDirection: "row",
-              justifyContent: "space-between",
-              alignItems: "center",
-              padding: 16,
-              borderTopWidth: i === 0 ? 0 : 1,
-              borderTopColor: colors.slate200,
-            }}
-          >
-            <View>
-              <Text style={{ fontWeight: "600", fontSize: 15 }}>{item.label}</Text>
-              <Text style={{ color: colors.slate500, fontSize: 12, marginTop: 2 }}>{item.hint}</Text>
-            </View>
-            <Text style={{ color: colors.slate400, fontSize: 18 }}>›</Text>
-          </Pressable>
-        ))}
+        {MENU_ITEMS.map((item, i) => {
+          const Icon = item.icon;
+          return (
+            <Pressable
+              key={item.path}
+              onPress={() => router.push(href(item.path))}
+              style={({ pressed }) => [
+                { flexDirection: "row", alignItems: "center", gap: 12, padding: 16, borderTopWidth: i === 0 ? 0 : 1, borderTopColor: colors.line },
+                pressed && { backgroundColor: colors.surfaceSunken },
+              ]}
+            >
+              <View style={{ width: 36, height: 36, borderRadius: 11, backgroundColor: colors.brandSoft, alignItems: "center", justifyContent: "center" }}>
+                <Icon size={16} color={colors.brand600} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontWeight: "700", fontSize: 14.5, color: colors.ink }}>{item.label}</Text>
+                <Text style={{ color: colors.inkSubtle, fontSize: 11.5, marginTop: 1 }}>{item.hint}</Text>
+              </View>
+              <ChevronRight size={17} color={colors.inkSubtle} />
+            </Pressable>
+          );
+        })}
       </Card>
 
-      <Button title="Sign out" variant="secondary" onPress={() => logout()} />
+      <Card>
+        <Text style={{ fontSize: 12, fontWeight: "700", color: colors.inkMuted, marginBottom: 10, textTransform: "uppercase" }}>Appearance</Text>
+        <ThemePicker />
+      </Card>
+
+      <Button title="Sign out" variant="secondary" icon={<LogOut size={16} color={colors.ink} />} onPress={() => logout()} />
     </ScrollView>
   );
 }

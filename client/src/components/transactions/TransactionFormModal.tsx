@@ -1,14 +1,46 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { ArrowRightLeft, Landmark, MinusCircle, PlusCircle } from "lucide-react";
 import { api } from "../../api/client";
 import { getErrorMessage } from "../../api/errors";
-import { Button, ErrorText, Input, Label, Modal, Segmented, Select } from "../ui";
+import { Button, Chip, ErrorText, Field, Input, Label, Modal, Segmented, Select } from "../ui";
 import type { Account, Category, Transaction, TransactionType } from "../../api/types";
+import { currencySymbol } from "../../lib/format";
 
-const TRANSACTION_TYPES: { value: TransactionType; label: string }[] = [
-  { value: "INCOME", label: "Income" },
-  { value: "EXPENSE", label: "Expense" },
-  { value: "TRANSFER", label: "Transfer" },
+const TRANSACTION_TYPES: { value: TransactionType; label: ReactNode }[] = [
+  {
+    value: "INCOME",
+    label: (
+      <span className="flex items-center justify-center gap-1.5">
+        <PlusCircle size={14} />
+        Income
+      </span>
+    ),
+  },
+  {
+    value: "EXPENSE",
+    label: (
+      <span className="flex items-center justify-center gap-1.5">
+        <MinusCircle size={14} />
+        Expense
+      </span>
+    ),
+  },
+  {
+    value: "TRANSFER",
+    label: (
+      <span className="flex items-center justify-center gap-1.5">
+        <ArrowRightLeft size={14} />
+        Transfer
+      </span>
+    ),
+  },
 ];
+
+const TYPE_TONE: Record<TransactionType, string> = {
+  INCOME: "text-income",
+  EXPENSE: "text-expense",
+  TRANSFER: "text-brand-600",
+};
 
 function toDateInputValue(iso: string | undefined) {
   const d = iso ? new Date(iso) : new Date();
@@ -52,8 +84,8 @@ function formFromTransaction(t: Transaction): FormState {
   };
 }
 
-// Add/Edit form for a single transaction (product-scope item 5). Reused by the
-// Transactions hub (floating add button + row tap) and Dashboard's quick-add button.
+// Add/Edit form for a single transaction — the single most-used interaction in the app.
+// Reused by the Transactions hub (floating add button + row tap) and Dashboard's quick-add.
 export function TransactionFormModal({
   familyId,
   accounts,
@@ -93,8 +125,11 @@ export function TransactionFormModal({
       childrenByParent.set(c.parentId, list);
     }
   }
+  const flatCategoryChoices = categoriesForType.length <= 14;
 
   const transferTargets = accounts.filter((a) => a.id !== form.accountId);
+  const selectedAccount = accounts.find((a) => a.id === form.accountId);
+  const symbol = currencySymbol(selectedAccount?.currency ?? "USD");
 
   function update<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((f) => ({ ...f, [key]: value }));
@@ -145,8 +180,31 @@ export function TransactionFormModal({
     (form.type !== "TRANSFER" || Boolean(form.transferToAccountId));
 
   return (
-    <Modal title={isEdit ? "Edit transaction" : "Add transaction"} onClose={onClose}>
-      <form onSubmit={handleSubmit} className="space-y-4">
+    <Modal
+      title={isEdit ? "Edit transaction" : "Add transaction"}
+      onClose={onClose}
+      footer={
+        <div className="flex flex-wrap justify-end gap-2">
+          <Button type="button" variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          {!isEdit && (
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={isSubmitting || !canSubmit}
+              onClick={() => submit(true)}
+            >
+              Save &amp; add another
+            </Button>
+          )}
+          <Button type="submit" form="transaction-form" loading={isSubmitting} disabled={!canSubmit}>
+            Save
+          </Button>
+        </div>
+      }
+    >
+      <form id="transaction-form" onSubmit={handleSubmit} className="space-y-5">
         <Segmented
           value={form.type}
           onChange={(value) =>
@@ -158,134 +216,146 @@ export function TransactionFormModal({
             }))
           }
           options={TRANSACTION_TYPES}
-          className="w-full justify-between [&>button]:flex-1"
+          className="w-full [&>button]:flex-1"
         />
 
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <Label htmlFor="txn-date">Date</Label>
-            <Input id="txn-date" type="date" value={form.date} onChange={(e) => update("date", e.target.value)} />
-          </div>
-          <div>
-            <Label htmlFor="txn-amount">Amount</Label>
-            <Input
-              id="txn-amount"
+        <div className="rounded-2xl border border-line bg-surface-sunken/60 px-4 py-5 text-center">
+          <p className="mb-1 text-2xs font-semibold uppercase tracking-wide text-ink-subtle">Amount</p>
+          <div className={`flex items-center justify-center gap-1.5 text-4xl font-extrabold tracking-tight ${TYPE_TONE[form.type]}`}>
+            <span className="text-2xl opacity-70">{symbol}</span>
+            <input
               type="number"
+              inputMode="decimal"
               step="0.01"
               min="0.01"
               required
+              autoFocus={!isEdit}
               value={form.amount}
               onChange={(e) => update("amount", e.target.value)}
+              placeholder="0.00"
+              className="w-40 bg-transparent text-center tabular-nums outline-none placeholder:text-ink-subtle/50"
             />
           </div>
         </div>
 
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Date">
+            {(props) => (
+              <Input {...props} type="date" value={form.date} onChange={(e) => update("date", e.target.value)} />
+            )}
+          </Field>
+          <Field label="Payee">
+            {(props) => (
+              <Input
+                {...props}
+                value={form.payee}
+                onChange={(e) => update("payee", e.target.value)}
+                placeholder="Optional"
+              />
+            )}
+          </Field>
+        </div>
+
         <div>
-          <Label htmlFor="txn-account">Account</Label>
-          <Select
-            id="txn-account"
-            required
-            value={form.accountId}
-            onChange={(e) => {
-              const next = e.target.value;
-              update("accountId", next);
-              if (form.transferToAccountId === next) update("transferToAccountId", "");
-            }}
-          >
-            <option value="" disabled>
-              Select an account
-            </option>
+          <Label>Account</Label>
+          <div className="flex flex-wrap gap-2">
             {accounts.map((a) => (
-              <option key={a.id} value={a.id}>
+              <Chip
+                key={a.id}
+                type="button"
+                selected={form.accountId === a.id}
+                onClick={() => {
+                  update("accountId", a.id);
+                  if (form.transferToAccountId === a.id) update("transferToAccountId", "");
+                }}
+              >
+                <Landmark size={12} />
                 {a.name}
-              </option>
+              </Chip>
             ))}
-          </Select>
+          </div>
         </div>
 
         {form.type === "TRANSFER" ? (
           <div>
-            <Label htmlFor="txn-transfer-to">Transfer to</Label>
-            <Select
-              id="txn-transfer-to"
-              required
-              value={form.transferToAccountId}
-              onChange={(e) => update("transferToAccountId", e.target.value)}
-            >
-              <option value="" disabled>
-                Select destination account
-              </option>
-              {transferTargets.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name}
-                </option>
-              ))}
-            </Select>
+            <Label>Transfer to</Label>
+            <div className="flex flex-wrap gap-2">
+              {transferTargets.length === 0 ? (
+                <p className="text-xs text-ink-subtle">No other account to transfer to yet.</p>
+              ) : (
+                transferTargets.map((a) => (
+                  <Chip
+                    key={a.id}
+                    type="button"
+                    selected={form.transferToAccountId === a.id}
+                    onClick={() => update("transferToAccountId", a.id)}
+                  >
+                    {a.name}
+                  </Chip>
+                ))
+              )}
+            </div>
           </div>
-        ) : (
+        ) : flatCategoryChoices ? (
           <div>
-            <Label htmlFor="txn-category">Category</Label>
-            <Select id="txn-category" value={form.categoryId} onChange={(e) => update("categoryId", e.target.value)}>
-              <option value="">No category</option>
+            <Label>Category</Label>
+            <div className="flex flex-wrap gap-2">
+              <Chip type="button" selected={!form.categoryId} onClick={() => update("categoryId", "")}>
+                None
+              </Chip>
               {topLevelCategories.map((parent) => {
                 const children = childrenByParent.get(parent.id) ?? [];
-                if (children.length === 0) {
-                  return (
-                    <option key={parent.id} value={parent.id}>
-                      {parent.name}
-                    </option>
-                  );
-                }
-                return (
-                  <optgroup key={parent.id} label={parent.name}>
-                    <option value={parent.id}>{parent.name} (general)</option>
-                    {children.map((child) => (
-                      <option key={child.id} value={child.id}>
-                        {child.name}
-                      </option>
-                    ))}
-                  </optgroup>
-                );
+                return [parent, ...children].map((c) => (
+                  <Chip
+                    key={c.id}
+                    type="button"
+                    color={c.color}
+                    selected={form.categoryId === c.id}
+                    onClick={() => update("categoryId", c.id)}
+                  >
+                    {c.id === parent.id && children.length > 0 ? `${c.name} (general)` : c.name}
+                  </Chip>
+                ));
               })}
-            </Select>
+            </div>
           </div>
+        ) : (
+          <Field label="Category">
+            {(props) => (
+              <Select {...props} value={form.categoryId} onChange={(e) => update("categoryId", e.target.value)}>
+                <option value="">No category</option>
+                {topLevelCategories.map((parent) => {
+                  const children = childrenByParent.get(parent.id) ?? [];
+                  if (children.length === 0) {
+                    return (
+                      <option key={parent.id} value={parent.id}>
+                        {parent.name}
+                      </option>
+                    );
+                  }
+                  return (
+                    <optgroup key={parent.id} label={parent.name}>
+                      <option value={parent.id}>{parent.name} (general)</option>
+                      {children.map((child) => (
+                        <option key={child.id} value={child.id}>
+                          {child.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                  );
+                })}
+              </Select>
+            )}
+          </Field>
         )}
 
-        <div>
-          <Label htmlFor="txn-payee">Payee</Label>
-          <Input
-            id="txn-payee"
-            value={form.payee}
-            onChange={(e) => update("payee", e.target.value)}
-            placeholder="Optional"
-          />
-        </div>
-
-        <div>
-          <Label htmlFor="txn-notes">Notes</Label>
-          <Input
-            id="txn-notes"
-            value={form.notes}
-            onChange={(e) => update("notes", e.target.value)}
-            placeholder="Optional"
-          />
-        </div>
+        <Field label="Notes" hint="Optional">
+          {(props) => (
+            <Input {...props} value={form.notes} onChange={(e) => update("notes", e.target.value)} placeholder="Add a note" />
+          )}
+        </Field>
 
         <ErrorText>{error}</ErrorText>
-
-        <div className="flex flex-wrap justify-end gap-2 pt-2">
-          <Button type="button" variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          {!isEdit && (
-            <Button type="button" variant="secondary" disabled={isSubmitting || !canSubmit} onClick={() => submit(true)}>
-              Save & add another
-            </Button>
-          )}
-          <Button type="submit" disabled={isSubmitting || !canSubmit}>
-            {isSubmitting ? "Saving..." : "Save"}
-          </Button>
-        </div>
       </form>
     </Modal>
   );

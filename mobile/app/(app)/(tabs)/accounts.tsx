@@ -1,14 +1,36 @@
-import { useCallback, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, Text, View } from "react-native";
+import { useCallback, useMemo, useState } from "react";
+import { Pressable, ScrollView, Text, View } from "react-native";
 import { useFocusEffect } from "expo-router";
+import {
+  Banknote,
+  CreditCard,
+  Landmark,
+  LineChart,
+  PiggyBank,
+  Plus,
+  Trash2,
+  Wallet,
+  type LucideIcon,
+} from "lucide-react-native";
 import { api } from "../../../src/api/client";
 import type { Account, AccountType } from "../../../src/api/types";
 import { useAuth } from "../../../src/context/AuthContext";
+import { useTheme } from "../../../src/context/ThemeContext";
 import { getErrorMessage } from "../../../src/api/errors";
-import { Button, Card, ErrorText, Input, Label, colors, pillStyle, pillTextStyle } from "../../../src/components/ui";
-import { formatCurrency } from "../../../src/lib/format";
+import { Badge, Button, Card, CardHeader, Chip, EmptyState, ErrorText, Field, IconButton, Input, Money, ProgressBar, SkeletonRows, StatTile, Toggle } from "../../../src/components/ui";
+import { humanizeEnum, safePercent } from "../../../src/lib/format";
 
 const ACCOUNT_TYPES: AccountType[] = ["CASH", "BANK", "SAVINGS", "CREDIT_CARD", "DEBIT_CARD", "INVESTMENT", "LOAN"];
+
+const TYPE_ICONS: Record<AccountType, LucideIcon> = {
+  CASH: Wallet,
+  BANK: Landmark,
+  SAVINGS: PiggyBank,
+  CREDIT_CARD: CreditCard,
+  DEBIT_CARD: CreditCard,
+  INVESTMENT: LineChart,
+  LOAN: Banknote,
+};
 
 const GROUPS: { key: string; label: string; types: AccountType[] }[] = [
   { key: "cash", label: "Cash", types: ["CASH"] },
@@ -19,6 +41,7 @@ const GROUPS: { key: string; label: string; types: AccountType[] }[] = [
 
 export default function AccountsScreen() {
   const { user } = useAuth();
+  const { colors } = useTheme();
   const family = user!.families[0];
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -58,41 +81,27 @@ export default function AccountsScreen() {
     }
   }
 
-  const total = accounts.reduce((sum, a) => sum + a.balance, 0);
-  const liabilities = accounts.reduce(
-    (sum, a) => (a.type === "CREDIT_CARD" || a.type === "LOAN" ? sum + Math.max(0, -a.balance) : sum),
-    0
-  );
-  const assets = total + liabilities;
+  const totals = useMemo(() => {
+    const total = accounts.reduce((sum, a) => sum + a.balance, 0);
+    const liabilities = accounts.reduce((sum, a) => (a.type === "CREDIT_CARD" || a.type === "LOAN" ? sum + Math.max(0, -a.balance) : sum), 0);
+    return { total, liabilities, assets: total + liabilities };
+  }, [accounts]);
 
   return (
-    <ScrollView style={{ backgroundColor: colors.slate50 }} contentContainerStyle={{ padding: 16, gap: 16 }}>
-      <Card style={{ gap: 12 }}>
-        <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
-          <View>
-            <Text style={{ color: colors.slate500, fontSize: 12 }}>Assets</Text>
-            <Text style={{ fontWeight: "700", fontSize: 17, color: colors.green600 }}>
-              {formatCurrency(assets, family.currency)}
-            </Text>
-          </View>
-          <View>
-            <Text style={{ color: colors.slate500, fontSize: 12 }}>Liabilities</Text>
-            <Text style={{ fontWeight: "700", fontSize: 17, color: colors.red600 }}>
-              {formatCurrency(liabilities, family.currency)}
-            </Text>
-          </View>
-          <View>
-            <Text style={{ color: colors.slate500, fontSize: 12 }}>Total</Text>
-            <Text style={{ fontWeight: "700", fontSize: 17 }}>{formatCurrency(total, family.currency)}</Text>
-          </View>
-        </View>
-      </Card>
+    <ScrollView style={{ backgroundColor: colors.canvas }} contentContainerStyle={{ padding: 16, gap: 16 }}>
+      <View style={{ flexDirection: "row", gap: 10 }}>
+        <StatTile label="Assets" value={totals.assets} currency={family.currency} tone="income" loading={isLoading} />
+        <StatTile label="Liabilities" value={totals.liabilities} currency={family.currency} tone="expense" loading={isLoading} />
+        <StatTile label="Total" value={totals.total} currency={family.currency} tone="auto" loading={isLoading} />
+      </View>
 
       <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-        <Text style={{ fontSize: 17, fontWeight: "700" }}>Accounts</Text>
+        <Text style={{ fontSize: 17, fontWeight: "800", color: colors.ink }}>Your accounts</Text>
         <Button
           title={showAddForm ? "Cancel" : "Add account"}
           variant="secondary"
+          size="sm"
+          icon={!showAddForm ? <Plus size={14} color={colors.ink} /> : undefined}
           onPress={() => {
             setEditingAccount(null);
             setShowAddForm((v) => !v);
@@ -115,13 +124,9 @@ export default function AccountsScreen() {
       <ErrorText>{archiveError}</ErrorText>
 
       {isLoading ? (
-        <ActivityIndicator color={colors.brand600} size="large" style={{ marginTop: 40 }} />
+        <SkeletonRows rows={4} />
       ) : accounts.length === 0 ? (
-        <Card>
-          <Text style={{ color: colors.slate400, fontSize: 13, textAlign: "center" }}>
-            No accounts yet. Add a common family account or a private one of your own.
-          </Text>
-        </Card>
+        <EmptyState icon={<Wallet size={20} color={colors.brand600} />} title="No accounts yet" description="Add a common family account or a private one of your own." />
       ) : (
         GROUPS.map((group) => {
           const groupAccounts = accounts.filter((a) => group.types.includes(a.type));
@@ -129,73 +134,74 @@ export default function AccountsScreen() {
           const subtotal = groupAccounts.reduce((sum, a) => sum + a.balance, 0);
           return (
             <View key={group.key} style={{ gap: 8 }}>
-              <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
-                <Text style={{ fontSize: 13, fontWeight: "700", color: colors.slate500, textTransform: "uppercase" }}>
-                  {group.label}
-                </Text>
-                <Text style={{ fontSize: 13, fontWeight: "700", color: colors.slate500 }}>
-                  {formatCurrency(subtotal, family.currency)}
-                </Text>
+              <View style={{ flexDirection: "row", justifyContent: "space-between", paddingHorizontal: 2 }}>
+                <Text style={{ fontSize: 12, fontWeight: "800", color: colors.inkSubtle, textTransform: "uppercase" }}>{group.label}</Text>
+                <Money amount={subtotal} currency={family.currency} style={{ fontSize: 12, fontWeight: "800", color: colors.inkMuted }} />
               </View>
               <Card style={{ padding: 0 }}>
-                {groupAccounts.map((account, i) => (
-                  <View key={account.id}>
-                    {editingAccount?.id === account.id ? (
-                      <View style={{ padding: 16 }}>
-                        <AccountForm
-                          familyId={family.id}
-                          initial={account}
-                          onDone={() => {
-                            setEditingAccount(null);
-                            load();
-                          }}
-                          onCancel={() => setEditingAccount(null)}
-                        />
-                      </View>
-                    ) : (
-                      <Pressable
-                        onPress={() => {
-                          setShowAddForm(false);
-                          setEditingAccount(account);
-                        }}
-                        style={{
-                          flexDirection: "row",
-                          justifyContent: "space-between",
-                          alignItems: "center",
-                          padding: 16,
-                          borderTopWidth: i === 0 ? 0 : 1,
-                          borderTopColor: colors.slate200,
-                        }}
-                      >
-                        <View style={{ flex: 1, paddingRight: 8 }}>
-                          <Text style={{ fontWeight: "600" }}>{account.name}</Text>
-                          <Text style={{ color: colors.slate500, fontSize: 12, marginTop: 2 }}>
-                            {account.type.replace("_", " ")} · {account.owner ? account.owner.name : "Shared"}
-                          </Text>
+                {groupAccounts.map((account, i) => {
+                  const Icon = TYPE_ICONS[account.type];
+                  const creditLimit = account.creditLimit != null ? Number(account.creditLimit) : null;
+                  const utilisation = account.type === "CREDIT_CARD" && creditLimit ? Math.max(0, -account.balance) : null;
+                  return (
+                    <View key={account.id} style={{ borderTopWidth: i === 0 ? 0 : 1, borderTopColor: colors.line }}>
+                      {editingAccount?.id === account.id ? (
+                        <View style={{ padding: 16 }}>
+                          <AccountForm
+                            familyId={family.id}
+                            initial={account}
+                            onDone={() => {
+                              setEditingAccount(null);
+                              load();
+                            }}
+                            onCancel={() => setEditingAccount(null)}
+                          />
                         </View>
-                        <View style={{ alignItems: "flex-end", gap: 6 }}>
-                          <Text style={{ fontWeight: "700", color: account.balance < 0 ? colors.red600 : colors.slate900 }}>
-                            {formatCurrency(account.balance, account.currency)}
-                          </Text>
-                          {confirmArchiveId === account.id ? (
-                            <View style={{ flexDirection: "row", gap: 12 }}>
-                              <Pressable onPress={() => handleArchive(account.id)} hitSlop={8}>
-                                <Text style={{ color: colors.red600, fontSize: 11, fontWeight: "700" }}>Confirm</Text>
-                              </Pressable>
-                              <Pressable onPress={() => setConfirmArchiveId(null)} hitSlop={8}>
-                                <Text style={{ color: colors.slate500, fontSize: 11, fontWeight: "600" }}>Cancel</Text>
-                              </Pressable>
-                            </View>
-                          ) : (
-                            <Pressable onPress={() => setConfirmArchiveId(account.id)} hitSlop={8}>
-                              <Text style={{ color: colors.slate400, fontSize: 11, fontWeight: "600" }}>Archive</Text>
+                      ) : (
+                        <View style={{ padding: 16, gap: 10 }}>
+                          <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+                            <Pressable
+                              onPress={() => {
+                                setShowAddForm(false);
+                                setEditingAccount(account);
+                              }}
+                              style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 12 }}
+                            >
+                              <View style={{ width: 40, height: 40, borderRadius: 12, backgroundColor: colors.brandSoft, alignItems: "center", justifyContent: "center" }}>
+                                <Icon size={17} color={colors.brand600} />
+                              </View>
+                              <View style={{ flex: 1 }}>
+                                <Text style={{ fontWeight: "700", color: colors.ink }}>{account.name}</Text>
+                                <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 3 }}>
+                                  <Text style={{ color: colors.inkSubtle, fontSize: 12 }}>{humanizeEnum(account.type)}</Text>
+                                  <Badge tone={account.owner ? "neutral" : "brand"}>{account.owner ? account.owner.name : "Shared"}</Badge>
+                                </View>
+                              </View>
                             </Pressable>
+                            <Money amount={account.balance} currency={account.currency} tone={account.balance < 0 ? "expense" : undefined} style={{ fontWeight: "800" }} />
+                            {confirmArchiveId === account.id ? (
+                              <View style={{ flexDirection: "row", gap: 4 }}>
+                                <Button title="Confirm" size="sm" variant="danger" onPress={() => handleArchive(account.id)} />
+                              </View>
+                            ) : (
+                              <IconButton tone="danger" onPress={() => setConfirmArchiveId(account.id)}>
+                                <Trash2 size={15} color={colors.inkSubtle} />
+                              </IconButton>
+                            )}
+                          </View>
+                          {utilisation !== null && creditLimit && (
+                            <View>
+                              <ProgressBar value={utilisation / creditLimit} tone={utilisation / creditLimit > 0.8 ? "expense" : "warn"} />
+                              <Text style={{ fontSize: 10.5, color: colors.inkSubtle, marginTop: 4 }}>
+                                {safePercent(utilisation, creditLimit).toFixed(0)}% of limit used
+                              </Text>
+                            </View>
                           )}
                         </View>
-                      </Pressable>
-                    )}
-                  </View>
-                ))}
+                      )}
+                    </View>
+                  );
+                })}
               </Card>
             </View>
           );
@@ -216,6 +222,7 @@ function AccountForm({
   onDone: () => void;
   onCancel: () => void;
 }) {
+  const { colors } = useTheme();
   const isEdit = !!initial;
   const [name, setName] = useState(initial?.name ?? "");
   const [type, setType] = useState<AccountType>(initial?.type ?? "BANK");
@@ -254,53 +261,39 @@ function AccountForm({
   }
 
   return (
-    <Card style={{ gap: 12 }}>
-      <View>
-        <Label>Name</Label>
+    <Card style={{ gap: 14 }}>
+      <Field label="Name">
         <Input value={name} onChangeText={setName} placeholder="Joint Checking" />
-      </View>
+      </Field>
 
-      <View>
-        <Label>Type</Label>
+      <Field label="Type">
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-          {ACCOUNT_TYPES.map((t) => (
-            <Pressable key={t} onPress={() => setType(t)} style={pillStyle(type === t)}>
-              <Text style={pillTextStyle(type === t)}>{t.replace("_", " ")}</Text>
-            </Pressable>
-          ))}
+          {ACCOUNT_TYPES.map((t) => {
+            const Icon = TYPE_ICONS[t];
+            return <Chip key={t} label={humanizeEnum(t)} selected={type === t} onPress={() => setType(t)} icon={<Icon size={12} color={type === t ? "#fff" : colors.inkMuted} />} />;
+          })}
         </View>
-      </View>
+      </Field>
 
-      <View>
-        <Label>Opening balance</Label>
+      <Field label="Opening balance">
         <Input keyboardType="decimal-pad" value={openingBalance} onChangeText={setOpeningBalance} />
-      </View>
+      </Field>
 
-      <View>
-        <Label>Credit limit (optional)</Label>
+      <Field label="Credit limit" hint="Optional">
         <Input keyboardType="decimal-pad" value={creditLimit} onChangeText={setCreditLimit} placeholder="Optional" />
-      </View>
+      </Field>
 
       {!isEdit && (
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-          <Label>Shared family (common) account</Label>
-          <Pressable
-            onPress={() => setIsCommon((v) => !v)}
-            style={[pillStyle(isCommon), { paddingHorizontal: 16 }]}
-          >
-            <Text style={pillTextStyle(isCommon)}>{isCommon ? "Shared" : "Private"}</Text>
-          </Pressable>
+          <Text style={{ fontSize: 13, fontWeight: "600", color: colors.ink }}>Shared family account</Text>
+          <Toggle value={isCommon} onChange={setIsCommon} />
         </View>
       )}
 
       <ErrorText>{error}</ErrorText>
       <View style={{ flexDirection: "row", gap: 8 }}>
         <View style={{ flex: 1 }}>
-          <Button
-            title={isSubmitting ? "Saving..." : isEdit ? "Save changes" : "Add account"}
-            onPress={handleSubmit}
-            disabled={isSubmitting || !name.trim()}
-          />
+          <Button title={isEdit ? "Save changes" : "Add account"} loading={isSubmitting} disabled={!name.trim()} onPress={handleSubmit} />
         </View>
         <View style={{ flex: 1 }}>
           <Button title="Cancel" variant="secondary" onPress={onCancel} />

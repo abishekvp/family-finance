@@ -1,14 +1,41 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useOutletContext } from "react-router-dom";
-import { Pencil, Plus } from "lucide-react";
+import {
+  Banknote,
+  CreditCard,
+  Landmark,
+  LineChart,
+  PiggyBank,
+  Plus,
+  Trash2,
+  Wallet,
+  type LucideIcon,
+} from "lucide-react";
 import { api } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { getErrorMessage } from "../api/errors";
-import { Button, Card, EmptyState, ErrorText, Input, Label, Modal, Select, Spinner } from "../components/ui";
+import {
+  Badge,
+  Button,
+  Card,
+  CardHeader,
+  Chip,
+  EmptyState,
+  ErrorText,
+  Field,
+  IconButton,
+  Input,
+  Label,
+  Modal,
+  ProgressBar,
+  SkeletonRows,
+  Toggle,
+} from "../components/ui";
+import { Money, StatTile } from "../components/figures";
 import type { LayoutContext } from "../components/Layout";
 import { ACCOUNT_TYPES } from "../api/types";
 import type { Account, AccountType } from "../api/types";
-import { formatCurrency } from "../lib/format";
+import { humanizeEnum, safePercent } from "../lib/format";
 
 const GROUPS: { title: string; types: AccountType[] }[] = [
   { title: "Cash", types: ["CASH"] },
@@ -16,6 +43,16 @@ const GROUPS: { title: string; types: AccountType[] }[] = [
   { title: "Card", types: ["CREDIT_CARD", "DEBIT_CARD"] },
   { title: "Loans", types: ["LOAN"] },
 ];
+
+const TYPE_ICONS: Record<AccountType, LucideIcon> = {
+  CASH: Wallet,
+  BANK: Landmark,
+  SAVINGS: PiggyBank,
+  CREDIT_CARD: CreditCard,
+  DEBIT_CARD: CreditCard,
+  INVESTMENT: LineChart,
+  LOAN: Banknote,
+};
 
 export function Accounts() {
   const { family, scope } = useOutletContext<LayoutContext>();
@@ -77,25 +114,18 @@ export function Accounts() {
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <Card>
-          <p className="text-sm text-slate-500">Assets</p>
-          <p className="mt-2 text-2xl font-semibold text-income">{formatCurrency(totals.assets, family.currency)}</p>
-        </Card>
-        <Card>
-          <p className="text-sm text-slate-500">Liabilities</p>
-          <p className="mt-2 text-2xl font-semibold text-expense">
-            {formatCurrency(totals.liabilities, family.currency)}
-          </p>
-        </Card>
-        <Card>
-          <p className="text-sm text-slate-500">Total</p>
-          <p className="mt-2 text-2xl font-semibold">{formatCurrency(totals.total, family.currency)}</p>
-        </Card>
+        <StatTile label="Assets" value={totals.assets} currency={family.currency} accent="income" tone="income" loading={isLoading} />
+        <StatTile label="Liabilities" value={totals.liabilities} currency={family.currency} accent="expense" tone="expense" loading={isLoading} />
+        <StatTile label="Total" value={totals.total} currency={family.currency} accent="brand" tone="auto" loading={isLoading}>
+          {!isLoading && totals.assets > 0 && (
+            <ProgressBar value={safePercent(totals.liabilities, totals.assets) / 100} tone="expense" />
+          )}
+        </StatTile>
       </div>
 
-      <div className="flex justify-end">
-        <Button onClick={() => setEditingAccount("new")}>
-          <Plus size={16} className="mr-1.5" />
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-bold text-ink">Your accounts</h2>
+        <Button icon={<Plus size={16} />} onClick={() => setEditingAccount("new")}>
           Add account
         </Button>
       </div>
@@ -103,75 +133,103 @@ export function Accounts() {
       <ErrorText>{error || archiveError}</ErrorText>
 
       {isLoading ? (
-        <Spinner label="Loading accounts..." />
+        <Card>
+          <SkeletonRows rows={4} />
+        </Card>
       ) : scopedAccounts.length === 0 ? (
-        <EmptyState title="No accounts yet" description="Add your first account to start tracking balances." />
+        <EmptyState
+          title="No accounts yet"
+          description="Add your first account to start tracking balances."
+          icon={<Wallet size={20} />}
+          action={
+            <Button size="sm" icon={<Plus size={15} />} onClick={() => setEditingAccount("new")}>
+              Add account
+            </Button>
+          }
+        />
       ) : (
-        <div className="space-y-6">
+        <div className="space-y-5">
           {GROUPS.map((group) => {
             const groupAccounts = scopedAccounts.filter((a) => group.types.includes(a.type));
             if (groupAccounts.length === 0) return null;
             const subtotal = groupAccounts.reduce((s, a) => s + (a.balance ?? 0), 0);
             return (
               <Card key={group.title}>
-                <div className="mb-3 flex items-center justify-between">
-                  <h2 className="text-sm font-semibold text-slate-600 dark:text-slate-300">{group.title}</h2>
-                  <p className="text-sm font-semibold">{formatCurrency(subtotal, family.currency)}</p>
-                </div>
-                <ul className="divide-y divide-slate-200 dark:divide-slate-800">
-                  {groupAccounts.map((account) => (
-                    <li key={account.id} className="flex items-center justify-between gap-3 py-3">
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-medium">{account.name}</p>
-                        <p className="text-xs text-slate-500">
-                          {account.type.replace("_", " ")} · {account.owner ? account.owner.name : "Shared"}
-                        </p>
-                      </div>
-                      <div className="flex shrink-0 items-center gap-3">
-                        <p
-                          className={`text-sm font-semibold ${
-                            (account.balance ?? 0) < 0 ? "text-expense" : "text-slate-900 dark:text-slate-100"
-                          }`}
-                        >
-                          {formatCurrency(account.balance ?? 0, account.currency)}
-                        </p>
-                        <button
-                          type="button"
-                          onClick={() => setEditingAccount(account)}
-                          aria-label={`Edit ${account.name}`}
-                          className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
-                        >
-                          <Pencil size={14} />
-                        </button>
-                        {archivingId === account.id ? (
-                          <span className="flex items-center gap-1.5 text-xs">
-                            <button
-                              type="button"
-                              onClick={() => handleArchive(account.id)}
-                              className="rounded-md bg-red-600 px-2 py-1 font-medium text-white hover:bg-red-700"
-                            >
-                              Confirm
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setArchivingId(null)}
-                              className="rounded-md bg-slate-100 px-2 py-1 font-medium text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
-                            >
-                              Cancel
-                            </button>
-                          </span>
-                        ) : (
+                <CardHeader
+                  title={group.title}
+                  actions={<Money amount={subtotal} currency={family.currency} className="text-sm font-bold" />}
+                  className="mb-2"
+                />
+                <ul className="divide-y divide-line">
+                  {groupAccounts.map((account) => {
+                    const Icon = TYPE_ICONS[account.type];
+                    const isConfirming = archivingId === account.id;
+                    const balance = account.balance ?? 0;
+                    const creditLimit = account.creditLimit != null ? Number(account.creditLimit) : null;
+                    const utilisation = account.type === "CREDIT_CARD" && creditLimit ? Math.max(0, -balance) : null;
+                    return (
+                      <li key={account.id} className="py-3">
+                        <div className="flex items-center gap-3">
                           <button
                             type="button"
-                            onClick={() => setArchivingId(account.id)}
-                            className="text-xs font-medium text-slate-400 hover:text-red-600 dark:hover:text-red-400"
+                            onClick={() => setEditingAccount(account)}
+                            className="flex min-w-0 flex-1 items-center gap-3 text-left"
                           >
-                            Archive
+                            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-soft text-brand-600">
+                              <Icon size={17} />
+                            </span>
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-semibold text-ink">{account.name}</p>
+                              <p className="flex items-center gap-1.5 truncate text-xs text-ink-subtle">
+                                {humanizeEnum(account.type)}
+                                <Badge tone={account.owner ? "neutral" : "brand"} className="normal-case">
+                                  {account.owner ? account.owner.name : "Shared"}
+                                </Badge>
+                              </p>
+                            </div>
                           </button>
+                          <div className="flex shrink-0 items-center gap-2">
+                            <Money
+                              amount={balance}
+                              currency={account.currency}
+                              tone={balance < 0 ? "expense" : undefined}
+                              className="text-sm font-bold"
+                            />
+                            {isConfirming ? (
+                              <span className="flex items-center gap-1">
+                                <Button size="sm" variant="danger" onClick={() => handleArchive(account.id)}>
+                                  Confirm
+                                </Button>
+                                <Button size="sm" variant="ghost" onClick={() => setArchivingId(null)}>
+                                  Cancel
+                                </Button>
+                              </span>
+                            ) : (
+                              <IconButton
+                                label={`Archive ${account.name}`}
+                                tone="danger"
+                                onClick={() => setArchivingId(account.id)}
+                              >
+                                <Trash2 size={15} />
+                              </IconButton>
+                            )}
+                          </div>
+                        </div>
+                        {utilisation !== null && creditLimit && (
+                          <div className="mt-2.5 pl-[52px]">
+                            <ProgressBar
+                              value={utilisation / creditLimit}
+                              tone={utilisation / creditLimit > 0.8 ? "expense" : "warn"}
+                            />
+                            <p className="mt-1 text-2xs text-ink-subtle">
+                              <Money amount={utilisation} currency={account.currency} compact /> of{" "}
+                              <Money amount={creditLimit} currency={account.currency} compact /> used
+                            </p>
+                          </div>
                         )}
-                      </div>
-                    </li>
-                  ))}
+                      </li>
+                    );
+                  })}
                 </ul>
               </Card>
             );
@@ -244,83 +302,77 @@ function AccountFormModal({
   }
 
   return (
-    <Modal title={isEdit ? "Edit account" : "Add account"} onClose={onClose}>
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div>
-          <Label htmlFor="account-name">Name</Label>
-          <Input id="account-name" required value={name} onChange={(e) => setName(e.target.value)} />
+    <Modal
+      title={isEdit ? "Edit account" : "Add account"}
+      onClose={onClose}
+      footer={
+        <div className="flex justify-end gap-2">
+          <Button type="button" variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit" form="account-form" loading={isSubmitting} disabled={!name.trim()}>
+            Save
+          </Button>
         </div>
+      }
+    >
+      <form id="account-form" onSubmit={handleSubmit} className="space-y-4">
+        <Field label="Name">
+          {(props) => <Input {...props} required value={name} onChange={(e) => setName(e.target.value)} placeholder="Joint Checking" />}
+        </Field>
+
         <div>
-          <Label htmlFor="account-type">Type</Label>
-          <Select id="account-type" value={type} onChange={(e) => setType(e.target.value as AccountType)}>
-            {ACCOUNT_TYPES.map((t) => (
-              <option key={t} value={t}>
-                {t.replace("_", " ")}
-              </option>
-            ))}
-          </Select>
+          <Label>Type</Label>
+          <div className="flex flex-wrap gap-2">
+            {ACCOUNT_TYPES.map((t) => {
+              const Icon = TYPE_ICONS[t];
+              return (
+                <Chip key={t} type="button" selected={type === t} onClick={() => setType(t)}>
+                  <Icon size={12} />
+                  {humanizeEnum(t)}
+                </Chip>
+              );
+            })}
+          </div>
         </div>
+
         <div className="grid grid-cols-2 gap-3">
-          <div>
-            <Label htmlFor="account-opening-balance">Opening balance</Label>
-            <Input
-              id="account-opening-balance"
-              type="number"
-              step="0.01"
-              value={openingBalance}
-              onChange={(e) => setOpeningBalance(e.target.value)}
-            />
-          </div>
-          <div>
-            <Label htmlFor="account-credit-limit">Credit limit</Label>
-            <Input
-              id="account-credit-limit"
-              type="number"
-              step="0.01"
-              value={creditLimit}
-              onChange={(e) => setCreditLimit(e.target.value)}
-              placeholder="Optional"
-            />
-          </div>
+          <Field label="Opening balance">
+            {(props) => (
+              <Input {...props} type="number" step="0.01" value={openingBalance} onChange={(e) => setOpeningBalance(e.target.value)} />
+            )}
+          </Field>
+          <Field label="Credit limit" hint="Optional">
+            {(props) => (
+              <Input {...props} type="number" step="0.01" value={creditLimit} onChange={(e) => setCreditLimit(e.target.value)} placeholder="Optional" />
+            )}
+          </Field>
         </div>
+
         {!isEdit && (
           <>
-            <div>
-              <Label htmlFor="account-currency">Currency</Label>
-              <Input
-                id="account-currency"
-                required
-                maxLength={3}
-                value={currency}
-                onChange={(e) => setCurrency(e.target.value.toUpperCase())}
-                className="w-24 uppercase"
-              />
-            </div>
-            <div className="flex items-center gap-2">
-              <input
-                id="account-is-common"
-                type="checkbox"
-                checked={isCommon}
-                onChange={(e) => setIsCommon(e.target.checked)}
-                className="h-4 w-4 rounded border-slate-300"
-              />
-              <Label htmlFor="account-is-common" className="mb-0">
-                Shared family (common) account
-              </Label>
-            </div>
+            <Field label="Currency">
+              {(props) => (
+                <Input
+                  {...props}
+                  required
+                  maxLength={3}
+                  value={currency}
+                  onChange={(e) => setCurrency(e.target.value.toUpperCase())}
+                  className="w-24 uppercase"
+                />
+              )}
+            </Field>
+            <Toggle
+              checked={isCommon}
+              onChange={setIsCommon}
+              label="Shared family account"
+              description="Visible to the whole family rather than just you."
+            />
           </>
         )}
 
         <ErrorText>{error}</ErrorText>
-
-        <div className="flex justify-end gap-2 pt-2">
-          <Button type="button" variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button type="submit" disabled={isSubmitting || !name.trim()}>
-            {isSubmitting ? "Saving..." : "Save"}
-          </Button>
-        </div>
       </form>
     </Modal>
   );

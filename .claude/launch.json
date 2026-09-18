@@ -11,7 +11,8 @@
       "name": "family-finance-client-only",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev:client"],
-      "port": 5173
+      "port": 5173,
+      "autoPort": true
     },
     {
       "name": "family-finance-prod",

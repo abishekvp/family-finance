@@ -1,64 +1,104 @@
 import { useEffect, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
+import { MailX, PartyPopper } from "lucide-react";
 import { api } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { getErrorMessage } from "../api/errors";
-import { Button, Card, ErrorText } from "../components/ui";
+import { AuthShell } from "../components/AuthShell";
+import { Badge, Button, EmptyState, ErrorText, Skeleton } from "../components/ui";
 
 interface InviteDetails {
   email: string;
   role: string;
-  status: string;
+  status: "PENDING" | "ACCEPTED" | "EXPIRED" | "REVOKED";
   family: { id: string; name: string };
 }
+
+const STATUS_MESSAGE: Record<string, string> = {
+  ACCEPTED: "This invite has already been accepted.",
+  EXPIRED: "This invite has expired — ask an admin to send a new one.",
+  REVOKED: "This invite was revoked by an admin.",
+};
 
 export function AcceptInvite() {
   const { token } = useParams<{ token: string }>();
   const { refreshUser } = useAuth();
   const navigate = useNavigate();
   const [invite, setInvite] = useState<InviteDetails | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [acceptError, setAcceptError] = useState<string | null>(null);
   const [isAccepting, setIsAccepting] = useState(false);
 
   useEffect(() => {
     api
       .get<InviteDetails>(`/invites/${token}`)
       .then((res) => setInvite(res.data))
-      .catch((err) => setError(getErrorMessage(err, "This invite link is invalid")));
+      .catch((err) => setLoadError(getErrorMessage(err, "This invite link is invalid")));
   }, [token]);
 
   async function handleAccept() {
     setIsAccepting(true);
-    setError(null);
+    setAcceptError(null);
     try {
       await api.post(`/invites/${token}/accept`);
       await refreshUser();
       navigate("/dashboard", { replace: true });
     } catch (err) {
-      setError(getErrorMessage(err, "Unable to accept invite"));
+      setAcceptError(getErrorMessage(err, "Unable to accept invite"));
     } finally {
       setIsAccepting(false);
     }
   }
 
+  const isPending = invite?.status === "PENDING";
+
   return (
-    <div className="flex min-h-screen items-center justify-center px-4">
-      <Card className="w-full max-w-sm text-center">
-        {invite ? (
-          <>
-            <h1 className="mb-1 text-xl font-semibold">Join {invite.family.name}</h1>
-            <p className="mb-6 text-sm text-slate-500">
-              You've been invited to join as a <span className="font-medium">{invite.role.toLowerCase()}</span>.
-            </p>
-            <Button className="w-full" onClick={handleAccept} disabled={isAccepting || invite.status !== "PENDING"}>
-              {isAccepting ? "Joining..." : "Accept invite"}
+    <AuthShell title="Family invite" subtitle="You've been asked to join a household on Family Finance.">
+      {loadError ? (
+        <EmptyState
+          title="This invite link isn't valid"
+          description={loadError}
+          icon={<MailX size={20} />}
+          action={
+            <Link to="/dashboard">
+              <Button variant="secondary">Go to dashboard</Button>
+            </Link>
+          }
+        />
+      ) : !invite ? (
+        <div className="space-y-3">
+          <Skeleton className="h-5 w-2/3" />
+          <Skeleton className="h-4 w-full" />
+          <Skeleton className="h-11 w-full" />
+        </div>
+      ) : (
+        <div className="text-center">
+          <span className="mx-auto mb-4 grid h-12 w-12 place-items-center rounded-2xl bg-brand-soft text-brand-500">
+            <PartyPopper size={22} />
+          </span>
+          <h2 className="text-lg font-bold text-ink">Join {invite.family.name}</h2>
+          <p className="mt-1.5 text-sm text-ink-muted">
+            You've been invited to join as{" "}
+            <Badge tone="brand" className="normal-case">
+              {invite.role.toLowerCase()}
+            </Badge>
+          </p>
+
+          {isPending ? (
+            <Button className="mt-6 w-full" size="lg" onClick={handleAccept} loading={isAccepting}>
+              {isAccepting ? "Joining…" : "Accept invite"}
             </Button>
-          </>
-        ) : (
-          !error && <p className="text-sm text-slate-500">Loading invite...</p>
-        )}
-        <ErrorText>{error}</ErrorText>
-      </Card>
-    </div>
+          ) : (
+            <p className="mt-6 rounded-xl bg-expense-soft px-3.5 py-2.5 text-sm text-expense">
+              {STATUS_MESSAGE[invite.status] ?? "This invite is no longer available."}
+            </p>
+          )}
+
+          <div className="mt-4">
+            <ErrorText>{acceptError}</ErrorText>
+          </div>
+        </div>
+      )}
+    </AuthShell>
   );
 }

@@ -1,8 +1,28 @@
-import { useState, type FormEvent } from "react";
+import { useMemo, useState, type FormEvent } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
+import { Eye, EyeOff } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { getErrorMessage } from "../api/errors";
-import { Button, Card, ErrorText, Input, Label } from "../components/ui";
+import { AuthShell } from "../components/AuthShell";
+import { Button, ErrorText, Field, Input, ProgressBar } from "../components/ui";
+
+function scorePassword(password: string) {
+  let score = 0;
+  if (password.length >= 8) score += 1;
+  if (password.length >= 12) score += 1;
+  if (/[A-Z]/.test(password) && /[a-z]/.test(password)) score += 1;
+  if (/\d/.test(password)) score += 1;
+  if (/[^A-Za-z0-9]/.test(password)) score += 1;
+  return Math.min(score, 4);
+}
+
+const STRENGTH = [
+  { label: "Too short", tone: "expense" as const },
+  { label: "Weak", tone: "expense" as const },
+  { label: "Fair", tone: "warn" as const },
+  { label: "Good", tone: "brand" as const },
+  { label: "Strong", tone: "income" as const },
+];
 
 export function Register() {
   const { user, register } = useAuth();
@@ -10,8 +30,11 @@ export function Register() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const strength = useMemo(() => scorePassword(password), [password]);
 
   if (user) return <Navigate to="/" replace />;
 
@@ -30,43 +53,80 @@ export function Register() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center px-4">
-      <Card className="w-full max-w-sm">
-        <h1 className="mb-1 text-xl font-semibold">Create your account</h1>
-        <p className="mb-6 text-sm text-slate-500">Start managing your family's finances together.</p>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <Label htmlFor="name">Name</Label>
-            <Input id="name" required value={name} onChange={(e) => setName(e.target.value)} />
-          </div>
-          <div>
-            <Label htmlFor="email">Email</Label>
-            <Input id="email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
-          </div>
-          <div>
-            <Label htmlFor="password">Password</Label>
-            <Input
-              id="password"
-              type="password"
-              required
-              minLength={8}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
-            <p className="mt-1 text-xs text-slate-400">At least 8 characters.</p>
-          </div>
-          <ErrorText>{error}</ErrorText>
-          <Button type="submit" className="w-full" disabled={isSubmitting}>
-            {isSubmitting ? "Creating account..." : "Create account"}
-          </Button>
-        </form>
-        <p className="mt-6 text-center text-sm text-slate-500">
+    <AuthShell
+      title="Create your account"
+      subtitle="Start managing your family's finances together."
+      footer={
+        <>
           Already have an account?{" "}
-          <Link to="/login" className="font-medium text-brand-600 hover:underline">
+          <Link to="/login" className="font-semibold text-brand-600 hover:underline">
             Sign in
           </Link>
-        </p>
-      </Card>
-    </div>
+        </>
+      }
+    >
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <Field label="Name">
+          {(props) => <Input {...props} required value={name} onChange={(e) => setName(e.target.value)} placeholder="Jamie Lee" />}
+        </Field>
+
+        <Field label="Email">
+          {(props) => (
+            <Input
+              {...props}
+              type="email"
+              autoComplete="email"
+              required
+              placeholder="you@example.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+          )}
+        </Field>
+
+        <Field label="Password">
+          {(props) => (
+            <div>
+              <div className="relative">
+                <Input
+                  {...props}
+                  type={showPassword ? "text" : "password"}
+                  autoComplete="new-password"
+                  required
+                  minLength={8}
+                  placeholder="••••••••"
+                  className="pr-11"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((v) => !v)}
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                  className="absolute right-1.5 top-1/2 grid h-8 w-8 -translate-y-1/2 place-items-center rounded-lg text-ink-subtle transition hover:bg-surface-sunken hover:text-ink"
+                >
+                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
+              {password.length > 0 && (
+                <div className="mt-2 flex items-center gap-2">
+                  <ProgressBar value={strength / 4} tone={STRENGTH[strength].tone} className="flex-1" />
+                  <span className="w-12 shrink-0 text-2xs font-semibold text-ink-subtle">
+                    {STRENGTH[strength].label}
+                  </span>
+                </div>
+              )}
+              <p className="mt-1.5 text-xs text-ink-subtle">At least 8 characters.</p>
+            </div>
+          )}
+        </Field>
+
+        <ErrorText>{error}</ErrorText>
+
+        <Button type="submit" size="lg" className="w-full" loading={isSubmitting}>
+          {isSubmitting ? "Creating account…" : "Create account"}
+        </Button>
+      </form>
+    </AuthShell>
   );
 }

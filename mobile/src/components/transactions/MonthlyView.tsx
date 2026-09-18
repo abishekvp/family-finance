@@ -1,8 +1,9 @@
 import { useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
+import { ChevronDown, ChevronRight, TrendingUp } from "lucide-react-native";
 import type { Account, Transaction } from "../../api/types";
-import { colors } from "../../components/ui";
-import { formatCurrency } from "../../lib/format";
+import { useTheme } from "../../context/ThemeContext";
+import { EmptyState, Money } from "../ui";
 import { MONTH_LABELS } from "../../lib/dateUtils";
 import type { WeekStart } from "../../context/PrefsContext";
 import { weekBucketsForMonth } from "../../lib/weeks";
@@ -22,31 +23,18 @@ function addTransaction(totals: Totals, t: Transaction) {
   else if (t.type === "EXPENSE") totals.expense += t.amount;
 }
 
-function TotalsRow({ label, totals, currency, bold }: { label: string; totals: Totals; currency: string; bold?: boolean }) {
+function TotalsRow({ label, totals, currency, bold, colors }: { label: string; totals: Totals; currency: string; bold?: boolean; colors: ReturnType<typeof useTheme>["colors"] }) {
   const net = totals.income - totals.expense;
   return (
-    <View
-      style={{
-        flexDirection: "row",
-        alignItems: "center",
-        paddingVertical: 10,
-      }}
-    >
-      <Text style={{ flex: 1, fontWeight: bold ? "700" : "500", fontSize: bold ? 15 : 13 }}>{label}</Text>
-      <View style={{ alignItems: "flex-end", minWidth: 84 }}>
-        <Text style={{ color: colors.green600, fontSize: 11 }}>+{formatCurrency(totals.income, currency)}</Text>
-        <Text style={{ color: colors.red600, fontSize: 11 }}>-{formatCurrency(totals.expense, currency)}</Text>
-      </View>
-      <Text
-        style={{
-          minWidth: 90,
-          textAlign: "right",
-          fontWeight: "700",
-          color: net < 0 ? colors.red600 : colors.slate900,
-        }}
-      >
-        {formatCurrency(net, currency)}
+    <View style={{ flexDirection: "row", alignItems: "center", paddingVertical: 10, gap: 8 }}>
+      <Text style={{ flex: 1, fontWeight: bold ? "800" : "600", fontSize: bold ? 14 : 12.5, color: colors.ink }} numberOfLines={1}>
+        {label}
       </Text>
+      <View style={{ alignItems: "flex-end", minWidth: 76 }}>
+        <Money amount={totals.income} currency={currency} tone="income" signed style={{ fontSize: 10.5 }} />
+        <Money amount={-totals.expense} currency={currency} tone="expense" signed style={{ fontSize: 10.5 }} />
+      </View>
+      <Money amount={net} currency={currency} tone="auto" style={{ minWidth: 80, textAlign: "right", fontWeight: "800", fontSize: 12.5 }} />
     </View>
   );
 }
@@ -72,6 +60,7 @@ export function MonthlyView({
   accountIds: Set<string>;
   onPressMonth?: (month: number) => void;
 }) {
+  const { colors } = useTheme();
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
 
   const byMonth = useMemo(() => {
@@ -83,6 +72,8 @@ export function MonthlyView({
     }
     return arr;
   }, [transactions, year]);
+
+  const peak = useMemo(() => Math.max(1, ...byMonth.map((m) => Math.max(m.income, m.expense))), [byMonth]);
 
   const weekTotalsByMonth = useMemo(() => {
     const map = new Map<number, { bucket: ReturnType<typeof weekBucketsForMonth>[number]; totals: Totals }[]>();
@@ -103,23 +94,9 @@ export function MonthlyView({
 
   if (transactions.length === 0) {
     if (carryOver) {
-      return (
-        <View style={{ paddingTop: 8 }}>
-          <CarryOverRow
-            familyId={familyId}
-            periodStart={new Date(year, 0, 1)}
-            accounts={accounts}
-            accountIds={accountIds}
-            currency={currency}
-          />
-        </View>
-      );
+      return <CarryOverRow familyId={familyId} periodStart={new Date(year, 0, 1)} accounts={accounts} accountIds={accountIds} currency={currency} />;
     }
-    return (
-      <View style={{ paddingVertical: 40, alignItems: "center" }}>
-        <Text style={{ color: colors.slate400, fontSize: 13 }}>No transactions in {year}.</Text>
-      </View>
-    );
+    return <EmptyState icon={<TrendingUp size={20} color={colors.brand600} />} title={`No transactions in ${year}`} />;
   }
 
   function toggle(monthIdx: number) {
@@ -139,14 +116,30 @@ export function MonthlyView({
         const hasData = totals.income > 0 || totals.expense > 0;
         const isExpanded = expanded.has(monthIdx);
         return (
-          <View key={label} style={{ borderTopWidth: 1, borderTopColor: colors.slate200 }}>
-            <Pressable onPress={() => toggle(monthIdx)} disabled={!hasData}>
-              <TotalsRow label={`${isExpanded ? "▾" : hasData ? "▸" : "  "} ${label}`} totals={totals} currency={currency} bold />
+          <View key={label} style={{ borderTopWidth: 1, borderTopColor: colors.line }}>
+            <Pressable onPress={() => toggle(monthIdx)} disabled={!hasData} style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+              {hasData ? (
+                isExpanded ? (
+                  <ChevronDown size={14} color={colors.inkSubtle} />
+                ) : (
+                  <ChevronRight size={14} color={colors.inkSubtle} />
+                )
+              ) : (
+                <View style={{ width: 14 }} />
+              )}
+              <View style={{ flex: 1 }}>
+                <TotalsRow label={label} totals={totals} currency={currency} bold colors={colors} />
+              </View>
             </Pressable>
+            {hasData && (
+              <View style={{ height: 4, borderRadius: 2, backgroundColor: colors.surfaceSunken, marginBottom: 8, overflow: "hidden" }}>
+                <View style={{ width: `${(totals.expense / peak) * 100}%`, height: "100%", backgroundColor: colors.expense }} />
+              </View>
+            )}
             {isExpanded && (
-              <View style={{ paddingLeft: 16, paddingBottom: 8 }}>
+              <View style={{ paddingLeft: 20, paddingBottom: 8 }}>
                 {(weekTotalsByMonth.get(monthIdx) ?? []).map((row, i) => (
-                  <TotalsRow key={row.bucket.key} label={`Week ${i + 1}`} totals={row.totals} currency={currency} />
+                  <TotalsRow key={row.bucket.key} label={`Week ${i + 1}`} totals={row.totals} currency={currency} colors={colors} />
                 ))}
               </View>
             )}

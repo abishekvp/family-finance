@@ -1,15 +1,18 @@
 import { useState } from "react";
-import { Pressable, ScrollView, Switch, Text, View } from "react-native";
+import { ScrollView, Text, View } from "react-native";
+import { CalendarCog, Coins } from "lucide-react-native";
 import { api } from "../../src/api/client";
 import { useAuth } from "../../src/context/AuthContext";
 import { usePrefs, type LandingView, type WeekStart } from "../../src/context/PrefsContext";
+import { useTheme } from "../../src/context/ThemeContext";
 import { getErrorMessage } from "../../src/api/errors";
-import { Button, Card, ErrorText, Input, Label, colors, pillStyle, pillTextStyle } from "../../src/components/ui";
+import { Button, Card, CardHeader, Chip, ErrorText, Field, Input, SuccessText, Toggle } from "../../src/components/ui";
 
 const CURRENCIES = ["USD", "EUR", "GBP", "INR", "CAD", "AUD"];
 
 export default function Settings() {
   const { user, refreshUser } = useAuth();
+  const { colors } = useTheme();
   const family = user!.families[0];
   const { prefs, updatePrefs } = usePrefs();
   const isAdmin = family.role === "ADMIN";
@@ -42,87 +45,60 @@ export default function Settings() {
   }
 
   return (
-    <ScrollView style={{ backgroundColor: colors.slate50 }} contentContainerStyle={{ padding: 16, gap: 16 }}>
-      <View>
-        <Text style={{ fontSize: 13, fontWeight: "700", color: colors.slate500, marginBottom: 8, textTransform: "uppercase" }}>
-          Family currency
-        </Text>
-        <Card style={{ gap: 12 }}>
-          {!isAdmin ? (
-            <Text style={{ color: colors.slate500, fontSize: 13 }}>
-              Currency is {currency}. Only a family admin can change it.
-            </Text>
-          ) : (
-            <>
-              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-                {CURRENCIES.map((c) => (
-                  <Pressable key={c} onPress={() => handleSaveCurrency(c)} style={pillStyle(currency === c)}>
-                    <Text style={pillTextStyle(currency === c)}>{c}</Text>
-                  </Pressable>
-                ))}
+    <ScrollView style={{ backgroundColor: colors.canvas }} contentContainerStyle={{ padding: 16, gap: 16 }}>
+      <Card>
+        <CardHeader title="Family currency" icon={<Coins size={16} color={colors.brand600} />} />
+        {!isAdmin ? (
+          <Text style={{ color: colors.inkMuted, fontSize: 13 }}>Currency is {currency}. Only a family admin can change it.</Text>
+        ) : (
+          <View style={{ gap: 12 }}>
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+              {CURRENCIES.map((c) => (
+                <Chip key={c} label={c} selected={currency === c} onPress={() => handleSaveCurrency(c)} />
+              ))}
+            </View>
+            <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
+              <View style={{ flex: 1 }}>
+                <Input value={customCurrency} onChangeText={setCustomCurrency} placeholder="Other (e.g. JPY)" autoCapitalize="characters" maxLength={3} />
               </View>
-              <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
-                <View style={{ flex: 1 }}>
-                  <Input
-                    value={customCurrency}
-                    onChangeText={setCustomCurrency}
-                    placeholder="Other (e.g. JPY)"
-                    autoCapitalize="characters"
-                    maxLength={3}
-                  />
-                </View>
-                <Button
-                  title={savingCurrency ? "Saving..." : "Save"}
-                  variant="secondary"
-                  disabled={savingCurrency || customCurrency.trim().length !== 3}
-                  onPress={() => handleSaveCurrency(customCurrency)}
-                />
-              </View>
-              {currencySaved && <Text style={{ color: colors.green600, fontSize: 12 }}>Currency updated.</Text>}
-              <ErrorText>{currencyError}</ErrorText>
-            </>
-          )}
-        </Card>
-      </View>
+              <Button title="Save" variant="secondary" loading={savingCurrency} disabled={customCurrency.trim().length !== 3} onPress={() => handleSaveCurrency(customCurrency)} />
+            </View>
+            {currencySaved && <SuccessText>Currency updated.</SuccessText>}
+            <ErrorText>{currencyError}</ErrorText>
+          </View>
+        )}
+      </Card>
 
-      <View>
-        <Text style={{ fontSize: 13, fontWeight: "700", color: colors.slate500, marginBottom: 8, textTransform: "uppercase" }}>
-          Transactions hub
-        </Text>
-        <Card style={{ gap: 16 }}>
-          <View>
-            <Label>Default landing view</Label>
+      <Card>
+        <CardHeader title="Transactions hub" icon={<CalendarCog size={16} color={colors.brand600} />} />
+        <View style={{ gap: 18 }}>
+          <Field label="Default landing view">
             <View style={{ flexDirection: "row", gap: 8 }}>
               {(["daily", "calendar"] as LandingView[]).map((v) => (
-                <Pressable key={v} onPress={() => updatePrefs({ landingView: v })} style={pillStyle(prefs.landingView === v)}>
-                  <Text style={pillTextStyle(prefs.landingView === v)}>{v === "daily" ? "Daily" : "Calendar"}</Text>
-                </Pressable>
+                <Chip key={v} label={v === "daily" ? "Daily" : "Calendar"} selected={prefs.landingView === v} onPress={() => updatePrefs({ landingView: v })} />
               ))}
             </View>
-          </View>
+          </Field>
 
-          <View>
-            <Label>Week starts on</Label>
+          <Field label="Week starts on">
             <View style={{ flexDirection: "row", gap: 8 }}>
               {(["sunday", "monday"] as WeekStart[]).map((v) => (
-                <Pressable key={v} onPress={() => updatePrefs({ weekStart: v })} style={pillStyle(prefs.weekStart === v)}>
-                  <Text style={pillTextStyle(prefs.weekStart === v)}>{v === "sunday" ? "Sunday" : "Monday"}</Text>
-                </Pressable>
+                <Chip key={v} label={v === "sunday" ? "Sunday" : "Monday"} selected={prefs.weekStart === v} onPress={() => updatePrefs({ weekStart: v })} />
               ))}
             </View>
-          </View>
+          </Field>
 
           <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
             <View style={{ flex: 1, paddingRight: 12 }}>
-              <Label>Carry-over balances</Label>
-              <Text style={{ color: colors.slate500, fontSize: 12 }}>
+              <Text style={{ fontSize: 13, fontWeight: "700", color: colors.ink, marginBottom: 4 }}>Carry-over balances</Text>
+              <Text style={{ color: colors.inkSubtle, fontSize: 12 }}>
                 When a period has no transactions, show the running account balance instead of an empty state.
               </Text>
             </View>
-            <Switch value={prefs.carryOver} onValueChange={(v) => updatePrefs({ carryOver: v })} />
+            <Toggle value={prefs.carryOver} onChange={(v) => updatePrefs({ carryOver: v })} />
           </View>
-        </Card>
-      </View>
+        </View>
+      </Card>
     </ScrollView>
   );
 }

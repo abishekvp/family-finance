@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
   type ButtonHTMLAttributes,
+  type CSSProperties,
   type InputHTMLAttributes,
   type LabelHTMLAttributes,
   type ReactNode,
@@ -387,8 +388,14 @@ export function Spinner({ label = "Loading…", className = "" }: { label?: stri
   );
 }
 
-export function Skeleton({ className = "" }: { className?: string }) {
-  return <div className={cn("skeleton", className)} />;
+export function Skeleton({
+  className = "",
+  style,
+}: {
+  className?: string;
+  style?: CSSProperties;
+}) {
+  return <div className={cn("skeleton", className)} style={style} />;
 }
 
 /** Placeholder matching the rhythm of a transaction / account list while it loads. */
@@ -414,14 +421,21 @@ export function EmptyState({
   description,
   icon,
   action,
+  className = "",
 }: {
   title: string;
   description?: string;
   icon?: ReactNode;
   action?: ReactNode;
+  className?: string;
 }) {
   return (
-    <div className="flex flex-col items-center rounded-2xl border border-dashed border-line-strong px-6 py-12 text-center">
+    <div
+      className={cn(
+        "flex flex-col items-center rounded-2xl border border-dashed border-line-strong px-6 py-12 text-center",
+        className
+      )}
+    >
       {icon && (
         <span className="mb-4 grid h-12 w-12 place-items-center rounded-2xl bg-brand-soft text-brand-500">
           {icon}

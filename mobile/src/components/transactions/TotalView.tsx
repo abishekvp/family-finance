@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Text, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
+import { Check, Copy, Landmark, PiggyBank } from "lucide-react-native";
 import { api } from "../../api/client";
 import type { Account, Budget, Transaction } from "../../api/types";
-import { Button, Card, colors } from "../../components/ui";
-import { formatCurrency, safePercent } from "../../lib/format";
+import { useTheme } from "../../context/ThemeContext";
+import { Button, Card, CardHeader, Dot, ErrorText, Money, ProgressBar } from "../ui";
+import { safePercent } from "../../lib/format";
 import { getErrorMessage } from "../../api/errors";
 import { CarryOverRow } from "./CarryOverRow";
 
@@ -27,6 +29,7 @@ export function TotalView({
   carryOver: boolean;
   accountIds: Set<string>;
 }) {
+  const { colors } = useTheme();
   const [budgets, setBudgets] = useState<Budget[]>([]);
   const [budgetsError, setBudgetsError] = useState<string | null>(null);
   const [isLoadingBudgets, setIsLoadingBudgets] = useState(true);
@@ -73,15 +76,7 @@ export function TotalView({
   async function handleExport() {
     const header = "date,type,account,category,payee,amount,notes";
     const rows = transactions.map((t) =>
-      [
-        t.date.slice(0, 10),
-        t.type,
-        t.account.name,
-        t.category?.name ?? "",
-        t.payee ?? "",
-        t.amount.toFixed(2),
-        (t.notes ?? "").replace(/[\r\n,]/g, " "),
-      ]
+      [t.date.slice(0, 10), t.type, t.account.name, t.category?.name ?? "", t.payee ?? "", t.amount.toFixed(2), (t.notes ?? "").replace(/[\r\n,]/g, " ")]
         .map((field) => `"${String(field).replace(/"/g, '""')}"`)
         .join(",")
     );
@@ -93,89 +88,75 @@ export function TotalView({
 
   return (
     <View style={{ gap: 16 }}>
-      <Card style={{ gap: 12 }}>
-        <Text style={{ color: colors.slate500, fontSize: 13 }}>This period</Text>
-        <Text style={{ fontSize: 26, fontWeight: "700", color: totals.net < 0 ? colors.red600 : colors.slate900 }}>
-          {formatCurrency(totals.net, currency)}
+      <Card style={{ alignItems: "center", paddingVertical: 22 }}>
+        <Text style={{ color: colors.inkMuted, fontSize: 11, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.4 }}>
+          This period
         </Text>
-        <View style={{ flexDirection: "row", gap: 24 }}>
-          <View>
-            <Text style={{ color: colors.slate500, fontSize: 12 }}>Income</Text>
-            <Text style={{ fontWeight: "700", color: colors.green600 }}>{formatCurrency(totals.income, currency)}</Text>
-          </View>
-          <View>
-            <Text style={{ color: colors.slate500, fontSize: 12 }}>Expense</Text>
-            <Text style={{ fontWeight: "700", color: colors.red600 }}>{formatCurrency(totals.expense, currency)}</Text>
-          </View>
+        <Money amount={totals.net} currency={currency} signed style={{ fontSize: 28, fontWeight: "900", marginTop: 6 }} />
+        <View style={{ flexDirection: "row", gap: 20, marginTop: 12 }}>
+          <Money amount={totals.income} currency={currency} tone="income" signed style={{ fontWeight: "700" }} />
+          <Money amount={-totals.expense} currency={currency} tone="expense" signed style={{ fontWeight: "700" }} />
         </View>
 
         {transactions.length === 0 && carryOver && (
-          <CarryOverRow
-            familyId={familyId}
-            periodStart={new Date(year, month - 1, 1)}
-            accounts={accounts}
-            accountIds={accountIds}
-            currency={currency}
-          />
+          <View style={{ marginTop: 16, width: "100%" }}>
+            <CarryOverRow familyId={familyId} periodStart={new Date(year, month - 1, 1)} accounts={accounts} accountIds={accountIds} currency={currency} />
+          </View>
         )}
       </Card>
 
-      <View>
-        <Text style={{ fontSize: 15, fontWeight: "700", marginBottom: 8 }}>Budgets</Text>
-        <Card style={{ gap: 10 }}>
-          {isLoadingBudgets ? (
-            <ActivityIndicator color={colors.brand600} />
-          ) : budgetsError ? (
-            <Text style={{ color: colors.red600, fontSize: 13 }}>{budgetsError}</Text>
-          ) : budgets.length === 0 ? (
-            <Text style={{ color: colors.slate400, fontSize: 13 }}>No budgets set for this month.</Text>
-          ) : (
-            budgets.map((b) => {
+      <Card>
+        <CardHeader title="Budgets" icon={<PiggyBank size={16} color={colors.brand600} />} />
+        {isLoadingBudgets ? (
+          <ActivityIndicator color={colors.brand600} />
+        ) : budgetsError ? (
+          <ErrorText>{budgetsError}</ErrorText>
+        ) : budgets.length === 0 ? (
+          <Text style={{ color: colors.inkSubtle, fontSize: 13 }}>No budgets set for this month.</Text>
+        ) : (
+          <View style={{ gap: 14 }}>
+            {budgets.map((b) => {
               const pct = safePercent(b.spent, b.amount);
               const over = b.spent > b.amount;
               return (
                 <View key={b.id}>
-                  <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 4 }}>
-                    <Text style={{ fontSize: 13, fontWeight: "600" }}>{b.category.name}</Text>
-                    <Text style={{ fontSize: 12, color: over ? colors.red600 : colors.slate500 }}>
-                      {formatCurrency(b.spent, currency)} / {formatCurrency(b.amount, currency)}
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                    <Dot color={b.category.color} />
+                    <Text style={{ flex: 1, fontSize: 13, fontWeight: "700", color: colors.ink }}>{b.category.name}</Text>
+                    <Text style={{ fontSize: 11.5, color: over ? colors.expense : colors.inkSubtle, fontWeight: "600" }}>
+                      {safePercent(b.spent, b.amount).toFixed(0)}%
                     </Text>
                   </View>
-                  <View style={{ height: 6, borderRadius: 3, backgroundColor: colors.slate200, overflow: "hidden" }}>
-                    <View
-                      style={{
-                        width: `${pct}%`,
-                        height: "100%",
-                        backgroundColor: over ? colors.red600 : colors.brand600,
-                      }}
-                    />
-                  </View>
+                  <ProgressBar value={pct / 100} tone={over ? "expense" : "brand"} />
                 </View>
               );
-            })
-          )}
-        </Card>
-      </View>
+            })}
+          </View>
+        )}
+      </Card>
 
-      <View>
-        <Text style={{ fontSize: 15, fontWeight: "700", marginBottom: 8 }}>Accounts</Text>
-        <Card style={{ gap: 10 }}>
-          {visibleAccounts.length === 0 ? (
-            <Text style={{ color: colors.slate400, fontSize: 13 }}>No accounts to show.</Text>
-          ) : (
-            visibleAccounts.map((a) => (
+      <Card>
+        <CardHeader title="Accounts" icon={<Landmark size={16} color={colors.brand600} />} />
+        {visibleAccounts.length === 0 ? (
+          <Text style={{ color: colors.inkSubtle, fontSize: 13 }}>No accounts to show.</Text>
+        ) : (
+          <View style={{ gap: 10 }}>
+            {visibleAccounts.map((a) => (
               <View key={a.id} style={{ flexDirection: "row", justifyContent: "space-between" }}>
-                <Text style={{ fontSize: 13 }}>{a.name}</Text>
-                <Text style={{ fontSize: 13, fontWeight: "600", color: a.balance < 0 ? colors.red600 : colors.slate900 }}>
-                  {formatCurrency(a.balance, a.currency || currency)}
-                </Text>
+                <Text style={{ fontSize: 13, color: colors.ink, fontWeight: "600" }}>{a.name}</Text>
+                <Money amount={a.balance} currency={a.currency || currency} tone={a.balance < 0 ? "expense" : undefined} style={{ fontSize: 13, fontWeight: "700" }} />
               </View>
-            ))
-          )}
-        </Card>
-      </View>
+            ))}
+          </View>
+        )}
+      </Card>
 
-      <Button title={copied ? "Copied CSV to clipboard" : "Export period as CSV"} variant="secondary" onPress={handleExport} />
+      <Button
+        title={copied ? "Copied CSV to clipboard" : "Export period as CSV"}
+        variant="secondary"
+        icon={copied ? <Check size={15} color={colors.ink} /> : <Copy size={15} color={colors.ink} />}
+        onPress={handleExport}
+      />
     </View>
   );
 }

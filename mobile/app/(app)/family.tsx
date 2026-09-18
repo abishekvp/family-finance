@@ -1,11 +1,13 @@
 import { useCallback, useState } from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { ScrollView, Text, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import { useFocusEffect } from "expo-router";
+import { Check, Copy, LogOut, Mail, Users } from "lucide-react-native";
 import { api } from "../../src/api/client";
 import { useAuth } from "../../src/context/AuthContext";
+import { useTheme } from "../../src/context/ThemeContext";
 import { getErrorMessage } from "../../src/api/errors";
-import { Button, Card, ErrorText, Input, Label, colors } from "../../src/components/ui";
+import { Avatar, Badge, Button, Card, CardHeader, Chip, ErrorText, Field, Input } from "../../src/components/ui";
 
 interface Member {
   userId: string;
@@ -22,9 +24,11 @@ interface Invite {
 }
 
 const ROLES = ["ADMIN", "MEMBER", "VIEWER"] as const;
+const ROLE_TONE = { ADMIN: "brand", MEMBER: "info", VIEWER: "neutral" } as const;
 
 export default function FamilySettings() {
   const { user, logout } = useAuth();
+  const { colors } = useTheme();
   const family = user!.families[0];
   const [members, setMembers] = useState<Member[]>([]);
   const [pendingInvites, setPendingInvites] = useState<Invite[]>([]);
@@ -55,10 +59,7 @@ export default function FamilySettings() {
     setIsInviting(true);
     setCopied(false);
     try {
-      const res = await api.post<Invite>(`/families/${family.id}/invites`, {
-        email: inviteEmail,
-        role: inviteRole,
-      });
+      const res = await api.post<Invite>(`/families/${family.id}/invites`, { email: inviteEmail, role: inviteRole });
       setLastInviteLink(res.data.inviteLink);
       setInviteEmail("");
       await loadMembers();
@@ -76,98 +77,62 @@ export default function FamilySettings() {
   }
 
   return (
-    <ScrollView style={{ backgroundColor: "#F8FAFC" }} contentContainerStyle={{ padding: 16, gap: 16 }}>
-      <Card style={{ gap: 8 }}>
-        <Text style={{ fontSize: 17, fontWeight: "700", marginBottom: 4 }}>Members</Text>
-        {members.map((m) => (
-          <View
-            key={m.userId}
-            style={{
-              flexDirection: "row",
-              justifyContent: "space-between",
-              alignItems: "center",
-              paddingVertical: 8,
-              borderTopWidth: 1,
-              borderTopColor: colors.slate200,
-            }}
-          >
-            <View>
-              <Text style={{ fontWeight: "600" }}>{m.name}</Text>
-              <Text style={{ color: colors.slate500, fontSize: 12 }}>{m.email}</Text>
+    <ScrollView style={{ backgroundColor: colors.canvas }} contentContainerStyle={{ padding: 16, gap: 16 }}>
+      <Card>
+        <CardHeader title="Members" subtitle={`${members.length} in ${family.name}`} icon={<Users size={16} color={colors.brand600} />} />
+        <View style={{ gap: 4 }}>
+          {members.map((m, i) => (
+            <View key={m.userId} style={{ flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 10, borderTopWidth: i === 0 ? 0 : 1, borderTopColor: colors.line }}>
+              <Avatar name={m.name} size={38} />
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontWeight: "700", color: colors.ink }}>{m.name}</Text>
+                <Text style={{ color: colors.inkSubtle, fontSize: 12 }}>{m.email}</Text>
+              </View>
+              <Badge tone={ROLE_TONE[m.role]}>{m.role}</Badge>
             </View>
-            <View style={{ backgroundColor: colors.brand50, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4 }}>
-              <Text style={{ color: colors.brand700, fontSize: 11, fontWeight: "700" }}>{m.role}</Text>
-            </View>
-          </View>
-        ))}
+          ))}
+        </View>
       </Card>
 
-      <Card style={{ gap: 12 }}>
-        <Text style={{ fontSize: 17, fontWeight: "700" }}>Invite a family member</Text>
-        <View>
-          <Label>Email</Label>
-          <Input
-            autoCapitalize="none"
-            keyboardType="email-address"
-            value={inviteEmail}
-            onChangeText={setInviteEmail}
-            placeholder="partner@example.com"
-          />
-        </View>
-        <View>
-          <Label>Role</Label>
+      <Card style={{ gap: 14 }}>
+        <CardHeader title="Invite a family member" icon={<Mail size={16} color={colors.brand600} />} />
+        <Field label="Email">
+          <Input autoCapitalize="none" keyboardType="email-address" value={inviteEmail} onChangeText={setInviteEmail} placeholder="partner@example.com" />
+        </Field>
+        <Field label="Role">
           <View style={{ flexDirection: "row", gap: 8 }}>
             {ROLES.map((r) => (
-              <Pressable
-                key={r}
-                onPress={() => setInviteRole(r)}
-                style={{
-                  paddingHorizontal: 12,
-                  paddingVertical: 6,
-                  borderRadius: 999,
-                  backgroundColor: inviteRole === r ? colors.brand600 : colors.slate50,
-                  borderWidth: 1,
-                  borderColor: inviteRole === r ? colors.brand600 : colors.slate200,
-                }}
-              >
-                <Text style={{ color: inviteRole === r ? colors.white : colors.slate700, fontSize: 12, fontWeight: "600" }}>
-                  {r}
-                </Text>
-              </Pressable>
+              <Chip key={r} label={r} selected={inviteRole === r} onPress={() => setInviteRole(r)} />
             ))}
           </View>
-        </View>
+        </Field>
         <ErrorText>{error}</ErrorText>
-        <Button title={isInviting ? "Sending..." : "Send invite"} onPress={handleInvite} disabled={isInviting || !inviteEmail.trim()} />
+        <Button title="Send invite" loading={isInviting} disabled={!inviteEmail.trim()} onPress={handleInvite} />
 
         {lastInviteLink && (
-          <View style={{ backgroundColor: colors.slate50, borderRadius: 10, padding: 12, gap: 8 }}>
-            <Text style={{ fontSize: 12, color: colors.slate500 }}>
-              No email service is wired up yet — share this link with them directly:
-            </Text>
-            <Text style={{ fontSize: 12, fontFamily: "monospace" }} numberOfLines={2}>
+          <View style={{ backgroundColor: colors.surfaceSunken, borderRadius: 14, padding: 14, gap: 10 }}>
+            <Text style={{ fontSize: 12, color: colors.inkSubtle }}>No email service is wired up yet — share this link with them directly:</Text>
+            <Text style={{ fontSize: 12, fontFamily: "monospace", color: colors.ink }} numberOfLines={2}>
               {lastInviteLink}
             </Text>
-            <Button title={copied ? "Copied!" : "Copy link"} variant="secondary" onPress={copyLink} />
+            <Button title={copied ? "Copied" : "Copy link"} variant="secondary" icon={copied ? <Check size={14} color={colors.ink} /> : <Copy size={14} color={colors.ink} />} onPress={copyLink} />
           </View>
         )}
 
         {pendingInvites.length > 0 && (
-          <View style={{ marginTop: 4 }}>
-            <Text style={{ fontSize: 13, fontWeight: "600", color: colors.slate500, marginBottom: 6 }}>
-              Pending invites
-            </Text>
+          <View style={{ marginTop: 4, gap: 4 }}>
+            <Text style={{ fontSize: 12, fontWeight: "700", color: colors.inkSubtle, marginBottom: 4, textTransform: "uppercase" }}>Pending invites</Text>
             {pendingInvites.map((inv) => (
               <View key={inv.id} style={{ flexDirection: "row", justifyContent: "space-between", paddingVertical: 4 }}>
-                <Text style={{ fontSize: 13 }}>{inv.email}</Text>
-                <Text style={{ fontSize: 12, color: colors.slate400 }}>{inv.role}</Text>
+                <Text style={{ fontSize: 13, color: colors.ink }}>{inv.email}</Text>
+                <Badge>{inv.role}</Badge>
               </View>
             ))}
           </View>
         )}
       </Card>
 
-      <Button title="Sign out" variant="secondary" onPress={() => logout()} />
+      <Button title="Sign out" variant="secondary" icon={<LogOut size={16} color={colors.ink} />} onPress={() => logout()} />
     </ScrollView>
   );
 }

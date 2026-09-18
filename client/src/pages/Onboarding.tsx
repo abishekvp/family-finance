@@ -1,11 +1,20 @@
 import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
+import { Sparkles } from "lucide-react";
 import { api } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { getErrorMessage } from "../api/errors";
-import { Button, Card, ErrorText, Input, Label } from "../components/ui";
+import { AuthShell } from "../components/AuthShell";
+import { Button, ErrorText, Field, Input, Select } from "../components/ui";
 
-const CURRENCIES = ["USD", "EUR", "GBP", "INR", "CAD", "AUD"];
+const CURRENCIES = [
+  { code: "USD", name: "US Dollar" },
+  { code: "EUR", name: "Euro" },
+  { code: "GBP", name: "British Pound" },
+  { code: "INR", name: "Indian Rupee" },
+  { code: "CAD", name: "Canadian Dollar" },
+  { code: "AUD", name: "Australian Dollar" },
+];
 
 export function Onboarding() {
   const { refreshUser } = useAuth();
@@ -31,45 +40,40 @@ export function Onboarding() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center px-4">
-      <Card className="w-full max-w-sm">
-        <h1 className="mb-1 text-xl font-semibold">Create your family workspace</h1>
-        <p className="mb-6 text-sm text-slate-500">
-          This is where your household's shared accounts, budgets, and categories will live. You can invite other
-          members once it's set up.
-        </p>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <Label htmlFor="family-name">Family name</Label>
-            <Input
-              id="family-name"
-              placeholder="The Smiths"
-              required
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
-          </div>
-          <div>
-            <Label htmlFor="currency">Default currency</Label>
-            <select
-              id="currency"
-              value={currency}
-              onChange={(e) => setCurrency(e.target.value)}
-              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800"
-            >
+    <AuthShell
+      title="Create your family workspace"
+      subtitle="This is where your household's shared accounts, budgets and categories will live. You can invite other members once it's set up."
+    >
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <Field label="Family name">
+          {(props) => (
+            <Input {...props} placeholder="The Smiths" required value={name} onChange={(e) => setName(e.target.value)} />
+          )}
+        </Field>
+
+        <Field label="Default currency">
+          {(props) => (
+            <Select {...props} value={currency} onChange={(e) => setCurrency(e.target.value)}>
               {CURRENCIES.map((c) => (
-                <option key={c} value={c}>
-                  {c}
+                <option key={c.code} value={c.code}>
+                  {c.code} — {c.name}
                 </option>
               ))}
-            </select>
-          </div>
-          <ErrorText>{error}</ErrorText>
-          <Button type="submit" className="w-full" disabled={isSubmitting}>
-            {isSubmitting ? "Creating..." : "Create family"}
-          </Button>
-        </form>
-      </Card>
-    </div>
+            </Select>
+          )}
+        </Field>
+
+        <div className="flex items-start gap-2.5 rounded-xl bg-brand-soft px-3.5 py-3 text-xs text-ink-muted">
+          <Sparkles size={15} className="mt-0.5 shrink-0 text-brand-600" />
+          <span>We'll set you up with a starter set of income and expense categories — edit or remove them anytime.</span>
+        </div>
+
+        <ErrorText>{error}</ErrorText>
+
+        <Button type="submit" size="lg" className="w-full" loading={isSubmitting}>
+          {isSubmitting ? "Creating…" : "Create family"}
+        </Button>
+      </form>
+    </AuthShell>
   );
 }
