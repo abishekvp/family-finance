@@ -10,12 +10,6 @@ membership (Admin / Member / Viewer), transactions, categories, and dashboards.
 - **Deployment**: single server — the client builds to static assets that the Express server serves directly
   alongside the API, so production runs as one Node process on one port.
 
-## Project layout
-
-```
-server/   Express API + Prisma schema/migrations
-client/   React app (Vite)
-```
 
 In development, the two run as separate processes (Vite on :5173 proxies `/api` to Express on :4000) for fast
 hot-reloading. In production, only the server process runs: it serves the built client from `client/dist` and
