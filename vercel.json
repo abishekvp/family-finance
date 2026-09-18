@@ -1,7 +1,7 @@
 {
   "buildCommand": "npm run build:client && npm run prisma:generate",
   "outputDirectory": "client/dist",
-  "installCommand": "npm install",
+  "installCommand": "npm install --include=dev",
   "functions": {
     "api/index.ts": {
       "memory": 1024,
@@ -12,6 +12,10 @@
     {
       "source": "/api/(.*)",
       "destination": "/api"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
     }
   ]
 }

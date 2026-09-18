@@ -22,10 +22,10 @@ export function QRCodeCard({ value, size = 176 }: { value: string; size?: number
       color: { dark: "#0d1122", light: "#ffffff" },
       width: size,
     })
-      .then((markup) => {
+      .then((markup: string) => {
         if (!cancelled) setSvg(markup);
       })
-      .catch((err) => {
+      .catch((err: unknown) => {
         if (!cancelled) {
           console.error("QR code generation failed", err);
           setSvg(null);
