@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import { CategoryType } from "@prisma/client";
 
 export const DEFAULT_CATEGORIES: Array<{
@@ -24,31 +25,47 @@ export async function seedDefaultCategories(
   tx: import("@prisma/client").Prisma.TransactionClient,
   familyId: string
 ) {
+  // Built as a single batched insert (rather than one create() per row) because pooled/serverless
+  // Postgres connections (e.g. Prisma Accelerate) can drop long-running interactive transactions
+  // before a couple dozen sequential round-trips finish, surfacing as P2028 "Transaction not found".
+  const rows: {
+    id: string;
+    familyId: string;
+    parentId: string | null;
+    name: string;
+    type: CategoryType;
+    color: string;
+    icon: string;
+    sortOrder: number;
+  }[] = [];
+
   let sortOrder = 0;
   for (const cat of DEFAULT_CATEGORIES) {
-    const parent = await tx.category.create({
-      data: {
-        familyId,
-        name: cat.name,
-        type: cat.type,
-        color: cat.color,
-        icon: cat.icon,
-        sortOrder: sortOrder++,
-      },
+    const parentId = crypto.randomUUID();
+    rows.push({
+      id: parentId,
+      familyId,
+      parentId: null,
+      name: cat.name,
+      type: cat.type,
+      color: cat.color,
+      icon: cat.icon,
+      sortOrder: sortOrder++,
     });
     let childSort = 0;
     for (const childName of cat.children) {
-      await tx.category.create({
-        data: {
-          familyId,
-          parentId: parent.id,
-          name: childName,
-          type: cat.type,
-          color: cat.color,
-          icon: cat.icon,
-          sortOrder: childSort++,
-        },
+      rows.push({
+        id: crypto.randomUUID(),
+        familyId,
+        parentId,
+        name: childName,
+        type: cat.type,
+        color: cat.color,
+        icon: cat.icon,
+        sortOrder: childSort++,
       });
     }
   }
+
+  await tx.category.createMany({ data: rows });
 }

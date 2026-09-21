@@ -13,3 +13,6 @@ coverage/
 client/dist/
 server/dist/
 generated/
+
+.vercel
+.env*
