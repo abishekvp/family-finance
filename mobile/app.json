@@ -38,7 +38,9 @@
           "resizeMode": "contain",
           "backgroundColor": "#4C36C9"
         }
-      ]
+      ],
+      "./plugins/withLanCleartext",
+      "./plugins/withCmakeShortPath"
     ]
   }
 }
