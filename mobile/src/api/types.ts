@@ -83,3 +83,20 @@ export interface Budget {
   spent: number;
   remaining: number;
 }
+
+export interface Goal {
+  id: string;
+  familyId: string;
+  ownerId: string | null;
+  accountId: string | null;
+  name: string;
+  targetAmount: number;
+  targetDate: string | null;
+  isCompleted: boolean;
+  createdAt: string;
+  updatedAt: string;
+  account: { id: string; name: string } | null;
+  saved: number;
+  remaining: number;
+  progress: number;
+}

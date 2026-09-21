@@ -26,6 +26,7 @@ export default function AppLayout() {
           <Stack.Screen name="settings" options={{ headerShown: true, title: "Settings" }} />
           <Stack.Screen name="categories" options={{ headerShown: true, title: "Categories" }} />
           <Stack.Screen name="budgets" options={{ headerShown: true, title: "Budgets" }} />
+          <Stack.Screen name="goals" options={{ headerShown: true, title: "Goals" }} />
           <Stack.Screen
             name="transaction-form"
             options={{ presentation: "modal", headerShown: true, title: "Transaction" }}

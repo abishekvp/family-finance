@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { RequireFamily } from "./components/RequireFamily";
 import { Layout } from "./components/Layout";
+import { Landing } from "./pages/Landing";
 import { Login } from "./pages/Login";
 import { Register } from "./pages/Register";
 import { Onboarding } from "./pages/Onboarding";
@@ -17,6 +18,7 @@ import { GetTheApp } from "./pages/GetTheApp";
 export default function App() {
   return (
     <Routes>
+      <Route path="/" element={<Landing />} />
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
 
@@ -35,8 +37,6 @@ export default function App() {
             <Route path="/get-the-app" element={<GetTheApp />} />
           </Route>
         </Route>
-
-        <Route path="/" element={<Navigate to="/dashboard" replace />} />
       </Route>
 
       <Route path="*" element={<Navigate to="/" replace />} />

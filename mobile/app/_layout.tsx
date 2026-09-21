@@ -7,6 +7,7 @@ import * as SplashScreen from "expo-splash-screen";
 import { AuthProvider, useAuth } from "../src/context/AuthContext";
 import { ThemeProvider, useTheme } from "../src/context/ThemeContext";
 import { Logo } from "../src/components/Logo";
+import { UpdateChecker } from "../src/components/UpdateChecker";
 
 SplashScreen.preventAutoHideAsync().catch(() => undefined);
 
@@ -31,6 +32,7 @@ function RootNavigator() {
   return (
     <>
       <StatusBar style={resolved === "dark" ? "light" : "dark"} />
+      <UpdateChecker />
       <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.canvas } }}>
         <Stack.Protected guard={!!user}>
           <Stack.Screen name="(app)" />

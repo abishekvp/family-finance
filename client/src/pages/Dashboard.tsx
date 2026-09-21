@@ -7,6 +7,7 @@ import {
   PiggyBank,
   Plus,
   Sparkles,
+  Target,
   TrendingDown,
   TrendingUp,
   Wallet,
@@ -18,7 +19,7 @@ import { getErrorMessage } from "../api/errors";
 import { Button, Card, CardHeader, Dot, EmptyState, ErrorText, ProgressBar, SkeletonRows } from "../components/ui";
 import { Money, StatTile } from "../components/figures";
 import type { LayoutContext } from "../components/Layout";
-import type { Account, Budget, Category, Transaction } from "../api/types";
+import type { Account, Budget, Category, Goal, Transaction } from "../api/types";
 import { formatPercent, safePercent } from "../lib/format";
 import { monthRange } from "../lib/dateUtils";
 import { TransactionRow } from "../components/transactions/TransactionRow";
@@ -36,6 +37,7 @@ export function Dashboard() {
   const [monthTransactions, setMonthTransactions] = useState<Transaction[]>([]);
   const [lastMonthTransactions, setLastMonthTransactions] = useState<Transaction[]>([]);
   const [budgets, setBudgets] = useState<Budget[]>([]);
+  const [goals, setGoals] = useState<Goal[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showAddTransaction, setShowAddTransaction] = useState(false);
@@ -49,7 +51,7 @@ export function Dashboard() {
     setIsLoading(true);
     setError(null);
     try {
-      const [accountsRes, categoriesRes, recentRes, monthRes, lastMonthRes, budgetsRes] = await Promise.all([
+      const [accountsRes, categoriesRes, recentRes, monthRes, lastMonthRes, budgetsRes, goalsRes] = await Promise.all([
         api.get<Account[]>(`/families/${family.id}/accounts`),
         api.get<Category[]>(`/families/${family.id}/categories`),
         api.get<Transaction[]>(`/families/${family.id}/transactions`, { params: { limit: 6 } }),
@@ -64,6 +66,7 @@ export function Dashboard() {
             params: { year: now.getFullYear(), month: now.getMonth() + 1 },
           })
           .catch(() => ({ data: [] as Budget[] })),
+        api.get<Goal[]>(`/families/${family.id}/goals`).catch(() => ({ data: [] as Goal[] })),
       ]);
       setAccounts(accountsRes.data);
       setCategories(categoriesRes.data);
@@ -71,6 +74,7 @@ export function Dashboard() {
       setMonthTransactions(monthRes.data);
       setLastMonthTransactions(lastMonthRes.data);
       setBudgets(budgetsRes.data);
+      setGoals(goalsRes.data);
     } catch (err) {
       setError(getErrorMessage(err, "Unable to load your dashboard"));
     } finally {
@@ -130,6 +134,15 @@ export function Dashboard() {
       .sort((a, b) => safePercent(b.spent, b.amount) - safePercent(a.spent, a.amount))
       .slice(0, 4);
   }, [budgets, scope]);
+
+  const goalHighlights = useMemo(() => {
+    const relevant = scope === "family" ? goals.filter((g) => g.ownerId === null) : goals;
+    return relevant
+      .filter((g) => !g.isCompleted)
+      .slice()
+      .sort((a, b) => b.progress - a.progress)
+      .slice(0, 4);
+  }, [goals, scope]);
 
   const firstName = user!.name.split(" ")[0];
   const hour = now.getHours();
@@ -303,6 +316,33 @@ export function Dashboard() {
                 </div>
               );
             })}
+          </div>
+        </Card>
+      )}
+
+      {goalHighlights.length > 0 && (
+        <Card>
+          <CardHeader
+            title="Savings goals"
+            subtitle="In progress"
+            icon={<Target size={17} />}
+            actions={
+              <Link to="/settings" className="text-sm font-semibold text-brand-600 hover:text-brand-700">
+                Manage goals
+              </Link>
+            }
+          />
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {goalHighlights.map((g) => (
+              <div key={g.id}>
+                <div className="mb-1.5 truncate text-sm font-medium text-ink">{g.name}</div>
+                <ProgressBar value={g.progress} className="mb-1.5" />
+                <p className="text-xs text-ink-subtle">
+                  <Money amount={g.saved} currency={family.currency} /> of{" "}
+                  <Money amount={g.targetAmount} currency={family.currency} />
+                </p>
+              </div>
+            ))}
           </div>
         </Card>
       )}

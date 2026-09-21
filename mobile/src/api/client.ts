@@ -9,7 +9,7 @@ import {
 // The built APK ships pointed at the production deployment. `EXPO_PUBLIC_API_URL` overrides it
 // for local development (e.g. `EXPO_PUBLIC_API_URL=http://localhost:4000/api expo start`, with
 // `adb reverse tcp:4000 tcp:4000` for a physical device or emulator reaching the dev machine).
-const DEFAULT_API_URL = "https://family-finance.vercel.app/api";
+const DEFAULT_API_URL = "https://finance-family-manager.vercel.app/api";
 export const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL?.trim() || DEFAULT_API_URL;
 
 export const api = axios.create({ baseURL: API_BASE_URL });

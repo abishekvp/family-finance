@@ -3,6 +3,7 @@ import express from "express";
 import cookieParser from "cookie-parser";
 import { authRouter } from "./routes/auth";
 import { familiesRouter, invitesRouter } from "./routes/families";
+import { appRouter } from "./routes/app";
 import { errorHandler } from "./middleware/errorHandler";
 
 export function createApp() {
@@ -15,6 +16,7 @@ export function createApp() {
   app.use("/api/auth", authRouter);
   app.use("/api/families", familiesRouter);
   app.use("/api/invites", invitesRouter);
+  app.use("/api/app", appRouter);
 
   if (process.env.NODE_ENV === "production") {
     const clientDist = path.join(__dirname, "..", "..", "client", "dist");

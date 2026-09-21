@@ -71,7 +71,7 @@ npm install
 npm start        # Expo dev server — press a for Android, i for iOS, w for web
 ```
 
-The built app talks to `https://family-finance.vercel.app/api` by default (see
+The built app talks to `https://finance-family-manager.vercel.app/api` by default (see
 `mobile/src/api/client.ts`). For local development against your own server, override it:
 
 ```bash
@@ -92,14 +92,21 @@ cd mobile
 npx expo prebuild --platform android --clean
 ```
 
-Then build a debug APK (signed with the auto-generated debug keystore — installable on any
-device with "unknown sources" allowed, not intended for the Play Store). By default this builds
-all four ABIs, which makes for a large APK; restrict it to `arm64-v8a` (covers virtually every
-real phone from the last ~8 years) for a much smaller, still-installable build:
+Then build a **release** APK. This is the only variant worth distributing: an `assembleDebug`
+APK contains no JavaScript at all — it fetches the bundle from the Metro dev server at
+`localhost:8081` on every launch, so installed on a phone with no Metro running it opens
+straight to a red "Unable to load script" screen. The release build runs Metro at build time
+and embeds `index.android.bundle` (Hermes bytecode) inside the APK, so it runs standalone.
+
+It is still signed with the auto-generated debug keystore (see `signingConfigs` in
+`mobile/android/app/build.gradle`) — installable on any device with "unknown sources" allowed,
+not intended for the Play Store. By default this builds all four ABIs, which makes for a large
+APK; restrict it to `arm64-v8a` (covers virtually every real phone from the last ~8 years) for
+a much smaller, still-installable build:
 
 ```bash
 cd mobile/android
-./gradlew assembleDebug -PreactNativeArchitectures=arm64-v8a
+./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a
 ```
 
 **Windows only:** the checkout's own path plus the mirrored source-tree suffix CMake/ninja
@@ -108,7 +115,7 @@ native codegen for react-native-gesture-handler/rnscreens/rnsvg with "Filename l
 characters". `mobile/android/app/build.gradle` already redirects the CMake staging directory to
 `%USERPROFILE%\ffcxx` to avoid this — no action needed unless you've customized that file.
 
-The APK lands at `mobile/android/app/build/outputs/apk/debug/app-debug.apk`. Copy it to
+The APK lands at `mobile/android/app/build/outputs/apk/release/app-release.apk`. Copy it to
 `client/public/downloads/family-finance.apk` and rebuild the client so `/get-the-app` can serve
 it for download.
 
@@ -125,8 +132,9 @@ static `client/dist` build. To deploy:
    e.g. Vercel Postgres, Neon, or Supabase), `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`.
 3. Run `npm run prisma:migrate` (or `prisma migrate deploy`) against that database once, from a
    machine that can reach it — Vercel's build step does not run migrations automatically.
-4. Deploy. `family-finance.vercel.app` (or whatever domain the project gets) is what the mobile
-   app's default `EXPO_PUBLIC_API_URL` expects.
+4. Deploy. The mobile app's default `EXPO_PUBLIC_API_URL` expects
+   `https://finance-family-manager.vercel.app` — update `mobile/src/api/client.ts` if the
+   project's domain ever changes.
 
 ### Self-hosted (single Node process)
 

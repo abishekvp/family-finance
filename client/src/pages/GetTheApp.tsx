@@ -9,13 +9,14 @@ import {
   SquarePlus,
   Wifi,
 } from "lucide-react";
+import { api } from "../api/client";
 import { Badge, Button, Card, CardHeader, cn } from "../components/ui";
 import { QRCodeCard } from "../components/QRCode";
 import { useInstall } from "../lib/install";
 import { Logo } from "../components/Logo";
 
-const APK_PATH = "/downloads/family-finance.apk";
-const APK_VERSION = "1.0.0";
+const FALLBACK_APK_PATH = "/downloads/family-finance.apk";
+const FALLBACK_APK_VERSION = "1.0.0";
 
 function formatBytes(bytes: number) {
   if (bytes <= 0) return "";
@@ -25,6 +26,8 @@ function formatBytes(bytes: number) {
 
 export function GetTheApp() {
   const { canPrompt, isInstalled, platform, promptInstall } = useInstall();
+  const [apkPath, setApkPath] = useState(FALLBACK_APK_PATH);
+  const [apkVersion, setApkVersion] = useState(FALLBACK_APK_VERSION);
   const [apkSize, setApkSize] = useState<string | null>(null);
   const [apkAvailable, setApkAvailable] = useState<boolean | null>(null);
   const [installing, setInstalling] = useState(false);
@@ -32,14 +35,24 @@ export function GetTheApp() {
   const pageUrl = typeof window !== "undefined" ? window.location.origin + "/get-the-app" : "";
 
   useEffect(() => {
-    fetch(APK_PATH, { method: "HEAD" })
+    api
+      .get<{ latestVersion: string; apkUrl: string }>("/app/version")
+      .then((res) => {
+        setApkVersion(res.data.latestVersion);
+        setApkPath(res.data.apkUrl);
+      })
+      .catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    fetch(apkPath, { method: "HEAD" })
       .then((res) => {
         setApkAvailable(res.ok);
         const length = res.headers.get("content-length");
         if (length) setApkSize(formatBytes(Number(length)));
       })
       .catch(() => setApkAvailable(false));
-  }, []);
+  }, [apkPath]);
 
   async function handleInstallClick() {
     setInstalling(true);
@@ -112,7 +125,7 @@ export function GetTheApp() {
         <Card className="flex flex-col">
           <CardHeader
             title="Android app (APK)"
-            subtitle={apkSize ? `Version ${APK_VERSION} · ${apkSize}` : `Version ${APK_VERSION}`}
+            subtitle={apkSize ? `Version ${apkVersion} · ${apkSize}` : `Version ${apkVersion}`}
             icon={<Laptop size={17} />}
             actions={<Badge tone="brand">Android</Badge>}
           />
@@ -128,7 +141,7 @@ export function GetTheApp() {
                 A direct install — no Play Store needed. Your phone will warn about "unknown
                 sources"; that's expected for a side-loaded app.
               </p>
-              <a href={APK_PATH} download>
+              <a href={apkPath} download>
                 <Button className="w-full" icon={<Download size={16} />} disabled={apkAvailable === null}>
                   Download APK
                 </Button>

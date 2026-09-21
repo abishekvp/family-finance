@@ -8,6 +8,7 @@ import type { LayoutContext } from "../components/Layout";
 import { loadPrefs, savePrefs, type LandingView, type Prefs, type WeekStart } from "../lib/prefs";
 import { CategoryManager } from "../components/settings/CategoryManager";
 import { BudgetManager } from "../components/settings/BudgetManager";
+import { GoalManager } from "../components/settings/GoalManager";
 
 const LANDING_VIEW_OPTIONS: LandingView[] = ["Daily", "Calendar"];
 const WEEK_START_OPTIONS: WeekStart[] = ["Sunday", "Monday"];
@@ -125,6 +126,7 @@ export function Settings() {
 
       <CategoryManager familyId={family.id} />
       <BudgetManager familyId={family.id} currency={family.currency} />
+      <GoalManager familyId={family.id} currency={family.currency} />
 
       <Card>
         <CardHeader
