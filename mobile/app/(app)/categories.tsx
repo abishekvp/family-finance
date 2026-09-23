@@ -1,15 +1,23 @@
 import { useCallback, useMemo, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { useFocusEffect } from "expo-router";
-import { Tag } from "lucide-react-native";
+import { ChevronRight, Pencil, Tag, Trash2 } from "lucide-react-native";
 import { api } from "../../src/api/client";
-import type { Category, CategoryType } from "../../src/api/types";
+import type { Category, CategoryType, FamilyRole } from "../../src/api/types";
 import { useAuth } from "../../src/context/AuthContext";
 import { useTheme } from "../../src/context/ThemeContext";
 import { getErrorMessage } from "../../src/api/errors";
-import { Badge, Button, Card, Chip, EmptyState, ErrorText, Field, Input, Segmented, SkeletonRows, Toggle } from "../../src/components/ui";
+import { Badge, Button, Card, Chip, EmptyState, ErrorText, Field, Input, Segmented, Sheet, SkeletonRows, Toggle } from "../../src/components/ui";
 import { CategoryBadge } from "../../src/components/transactions/TransactionRow";
 import { CHART_SWATCHES } from "../../src/theme";
+
+type Visibility = "personal" | "shared";
+
+/** Mirrors the server's assertCanModify: shared categories are admin-only, personal ones owner-only. */
+function canModify(category: Category, role: FamilyRole) {
+  if (role === "VIEWER") return false;
+  return category.ownerId !== null || role === "ADMIN";
+}
 
 export default function Categories() {
   const { user } = useAuth();
@@ -21,8 +29,9 @@ export default function Categories() {
   const [type, setType] = useState<CategoryType>("EXPENSE");
   const [showAddForm, setShowAddForm] = useState(false);
   const [editing, setEditing] = useState<Category | null>(null);
-  const [confirmArchiveId, setConfirmArchiveId] = useState<string | null>(null);
-  const [archiveError, setArchiveError] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Looked up by id so the sheet reflects each reload (e.g. after switching personal ↔ shared).
+  const selected = categories.find((c) => c.id === selectedId) ?? null;
 
   const load = useCallback(async () => {
     try {
@@ -43,17 +52,6 @@ export default function Categories() {
     }, [load])
   );
 
-  async function handleArchive(id: string) {
-    setArchiveError(null);
-    try {
-      await api.delete(`/families/${family.id}/categories/${id}`);
-      setConfirmArchiveId(null);
-      await load();
-    } catch (err) {
-      setArchiveError(getErrorMessage(err, "Unable to archive category"));
-    }
-  }
-
   const categoriesForType = useMemo(() => categories.filter((c) => c.type === type), [categories, type]);
   const parents = useMemo(() => categoriesForType.filter((c) => c.parentId === null), [categoriesForType]);
   const childrenByParent = useMemo(() => {
@@ -70,7 +68,7 @@ export default function Categories() {
   function renderRow(category: Category, indent: boolean) {
     if (editing?.id === category.id) {
       return (
-        <View key={category.id} style={{ padding: 16 }}>
+        <View key={category.id} style={{ paddingVertical: 12 }}>
           <CategoryForm
             familyId={family.id}
             type={type}
@@ -88,24 +86,22 @@ export default function Categories() {
     return (
       <Pressable
         key={category.id}
-        onPress={() => {
-          setShowAddForm(false);
-          setEditing(category);
-        }}
-        style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 12, paddingLeft: indent ? 32 : 0 }}
+        onPress={() => setSelectedId(category.id)}
+        style={({ pressed }) => ({
+          flexDirection: "row",
+          alignItems: "center",
+          gap: 10,
+          paddingVertical: 12,
+          paddingLeft: indent ? 32 : 0,
+          opacity: pressed ? 0.6 : 1,
+        })}
       >
         <CategoryBadge color={category.color} label={category.name[0]?.toUpperCase() ?? "?"} size={32} />
         <Text style={{ flex: 1, fontSize: 14, fontWeight: indent ? "600" : "700", color: colors.ink }} numberOfLines={1}>
           {category.name}
         </Text>
-        {category.ownerId && <Badge>Private</Badge>}
-        {confirmArchiveId === category.id ? (
-          <Button title="Confirm" size="sm" variant="danger" onPress={() => handleArchive(category.id)} />
-        ) : (
-          <Pressable onPress={() => setConfirmArchiveId(category.id)} hitSlop={8}>
-            <Text style={{ color: colors.inkSubtle, fontSize: 11, fontWeight: "700" }}>Archive</Text>
-          </Pressable>
-        )}
+        {category.ownerId && <Badge>Personal</Badge>}
+        <ChevronRight size={16} color={colors.inkSubtle} />
       </Pressable>
     );
   }
@@ -150,7 +146,6 @@ export default function Categories() {
       )}
 
       <ErrorText>{error}</ErrorText>
-      <ErrorText>{archiveError}</ErrorText>
 
       {isLoading ? (
         <SkeletonRows rows={4} />
@@ -166,7 +161,163 @@ export default function Categories() {
           ))}
         </Card>
       )}
+
+      <CategoryActionsSheet
+        familyId={family.id}
+        role={family.role}
+        category={selected}
+        hasChildren={!!selected && (childrenByParent.get(selected.id)?.length ?? 0) > 0}
+        onClose={() => setSelectedId(null)}
+        onEdit={(category) => {
+          setSelectedId(null);
+          setShowAddForm(false);
+          setEditing(category);
+        }}
+        onChanged={load}
+      />
     </ScrollView>
+  );
+}
+
+/** What tapping a category offers: edit, switch personal ↔ family shared, or delete. */
+function CategoryActionsSheet({
+  familyId,
+  role,
+  category,
+  hasChildren,
+  onClose,
+  onEdit,
+  onChanged,
+}: {
+  familyId: string;
+  role: FamilyRole;
+  category: Category | null;
+  hasChildren: boolean;
+  onClose: () => void;
+  onEdit: (category: Category) => void;
+  onChanged: () => Promise<void>;
+}) {
+  const { colors } = useTheme();
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [busy, setBusy] = useState<"visibility" | "delete" | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  // Shown optimistically while the change saves; the list reload brings the real value.
+  const [visibility, setVisibility] = useState<Visibility | null>(null);
+
+  function close() {
+    setConfirmDelete(false);
+    setError(null);
+    setVisibility(null);
+    onClose();
+  }
+
+  if (!category) return null;
+
+  const editable = canModify(category, role);
+  const current: Visibility = visibility ?? (category.ownerId ? "personal" : "shared");
+
+  async function changeVisibility(next: Visibility) {
+    if (!category || busy || next === current) return;
+    setError(null);
+    setVisibility(next);
+    setBusy("visibility");
+    try {
+      await api.patch(`/families/${familyId}/categories/${category.id}`, { isCommon: next === "shared" });
+      await onChanged();
+    } catch (err) {
+      setVisibility(null);
+      setError(getErrorMessage(err, "Unable to change who can see this category"));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleDelete() {
+    if (!category) return;
+    setError(null);
+    setBusy("delete");
+    try {
+      await api.delete(`/families/${familyId}/categories/${category.id}`);
+      await onChanged();
+      close();
+    } catch (err) {
+      setError(getErrorMessage(err, "Unable to delete category"));
+      setConfirmDelete(false);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <Sheet visible onClose={close} title={category.name}>
+      <View style={{ gap: 16, paddingBottom: 8 }}>
+        {editable ? (
+          <>
+            <Field
+              label="Visible to"
+              hint={
+                current === "shared"
+                  ? "Everyone in the family can see and use it."
+                  : role === "ADMIN"
+                    ? "Only you can see and use it."
+                    : "Only you can see and use it. Once shared, only a family admin can make it personal again."
+              }
+            >
+              <Segmented
+                fullWidth
+                value={current}
+                onChange={changeVisibility}
+                options={[
+                  { value: "personal", label: "Personal" },
+                  { value: "shared", label: "Family shared" },
+                ]}
+              />
+            </Field>
+
+            <ErrorText>{error}</ErrorText>
+
+            <Button
+              title="Edit name, color & parent"
+              variant="secondary"
+              icon={<Pencil size={16} color={colors.ink} />}
+              disabled={busy !== null}
+              onPress={() => onEdit(category)}
+            />
+
+            {confirmDelete ? (
+              <View style={{ gap: 10, padding: 14, borderRadius: 16, backgroundColor: colors.expenseSoft }}>
+                <Text style={{ color: colors.ink, fontSize: 13, fontWeight: "600", lineHeight: 19 }}>
+                  Delete “{category.name}”?{hasChildren ? " Its subcategories are deleted too." : ""} Transactions already in it keep their
+                  history.
+                </Text>
+                <View style={{ flexDirection: "row", gap: 8 }}>
+                  <View style={{ flex: 1 }}>
+                    <Button title="Delete" variant="danger" loading={busy === "delete"} onPress={handleDelete} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Button title="Cancel" variant="secondary" disabled={busy === "delete"} onPress={() => setConfirmDelete(false)} />
+                  </View>
+                </View>
+              </View>
+            ) : (
+              <Button
+                title="Delete category"
+                variant="ghost"
+                icon={<Trash2 size={16} color={colors.expense} />}
+                disabled={busy !== null}
+                onPress={() => setConfirmDelete(true)}
+              />
+            )}
+          </>
+        ) : (
+          <Text style={{ color: colors.inkMuted, fontSize: 13, lineHeight: 19 }}>
+            {role === "VIEWER"
+              ? "Viewers can't change categories. Ask a family admin for member access."
+              : "This is a family shared category — only a family admin can edit, delete or make it personal."}
+          </Text>
+        )}
+      </View>
+    </Sheet>
   );
 }
 
@@ -201,7 +352,7 @@ function CategoryForm({
     setIsSubmitting(true);
     try {
       if (isEdit && initial) {
-        await api.patch(`/families/${familyId}/categories/${initial.id}`, { name, color, parentId });
+        await api.patch(`/families/${familyId}/categories/${initial.id}`, { name, color, parentId, isCommon });
       } else {
         await api.post(`/families/${familyId}/categories`, { name, type, color, parentId, isCommon });
       }
@@ -242,12 +393,15 @@ function CategoryForm({
         </Field>
       )}
 
-      {!isEdit && (
-        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+        <View style={{ flex: 1 }}>
           <Text style={{ fontSize: 13, fontWeight: "600", color: colors.ink }}>Shared family category</Text>
-          <Toggle value={isCommon} onChange={setIsCommon} />
+          <Text style={{ fontSize: 12, color: colors.inkSubtle, marginTop: 2 }}>
+            {isCommon ? "Everyone in the family can see and use it." : "Personal — only you can see and use it."}
+          </Text>
         </View>
-      )}
+        <Toggle value={isCommon} onChange={setIsCommon} />
+      </View>
 
       <ErrorText>{error}</ErrorText>
       <View style={{ flexDirection: "row", gap: 8 }}>

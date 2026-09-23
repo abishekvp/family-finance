@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+  android:description="@string/ff_widget_quick_add_description"
+  android:initialLayout="@layout/ff_widget_quick_add"
+  android:minWidth="180dp"
+  android:minHeight="40dp"
+  android:minResizeWidth="180dp"
+  android:minResizeHeight="40dp"
+  android:previewLayout="@layout/ff_widget_quick_add"
+  android:resizeMode="horizontal|vertical"
+  android:targetCellWidth="4"
+  android:targetCellHeight="1"
+  android:updatePeriodMillis="0"
+  android:widgetCategory="home_screen" />

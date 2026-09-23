@@ -3,9 +3,11 @@ import { AppState } from "react-native";
 import { isSmsReaderAvailable, requestSmsPermission } from "../../modules/sms-reader";
 import {
   DEFAULT_SMS_SETTINGS,
+  importSmsHistory,
   loadSmsSettings,
   saveSmsSettings,
   syncSmsTransactions,
+  type SmsHistoryResult,
   type SmsImportSettings,
   type SmsSyncResult,
 } from "../lib/smsImport";
@@ -18,18 +20,24 @@ interface SmsImportContextValue {
   isLoading: boolean;
   isSyncing: boolean;
   lastResult: SmsSyncResult | null;
+  isImportingHistory: boolean;
+  historyResult: SmsHistoryResult | null;
   /** Bumps whenever a sync records something, so transaction lists can refetch. */
   syncVersion: number;
-  /** Asks for READ_SMS, then turns import on. Resolves false if the permission was refused. */
-  enable: (opts: { defaultAccountId: string; historyDays: number }) => Promise<boolean>;
+  /**
+   * Asks for READ_SMS, then turns import on for messages from now on — nothing is scanned yet.
+   * Past messages are a separate, optional `importHistory`. Resolves false if permission was refused.
+   */
+  enable: (opts: { defaultAccountId: string }) => Promise<boolean>;
   disable: () => Promise<void>;
   updateSettings: (patch: Partial<Pick<SmsImportSettings, "defaultAccountId" | "accountMap">>) => Promise<void>;
   syncNow: () => Promise<void>;
+  /** Records alerts from the `days` before import was turned on. */
+  importHistory: (days: number) => Promise<void>;
 }
 
 // Foreground re-scans at most this often; launch always scans.
 const RESYNC_INTERVAL_MS = 60 * 1000;
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 const SmsImportContext = createContext<SmsImportContextValue | undefined>(undefined);
 
@@ -42,10 +50,23 @@ export function SmsImportProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
   const [lastResult, setLastResult] = useState<SmsSyncResult | null>(null);
+  const [isImportingHistory, setIsImportingHistory] = useState(false);
+  const [historyResult, setHistoryResult] = useState<SmsHistoryResult | null>(null);
   const [syncVersion, setSyncVersion] = useState(0);
   // Syncs read and write settings across awaits; the ref keeps them off stale closures.
   const settingsRef = useRef(settings);
   const syncing = useRef<Promise<void> | null>(null);
+  const importingHistory = useRef<Promise<void> | null>(null);
+  // Forward scans and history imports both rewrite the watermarks, so they take turns.
+  const scanLock = useRef<Promise<unknown>>(Promise.resolve());
+  // Turning import on shouldn't trigger the launch-time scan that `settings.enabled` flipping would.
+  const skipNextAutoScan = useRef(false);
+
+  const exclusive = useCallback(<T,>(run: () => Promise<T>): Promise<T> => {
+    const next = scanLock.current.then(run, run);
+    scanLock.current = next.catch(() => undefined);
+    return next;
+  }, []);
 
   const persist = useCallback(async (next: SmsImportSettings) => {
     settingsRef.current = next;
@@ -78,43 +99,76 @@ export function SmsImportProvider({ children }: { children: ReactNode }) {
     syncing.current = (async () => {
       setIsSyncing(true);
       try {
-        const { settings: next, result } = await syncSmsTransactions(familyId, settingsRef.current);
-        // The user may have toggled import or remapped accounts while this ran — keep those choices.
-        const { enabled, defaultAccountId, accountMap } = settingsRef.current;
-        await persist({ ...next, enabled, defaultAccountId, accountMap });
-        setLastResult(result);
-        if (result.imported > 0) setSyncVersion((v) => v + 1);
+        await exclusive(async () => {
+          const { settings: next, result } = await syncSmsTransactions(familyId, settingsRef.current);
+          // The user may have toggled import or remapped accounts while this ran — keep those choices.
+          const { enabled, defaultAccountId, accountMap } = settingsRef.current;
+          await persist({ ...next, enabled, defaultAccountId, accountMap });
+          setLastResult(result);
+          if (result.imported > 0) setSyncVersion((v) => v + 1);
+        });
       } finally {
         setIsSyncing(false);
         syncing.current = null;
       }
     })();
     return syncing.current;
-  }, [familyId, persist]);
+  }, [familyId, persist, exclusive]);
+
+  const importHistory = useCallback(
+    async (days: number) => {
+      if (!familyId || !settingsRef.current.enabled) return;
+      if (importingHistory.current) return importingHistory.current;
+      importingHistory.current = (async () => {
+        setIsImportingHistory(true);
+        setHistoryResult(null);
+        try {
+          await exclusive(async () => {
+            const { settings: next, result } = await importSmsHistory(familyId, settingsRef.current, days);
+            const { enabled, defaultAccountId, accountMap } = settingsRef.current;
+            await persist({ ...next, enabled, defaultAccountId, accountMap });
+            setHistoryResult(result);
+            if (result.imported > 0) setSyncVersion((v) => v + 1);
+          });
+        } finally {
+          setIsImportingHistory(false);
+          importingHistory.current = null;
+        }
+      })();
+      return importingHistory.current;
+    },
+    [familyId, persist, exclusive]
+  );
 
   const enable = useCallback(
-    async ({ defaultAccountId, historyDays }: { defaultAccountId: string; historyDays: number }) => {
+    async ({ defaultAccountId }: { defaultAccountId: string }) => {
       if (!familyId) return false;
       const granted = await requestSmsPermission();
       if (!granted) return false;
+      const now = Date.now();
+      skipNextAutoScan.current = true;
+      // Start from now in both directions: new alerts are picked up on the next launch or return
+      // to the app, and past ones only if the user asks for them.
       await persist({
         ...settingsRef.current,
         enabled: true,
         familyId,
         defaultAccountId,
-        since: Date.now() - historyDays * DAY_MS,
-        recent: [],
+        since: now,
+        historyFrom: now,
+        lastRunAt: null,
       });
       setLastResult(null);
-      await syncNow();
+      setHistoryResult(null);
       return true;
     },
-    [familyId, persist, syncNow]
+    [familyId, persist]
   );
 
   const disable = useCallback(async () => {
     await persist({ ...settingsRef.current, enabled: false });
     setLastResult(null);
+    setHistoryResult(null);
   }, [persist]);
 
   const updateSettings = useCallback(
@@ -127,7 +181,8 @@ export function SmsImportProvider({ children }: { children: ReactNode }) {
   // Scan on launch, then whenever the app returns to the foreground.
   useEffect(() => {
     if (isLoading || !settings.enabled) return;
-    syncNow();
+    if (skipNextAutoScan.current) skipNextAutoScan.current = false;
+    else syncNow();
     const sub = AppState.addEventListener("change", (state) => {
       const lastRunAt = settingsRef.current.lastRunAt ?? 0;
       if (state === "active" && Date.now() - lastRunAt > RESYNC_INTERVAL_MS) syncNow();
@@ -136,8 +191,36 @@ export function SmsImportProvider({ children }: { children: ReactNode }) {
   }, [isLoading, settings.enabled, syncNow]);
 
   const value = useMemo(
-    () => ({ available, settings, isLoading, isSyncing, lastResult, syncVersion, enable, disable, updateSettings, syncNow }),
-    [available, settings, isLoading, isSyncing, lastResult, syncVersion, enable, disable, updateSettings, syncNow]
+    () => ({
+      available,
+      settings,
+      isLoading,
+      isSyncing,
+      lastResult,
+      isImportingHistory,
+      historyResult,
+      syncVersion,
+      enable,
+      disable,
+      updateSettings,
+      syncNow,
+      importHistory,
+    }),
+    [
+      available,
+      settings,
+      isLoading,
+      isSyncing,
+      lastResult,
+      isImportingHistory,
+      historyResult,
+      syncVersion,
+      enable,
+      disable,
+      updateSettings,
+      syncNow,
+      importHistory,
+    ]
   );
 
   return <SmsImportContext.Provider value={value}>{children}</SmsImportContext.Provider>;

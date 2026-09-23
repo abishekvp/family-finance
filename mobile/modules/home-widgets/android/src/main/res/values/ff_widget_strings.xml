@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="ff_widget_quick_add_label">Quick add</string>
+  <string name="ff_widget_quick_add_description">Add an expense, income or transfer in one tap</string>
+  <string name="ff_widget_today_label">Today\'s transactions</string>
+  <string name="ff_widget_today_description">What you spent and earned today, and every transaction</string>
+  <string name="ff_widget_today_title">Today</string>
+  <string name="ff_widget_spent">Spent</string>
+  <string name="ff_widget_income">Income</string>
+  <string name="ff_widget_add_expense">+ Expense</string>
+  <string name="ff_widget_add_income">+ Income</string>
+  <string name="ff_widget_add_transfer">Transfer</string>
+  <string name="ff_widget_add_transaction">Add transaction</string>
+  <string name="ff_widget_empty_today">No transactions yet today</string>
+  <string name="ff_widget_signed_out">Open Family Finance to see today\'s transactions</string>
+  <plurals name="ff_widget_count">
+    <item quantity="one">· %d transaction</item>
+    <item quantity="other">· %d transactions</item>
+  </plurals>
+</resources>

@@ -147,16 +147,49 @@ hands it to Android's package installer.
 ### Recording transactions from SMS (Android)
 
 More → SMS transactions is an opt-in switch that reads bank, card and UPI alerts from the phone's
-inbox and records each as a transaction (tagged `sms`). It runs on launch, whenever the app returns
+inbox and records each as a transaction (tagged `sms`). Turning it on only asks for the permission —
+nothing is scanned then. From that moment it records new alerts on launch, whenever the app returns
 to the foreground, and on "Scan now"; it only reads messages newer than the last scan, skips OTPs,
 reminders, money requests and promotions, and drops the same spend alerted twice within 10 minutes.
-Card/account last digits seen in alerts can be mapped to app accounts; everything else goes to the
-default account. Payee → category is learned from the family's existing transactions.
+Importing alerts from before it was turned on (7 / 30 / 90 days) is a separate, optional "Past
+messages" step; it walks backwards from the switch-on moment, so repeating or resuming it never
+records a message twice. Card/account last digits seen in alerts can be mapped to app accounts;
+everything else goes to the default account. Payee → category is learned from the family's existing
+transactions.
 
 The native reader is a local Expo module in `mobile/modules/sms-reader` (autolinked; it adds the
 `READ_SMS` permission to the manifest), and the parser is `mobile/src/lib/smsParser.ts`. It needs
 a native build — it isn't available in Expo Go. `READ_SMS` is restricted on Google Play, which is
 fine for the sideloaded APK but would need Google's SMS-permission declaration to publish there.
+
+### "App blocked to protect your device" (Play Protect)
+
+Because the APK declares `READ_SMS` and is installed from a browser download, Google Play Protect's
+enhanced fraud protection (on in India and several other countries) blocks the install outright —
+there is no "Install anyway" button. That's Google policy for side-loaded apps requesting SMS access,
+not a problem with the build, and nothing in the app can bypass it. To install:
+
+1. Play Store → profile picture → **Play Protect** → settings (gear) → turn off **Scan apps with Play Protect**.
+2. Open the downloaded APK and install it.
+3. Turn scanning back on.
+
+`adb install app-release.apk` from a computer isn't subject to the block either. The permanent fix is
+distributing through Google Play (e.g. an internal-testing track), which needs a Play Console account
+and Google's SMS-permission declaration. `/get-the-app` shows the same steps to users.
+
+### Home-screen widgets (Android)
+
+Two widgets, both in `mobile/modules/home-widgets` (a local Expo module; plain `AppWidgetProvider`s
+declared in its own manifest, since `android/` is generated):
+
+- **Quick add** — Expense / Income / Transfer buttons that deep-link to
+  `familyfinance://transaction-form?type=…&source=widget`. After saving, a form opened this way sends
+  the app back to the background; the same form opened inside the app just returns to where you were.
+- **Today's transactions** — today's spent / income totals and a scrollable list of the day's
+  transactions. The widget can't fetch data itself (payees are end-to-end encrypted and only the app
+  holds the key), so the app pushes a snapshot (`src/lib/todayWidget.ts`) on launch, on returning to
+  the foreground, after every save/delete, and after SMS imports. The snapshot lives in the app's
+  no-backup storage and is wiped on sign-out; a midnight alarm rolls the widget over to the new day.
 
 ## Deploying
 

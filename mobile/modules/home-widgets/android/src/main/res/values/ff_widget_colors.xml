@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Mirrors src/theme.ts (LIGHT). values-night/ holds the DARK palette. -->
+<resources>
+  <color name="ff_widget_surface">#FFFFFF</color>
+  <color name="ff_widget_sunken">#F0F2F9</color>
+  <color name="ff_widget_line">#E2E6F1</color>
+  <color name="ff_widget_ink">#0D1122</color>
+  <color name="ff_widget_ink_muted">#5C667C</color>
+  <color name="ff_widget_ink_subtle">#868FA4</color>
+  <color name="ff_widget_brand">#5B46E5</color>
+  <color name="ff_widget_brand_soft">#EEF0FF</color>
+  <color name="ff_widget_income">#059669</color>
+  <color name="ff_widget_income_soft">#DCFAEF</color>
+  <color name="ff_widget_expense">#E11D48</color>
+  <color name="ff_widget_expense_soft">#FFE4EA</color>
+</resources>

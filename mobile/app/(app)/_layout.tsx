@@ -4,6 +4,7 @@ import { PrefsProvider } from "../../src/context/PrefsContext";
 import { SmsImportProvider } from "../../src/context/SmsImportContext";
 import { useTheme } from "../../src/context/ThemeContext";
 import { SecurityGate } from "../../src/components/SecurityGate";
+import { TodayWidgetSync } from "../../src/components/TodayWidgetSync";
 
 export default function AppLayout() {
   const { user } = useAuth();
@@ -14,6 +15,7 @@ export default function AppLayout() {
     <SecurityGate>
       <PrefsProvider>
         <SmsImportProvider>
+          {hasFamily && <TodayWidgetSync />}
           <Stack
             screenOptions={{
               headerShown: false,

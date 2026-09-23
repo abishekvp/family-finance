@@ -186,7 +186,7 @@ function CategoryRow({
       <button type="button" onClick={onEdit} className="flex min-w-0 flex-1 items-center gap-2.5 text-left">
         <Dot color={category.color} />
         <span className="truncate text-sm font-medium text-ink">{category.name}</span>
-        {category.ownerId && <Badge>Private</Badge>}
+        {category.ownerId && <Badge>Personal</Badge>}
       </button>
       <span className="flex shrink-0 items-center gap-1">
         <IconButton label={`Edit ${category.name}`} onClick={onEdit}>
@@ -244,6 +244,7 @@ function CategoryFormModal({
           name,
           color,
           parentId: parentId || null,
+          isCommon,
         });
       } else {
         await api.post(`/families/${familyId}/categories`, {
@@ -323,14 +324,12 @@ function CategoryFormModal({
           )}
         </Field>
 
-        {!isEdit && (
-          <Toggle
-            checked={isCommon}
-            onChange={setIsCommon}
-            label="Shared family category"
-            description="Visible to the whole family rather than just you."
-          />
-        )}
+        <Toggle
+          checked={isCommon}
+          onChange={setIsCommon}
+          label="Shared family category"
+          description="Visible to the whole family rather than just you. Turn off to make it personal."
+        />
 
         <ErrorText>{error}</ErrorText>
       </form>

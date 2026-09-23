@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+  android:id="@android:id/background"
+  android:layout_width="match_parent"
+  android:layout_height="match_parent"
+  android:background="@drawable/ff_widget_bg"
+  android:gravity="center_vertical"
+  android:orientation="horizontal"
+  android:padding="8dp">
+
+  <TextView
+    android:id="@+id/ff_quick_expense"
+    android:layout_width="0dp"
+    android:layout_height="44dp"
+    android:layout_weight="1"
+    android:background="@drawable/ff_widget_pill_expense"
+    android:ellipsize="end"
+    android:fontFamily="sans-serif-medium"
+    android:gravity="center"
+    android:singleLine="true"
+    android:text="@string/ff_widget_add_expense"
+    android:textColor="@color/ff_widget_expense"
+    android:textSize="13sp"
+    android:textStyle="bold" />
+
+  <TextView
+    android:id="@+id/ff_quick_income"
+    android:layout_width="0dp"
+    android:layout_height="44dp"
+    android:layout_marginStart="6dp"
+    android:layout_weight="1"
+    android:background="@drawable/ff_widget_pill_income"
+    android:ellipsize="end"
+    android:fontFamily="sans-serif-medium"
+    android:gravity="center"
+    android:singleLine="true"
+    android:text="@string/ff_widget_add_income"
+    android:textColor="@color/ff_widget_income"
+    android:textSize="13sp"
+    android:textStyle="bold" />
+
+  <TextView
+    android:id="@+id/ff_quick_transfer"
+    android:layout_width="0dp"
+    android:layout_height="44dp"
+    android:layout_marginStart="6dp"
+    android:layout_weight="1"
+    android:background="@drawable/ff_widget_pill_brand"
+    android:ellipsize="end"
+    android:fontFamily="sans-serif-medium"
+    android:gravity="center"
+    android:singleLine="true"
+    android:text="@string/ff_widget_add_transfer"
+    android:textColor="@color/ff_widget_brand"
+    android:textSize="13sp"
+    android:textStyle="bold" />
+</LinearLayout>

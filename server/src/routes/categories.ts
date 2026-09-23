@@ -92,6 +92,8 @@ const updateCategorySchema = z.object({
   icon: z.string().trim().optional(),
   parentId: z.string().min(1).nullable().optional(),
   sortOrder: z.number().int().optional(),
+  // true = shared with the family, false = private to the requester.
+  isCommon: z.boolean().optional(),
 });
 
 categoriesRouter.patch(
@@ -126,7 +128,60 @@ categoriesRouter.patch(
       }
     }
 
-    const updated = await prisma.category.update({
+    const wasCommon = existing.ownerId === null;
+    const becomesCommon = data.isCommon !== undefined && data.isCommon !== wasCommon ? data.isCommon : null;
+    const nextParentId = "parentId" in req.body ? data.parentId ?? null : existing.parentId;
+
+    const parentChanges = "parentId" in req.body && nextParentId !== existing.parentId;
+    if ((becomesCommon ?? wasCommon) && nextParentId && (becomesCommon === true || parentChanges)) {
+      // Everyone would see a subcategory whose parent only one member can see.
+      const parent = await prisma.category.findUnique({ where: { id: nextParentId } });
+      if (parent?.ownerId) {
+        throw new AppError(400, "Its parent category is personal — share the parent with the family first");
+      }
+    }
+
+    // Going private takes the category's shared subcategories with it, so no one is left with a
+    // shared child under a parent they can no longer see.
+    let privatizedIds: string[] = [];
+    if (becomesCommon === false) {
+      const sharedChildren = await prisma.category.findMany({
+        where: { familyId, parentId: existing.id, ownerId: null, isArchived: false },
+        select: { id: true },
+      });
+      privatizedIds = [existing.id, ...sharedChildren.map((c) => c.id)];
+
+      // Other members' transactions, budgets and personal subcategories would point at a category
+      // they can no longer see or pick.
+      const [othersTransactions, othersBudgets, othersChildren] = await Promise.all([
+        prisma.transaction.count({
+          where: { familyId, categoryId: { in: privatizedIds }, isDeleted: false, userId: { not: requesterId } },
+        }),
+        prisma.budget.count({
+          where: { familyId, categoryId: { in: privatizedIds }, OR: [{ ownerId: null }, { ownerId: { not: requesterId } }] },
+        }),
+        prisma.category.count({
+          where: {
+            familyId,
+            parentId: existing.id,
+            isArchived: false,
+            AND: [{ ownerId: { not: null } }, { ownerId: { not: requesterId } }],
+          },
+        }),
+      ]);
+      if (othersTransactions > 0 || othersBudgets > 0 || othersChildren > 0) {
+        const uses = [
+          othersTransactions > 0 ? `${othersTransactions} transaction${othersTransactions === 1 ? "" : "s"}` : null,
+          othersBudgets > 0 ? `${othersBudgets} shared budget${othersBudgets === 1 ? "" : "s"}` : null,
+          othersChildren > 0 ? `${othersChildren} personal subcategor${othersChildren === 1 ? "y" : "ies"}` : null,
+        ]
+          .filter(Boolean)
+          .join(" and ");
+        throw new AppError(409, `It can't be made personal: other family members use it in ${uses}.`);
+      }
+    }
+
+    const updateCategory = prisma.category.update({
       where: { id: existing.id },
       data: {
         ...(data.name !== undefined ? { name: data.name } : {}),
@@ -134,8 +189,17 @@ categoriesRouter.patch(
         ...(data.icon !== undefined ? { icon: data.icon } : {}),
         ...("parentId" in req.body ? { parentId: data.parentId ?? null } : {}),
         ...(data.sortOrder !== undefined ? { sortOrder: data.sortOrder } : {}),
+        ...(becomesCommon !== null ? { ownerId: becomesCommon ? null : requesterId } : {}),
       },
     });
+    const childIds = privatizedIds.filter((id) => id !== existing.id);
+    // Batch, not interactive: see the P2028 note in lib/defaultCategories.ts.
+    const [updated] = childIds.length
+      ? await prisma.$transaction([
+          updateCategory,
+          prisma.category.updateMany({ where: { id: { in: childIds } }, data: { ownerId: requesterId } }),
+        ])
+      : [await updateCategory];
 
     res.json(updated);
   })

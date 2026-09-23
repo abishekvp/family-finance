@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Mirrors src/theme.ts (DARK). -->
+<resources>
+  <color name="ff_widget_surface">#12162A</color>
+  <color name="ff_widget_sunken">#0C1020</color>
+  <color name="ff_widget_line">#282F4C</color>
+  <color name="ff_widget_ink">#E9EDF9</color>
+  <color name="ff_widget_ink_muted">#96A0B8</color>
+  <color name="ff_widget_ink_subtle">#707A92</color>
+  <color name="ff_widget_brand">#8277F8</color>
+  <color name="ff_widget_brand_soft">#211E48</color>
+  <color name="ff_widget_income">#34D399</color>
+  <color name="ff_widget_income_soft">#082E2D</color>
+  <color name="ff_widget_expense">#FB7185</color>
+  <color name="ff_widget_expense_soft">#3C1221</color>
+</resources>

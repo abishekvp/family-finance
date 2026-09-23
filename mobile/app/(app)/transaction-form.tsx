@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { KeyboardAvoidingView, Platform, ScrollView, Text, View } from "react-native";
 import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
-import { ArrowRightLeft, MinusCircle, PlusCircle } from "lucide-react-native";
+import { ArrowRightLeft, MinusCircle, PlusCircle, Trash2 } from "lucide-react-native";
 import { api } from "../../src/api/client";
 import type { Account, Category, Transaction, TransactionType } from "../../src/api/types";
 import { useAuth } from "../../src/context/AuthContext";
@@ -10,6 +10,10 @@ import { getErrorMessage } from "../../src/api/errors";
 import { Button, Chip, ErrorText, Field, Input, Segmented, SkeletonRows } from "../../src/components/ui";
 import { CategoryPicker } from "../../src/components/CategoryPicker";
 import { currencySymbol } from "../../src/lib/format";
+import { localDateInput } from "../../src/lib/dateUtils";
+import { href } from "../../src/lib/nav";
+import { refreshTodayWidget } from "../../src/lib/todayWidget";
+import { moveToBackground } from "../../modules/home-widgets";
 
 const TYPE_OPTIONS: { value: TransactionType; label: string }[] = [
   { value: "INCOME", label: "Income" },
@@ -20,7 +24,11 @@ const TYPE_OPTIONS: { value: TransactionType; label: string }[] = [
 const TYPE_ICON = { INCOME: PlusCircle, EXPENSE: MinusCircle, TRANSFER: ArrowRightLeft };
 
 function todayIso() {
-  return new Date().toISOString().slice(0, 10);
+  return localDateInput(new Date());
+}
+
+function parseType(value: string | undefined): TransactionType | null {
+  return TYPE_OPTIONS.some((o) => o.value === value) ? (value as TransactionType) : null;
 }
 
 export default function TransactionForm() {
@@ -29,7 +37,9 @@ export default function TransactionForm() {
   const family = user!.families[0];
   const router = useRouter();
   const navigation = useNavigation();
-  const params = useLocalSearchParams<{ id?: string; transaction?: string }>();
+  // `type` presets a new transaction; `source=widget` marks a home-screen quick add.
+  const params = useLocalSearchParams<{ id?: string; transaction?: string; type?: string; source?: string }>();
+  const fromWidget = params.source === "widget";
 
   const initial = useMemo<Transaction | null>(() => {
     if (!params.transaction) return null;
@@ -69,16 +79,21 @@ export default function TransactionForm() {
     };
   }, [family.id]);
 
-  const [type, setType] = useState<TransactionType>(initial?.type ?? "EXPENSE");
+  const [type, setType] = useState<TransactionType>(initial?.type ?? parseType(params.type) ?? "EXPENSE");
   const [accountId, setAccountId] = useState(initial?.accountId ?? "");
   const [categoryId, setCategoryId] = useState<string | null>(initial?.categoryId ?? null);
   const [transferToAccountId, setTransferToAccountId] = useState<string | null>(initial?.transferToAccountId ?? null);
   const [amount, setAmount] = useState(initial ? String(initial.amount) : "");
-  const [date, setDate] = useState(initial ? initial.date.slice(0, 10) : todayIso());
+  // Local day, not initial.date.slice(0, 10): that is the UTC day, and re-saving it would shift
+  // the transaction back a day east of UTC.
+  const [date, setDate] = useState(initial ? localDateInput(new Date(initial.date)) : todayIso());
   const [payee, setPayee] = useState(initial?.payee ?? "");
   const [notes, setNotes] = useState(initial?.notes ?? "");
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const canDelete = isEdit && family.role !== "VIEWER";
 
   useEffect(() => {
     if (!accountId && accounts.length > 0) setAccountId(accounts[0].id);
@@ -111,11 +126,13 @@ export default function TransactionForm() {
       setError("Enter the date as YYYY-MM-DD");
       return null;
     }
+    // Keep the original time (SMS imports carry the alert's) unless the day itself was changed.
+    const unchangedDay = initial && trimmedDate === localDateInput(new Date(initial.date));
     return {
       accountId,
       type,
       amount: amountValue,
-      date: parsed.toISOString(),
+      date: unchangedDay ? initial.date : parsed.toISOString(),
       categoryId: type === "TRANSFER" ? null : categoryId,
       transferToAccountId: type === "TRANSFER" ? transferToAccountId : null,
       payee: payee.trim() || null,
@@ -135,19 +152,47 @@ export default function TransactionForm() {
       } else {
         await api.post(`/families/${family.id}/transactions`, payload);
       }
+      refreshTodayWidget(family.id, family.currency);
       if (andAddAnother && !isEdit) {
         setAmount("");
         setPayee("");
         setNotes("");
         setDate(todayIso());
       } else {
-        router.back();
+        close();
       }
     } catch (err) {
       setError(getErrorMessage(err, isEdit ? "Unable to update transaction" : "Unable to create transaction"));
     } finally {
       setIsSubmitting(false);
     }
+  }
+
+  async function handleDelete() {
+    if (!initial) return;
+    setError(null);
+    setIsDeleting(true);
+    try {
+      await api.delete(`/families/${family.id}/transactions/${initial.id}`);
+      refreshTodayWidget(family.id, family.currency);
+      close();
+    } catch (err) {
+      setError(getErrorMessage(err, "Unable to delete transaction"));
+      setConfirmDelete(false);
+    } finally {
+      setIsDeleting(false);
+    }
+  }
+
+  /**
+   * Opened from inside the app, this just returns to the previous screen. Opened from a home-screen
+   * widget, the user came to add one thing, so after saving the app goes back to the background.
+   */
+  function close() {
+    // A widget can cold-start the app straight into this form, leaving nothing to go back to.
+    if (router.canGoBack()) router.back();
+    else router.replace(href("/"));
+    if (fromWidget) moveToBackground().catch(() => undefined);
   }
 
   if (isLoading) {
@@ -184,7 +229,12 @@ export default function TransactionForm() {
               style={{
                 borderWidth: 0,
                 backgroundColor: "transparent",
-                height: 48,
+                // Android pads TextInput vertically and adds font padding, which clipped the top of
+                // 34pt digits in the old 48pt box — give the glyphs the full height instead.
+                height: 60,
+                paddingVertical: 0,
+                includeFontPadding: false,
+                textAlignVertical: "center",
                 fontSize: 34,
                 fontWeight: "800",
                 color: typeTone,
@@ -254,6 +304,31 @@ export default function TransactionForm() {
           <Button title={isEdit ? "Save changes" : "Save"} size="lg" loading={isSubmitting} disabled={!canSubmit} onPress={() => handleSave(false)} />
           {!isEdit && <Button title="Save & add another" variant="secondary" disabled={isSubmitting || !canSubmit} onPress={() => handleSave(true)} />}
         </View>
+
+        {canDelete &&
+          (confirmDelete ? (
+            <View style={{ gap: 10, padding: 14, borderRadius: 16, backgroundColor: colors.expenseSoft }}>
+              <Text style={{ color: colors.ink, fontSize: 13, fontWeight: "600" }}>
+                Delete this transaction? It will be removed from balances and reports.
+              </Text>
+              <View style={{ flexDirection: "row", gap: 8 }}>
+                <View style={{ flex: 1 }}>
+                  <Button title="Delete" variant="danger" loading={isDeleting} onPress={handleDelete} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Button title="Cancel" variant="secondary" disabled={isDeleting} onPress={() => setConfirmDelete(false)} />
+                </View>
+              </View>
+            </View>
+          ) : (
+            <Button
+              title="Delete transaction"
+              variant="ghost"
+              icon={<Trash2 size={16} color={colors.expense} />}
+              disabled={isSubmitting}
+              onPress={() => setConfirmDelete(true)}
+            />
+          ))}
       </ScrollView>
     </KeyboardAvoidingView>
   );

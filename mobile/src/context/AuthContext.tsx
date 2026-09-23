@@ -5,6 +5,7 @@ import { API_BASE_URL, api, refreshAccessToken, setOnAuthExpired } from "../api/
 import { ClientError } from "../api/errors";
 import { getStoredRefreshToken, setAccessToken, setStoredRefreshToken } from "../api/tokenStore";
 import { clearVaultSession } from "../api/vaultSession";
+import { clearTodayWidget } from "../lib/todayWidget";
 
 /** Preferences shared with the web app (see server /auth/me/preferences). */
 export interface ServerPrefs {
@@ -66,7 +67,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [loadMe]);
 
   useEffect(() => {
-    setOnAuthExpired(() => setUser(null));
+    setOnAuthExpired(() => {
+      clearTodayWidget();
+      setUser(null);
+    });
 
     (async () => {
       const token = await refreshAccessToken();
@@ -76,6 +80,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         } catch {
           setUser(null);
         }
+      } else {
+        clearTodayWidget();
       }
       setIsLoading(false);
     })();
@@ -140,6 +146,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setAccessToken(null);
     await setStoredRefreshToken(null);
     clearVaultSession();
+    clearTodayWidget();
     setUser(null);
   }, []);
 

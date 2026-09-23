@@ -32,6 +32,15 @@ export function weekStartsOn(weekStart: WeekStart): 0 | 1 {
   return weekStart === "monday" ? 1 : 0;
 }
 
+/**
+ * The local calendar day of `date` as YYYY-MM-DD. Not `toISOString().slice(0, 10)`: that is the
+ * UTC day, which east of UTC is yesterday for the first hours of every day.
+ */
+export function localDateInput(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
 export function isSameDayIso(a: string, b: Date): boolean {
   const d = new Date(a);
   return d.getFullYear() === b.getFullYear() && d.getMonth() === b.getMonth() && d.getDate() === b.getDate();

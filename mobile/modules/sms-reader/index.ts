@@ -12,6 +12,7 @@ export interface InboxSms {
 
 interface SmsReaderNative {
   readInbox(sinceMs: number, limit: number): Promise<InboxSms[]>;
+  readInboxBefore(beforeMs: number, limit: number): Promise<InboxSms[]>;
 }
 
 // Null on iOS, web, Expo Go, and dev clients built before this module was added, so every caller
@@ -38,7 +39,14 @@ export async function requestSmsPermission() {
   return result === PermissionsAndroid.RESULTS.GRANTED;
 }
 
+/** Messages received after `sinceMs`, oldest first. */
 export async function readInbox(sinceMs: number, limit = 500): Promise<InboxSms[]> {
   if (!native) throw new Error("SMS reading isn't available on this device");
   return native.readInbox(sinceMs, limit);
+}
+
+/** Messages received before `beforeMs`, newest first. */
+export async function readInboxBefore(beforeMs: number, limit = 500): Promise<InboxSms[]> {
+  if (!native) throw new Error("SMS reading isn't available on this device");
+  return native.readInboxBefore(beforeMs, limit);
 }

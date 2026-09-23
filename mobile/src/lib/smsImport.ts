@@ -2,7 +2,7 @@ import * as SecureStore from "expo-secure-store";
 import { api } from "../api/client";
 import type { Transaction } from "../api/types";
 import { getErrorMessage } from "../api/errors";
-import { hasSmsPermission, readInbox } from "../../modules/sms-reader";
+import { hasSmsPermission, readInbox, readInboxBefore, type InboxSms } from "../../modules/sms-reader";
 import { parseTransactionSms, type ParsedSms } from "./smsParser";
 
 /** A transaction already recorded from SMS, kept to spot the same spend alerted twice. */
@@ -22,8 +22,14 @@ export interface SmsImportSettings {
   accountMap: Record<string, string>;
   /** Last digits seen in alerts, newest first, so the user can map them. */
   seenHints: string[];
-  /** Watermark: only messages received after this (epoch millis) are read. */
+  /** Forward watermark: only messages received after this (epoch millis) are read. */
   since: number;
+  /**
+   * Backward watermark for the optional past-message import: every message from here up to
+   * `since` has been handled. Starts at the moment import was turned on and only moves back when
+   * the user asks for history. Null until import has been turned on.
+   */
+  historyFrom: number | null;
   recent: RecentImport[];
   lastRunAt: number | null;
   totalImported: number;
@@ -34,12 +40,20 @@ export interface SmsSyncResult {
   error: string | null;
 }
 
+export interface SmsHistoryResult extends SmsSyncResult {
+  /** False when the run stopped at its page cap with older messages still to go. */
+  complete: boolean;
+}
+
 // SecureStore keys may only contain [A-Za-z0-9._-].
 const SETTINGS_KEY = "familyFinance.smsImport";
 const MAX_RECENT = 60;
 const MAX_HINTS = 12;
 const PAGE_SIZE = 200;
 const MAX_PAGES = 10;
+// History spans months of inbox, so it gets a bigger budget per run; it resumes where it stopped.
+const MAX_HISTORY_PAGES = 50;
+const DAY_MS = 24 * 60 * 60 * 1000;
 // The bank and the UPI app often both alert for one payment, minutes apart.
 const DUPLICATE_WINDOW_MS = 10 * 60 * 1000;
 
@@ -50,6 +64,7 @@ export const DEFAULT_SMS_SETTINGS: SmsImportSettings = {
   accountMap: {},
   seenHints: [],
   since: 0,
+  historyFrom: null,
   recent: [],
   lastRunAt: null,
   totalImported: 0,
@@ -61,7 +76,10 @@ export async function loadSmsSettings(familyId: string): Promise<SmsImportSettin
     if (raw) {
       const parsed = JSON.parse(raw) as Partial<SmsImportSettings>;
       if (parsed && typeof parsed === "object" && parsed.familyId === familyId) {
-        return { ...DEFAULT_SMS_SETTINGS, ...parsed };
+        // Before the optional history import, turning SMS import on already pulled in past
+        // messages. Mark history as handled so it can't be imported a second time.
+        const migrated = parsed.historyFrom === undefined && parsed.enabled ? { historyFrom: 0 } : {};
+        return { ...DEFAULT_SMS_SETTINGS, ...parsed, ...migrated };
       }
     }
   } catch {
@@ -104,6 +122,57 @@ async function loadCategoryHints(familyId: string) {
   return map;
 }
 
+/** State threaded through one scan, message by message. */
+interface ScanState {
+  settings: SmsImportSettings;
+  /** Fingerprints to check duplicates against. */
+  recent: RecentImport[];
+  imported: number;
+  categoryHints: Map<string, string> | null;
+}
+
+/** Records `sms` as a transaction if it is a bank alert that hasn't been recorded already. */
+async function handleMessage(familyId: string, state: ScanState, sms: InboxSms): Promise<ScanState> {
+  const parsed = parseTransactionSms(sms.address, sms.body);
+  if (!parsed) return state;
+
+  let { settings, recent, imported, categoryHints } = state;
+  if (parsed.accountHint && !settings.seenHints.includes(parsed.accountHint)) {
+    settings = { ...settings, seenHints: [parsed.accountHint, ...settings.seenHints].slice(0, MAX_HINTS) };
+  }
+
+  const fingerprint: RecentImport = { type: parsed.type, amount: parsed.amount, hint: parsed.accountHint, date: sms.date };
+  if (isDuplicate(recent, fingerprint)) return { ...state, settings };
+
+  categoryHints ??= await loadCategoryHints(familyId);
+  const accountId = (parsed.accountHint && settings.accountMap[parsed.accountHint]) || settings.defaultAccountId;
+  const categoryId = parsed.payee ? categoryHints.get(`${parsed.type}|${parsed.payee.toLowerCase()}`) ?? null : null;
+
+  await api.post(`/families/${familyId}/transactions`, {
+    accountId,
+    type: parsed.type,
+    amount: parsed.amount,
+    date: new Date(sms.date).toISOString(),
+    categoryId,
+    payee: parsed.payee,
+    notes: `Recorded from SMS (${sms.address})`,
+    tags: ["sms"],
+  });
+
+  return {
+    settings: { ...settings, totalImported: settings.totalImported + 1 },
+    recent: [fingerprint, ...recent].slice(0, MAX_RECENT),
+    imported: imported + 1,
+    categoryHints,
+  };
+}
+
+async function precheck(settings: SmsImportSettings): Promise<string | null> {
+  if (!(await hasSmsPermission())) return "SMS permission is off. Turn it back on to keep recording transactions.";
+  if (!settings.defaultAccountId) return "Choose an account for SMS transactions.";
+  return null;
+}
+
 /**
  * Reads inbox messages past the watermark, records each bank alert as a transaction, and
  * returns the updated settings. Messages are handled oldest first and the watermark only
@@ -114,62 +183,67 @@ export async function syncSmsTransactions(
   familyId: string,
   settings: SmsImportSettings
 ): Promise<{ settings: SmsImportSettings; result: SmsSyncResult }> {
-  let next: SmsImportSettings = { ...settings, lastRunAt: Date.now() };
+  let state: ScanState = { settings: { ...settings, lastRunAt: Date.now() }, recent: settings.recent, imported: 0, categoryHints: null };
 
-  if (!(await hasSmsPermission())) {
-    return { settings: next, result: { imported: 0, error: "SMS permission is off. Turn it back on to keep recording transactions." } };
-  }
-  if (!next.defaultAccountId) {
-    return { settings: next, result: { imported: 0, error: "Choose an account for SMS transactions." } };
-  }
+  const problem = await precheck(state.settings);
+  if (problem) return { settings: state.settings, result: { imported: 0, error: problem } };
 
-  let imported = 0;
-  let categoryHints: Map<string, string> | null = null;
-
+  let error: string | null = null;
   try {
     for (let page = 0; page < MAX_PAGES; page++) {
-      const messages = await readInbox(next.since, PAGE_SIZE);
-
+      const messages = await readInbox(state.settings.since, PAGE_SIZE);
       for (const sms of messages) {
-        const parsed = parseTransactionSms(sms.address, sms.body);
-        if (parsed) {
-          if (parsed.accountHint && !next.seenHints.includes(parsed.accountHint)) {
-            next = { ...next, seenHints: [parsed.accountHint, ...next.seenHints].slice(0, MAX_HINTS) };
-          }
-
-          const fingerprint: RecentImport = { type: parsed.type, amount: parsed.amount, hint: parsed.accountHint, date: sms.date };
-          if (!isDuplicate(next.recent, fingerprint)) {
-            categoryHints ??= await loadCategoryHints(familyId);
-            const accountId = (parsed.accountHint && next.accountMap[parsed.accountHint]) || next.defaultAccountId;
-            const categoryId = parsed.payee ? categoryHints.get(`${parsed.type}|${parsed.payee.toLowerCase()}`) ?? null : null;
-
-            await api.post(`/families/${familyId}/transactions`, {
-              accountId,
-              type: parsed.type,
-              amount: parsed.amount,
-              date: new Date(sms.date).toISOString(),
-              categoryId,
-              payee: parsed.payee,
-              notes: `Recorded from SMS (${sms.address})`,
-              tags: ["sms"],
-            });
-
-            imported += 1;
-            next = {
-              ...next,
-              recent: [fingerprint, ...next.recent].slice(0, MAX_RECENT),
-              totalImported: next.totalImported + 1,
-            };
-          }
-        }
-        next = { ...next, since: Math.max(next.since, sms.date) };
+        state = await handleMessage(familyId, state, sms);
+        state = { ...state, settings: { ...state.settings, since: Math.max(state.settings.since, sms.date) } };
       }
-
       if (messages.length < PAGE_SIZE) break;
     }
   } catch (err) {
-    return { settings: next, result: { imported, error: getErrorMessage(err, "Couldn't record SMS transactions") } };
+    error = getErrorMessage(err, "Couldn't record SMS transactions");
   }
 
-  return { settings: next, result: { imported, error: null } };
+  return { settings: { ...state.settings, recent: state.recent }, result: { imported: state.imported, error } };
+}
+
+/**
+ * The optional "import past messages": records bank alerts from the `days` before SMS import was
+ * turned on. Walks backwards from `historyFrom`, moving it back message by message, so the handled
+ * range stays one unbroken span and a failed or capped run picks up exactly where it stopped —
+ * nothing is recorded twice however many times it runs.
+ */
+export async function importSmsHistory(
+  familyId: string,
+  settings: SmsImportSettings,
+  days: number
+): Promise<{ settings: SmsImportSettings; result: SmsHistoryResult }> {
+  // Historical fingerprints are only needed to catch double alerts within this run; persisting
+  // them would push recent ones out of the forward scan's duplicate check.
+  let state: ScanState = { settings, recent: settings.recent, imported: 0, categoryHints: null };
+  const start = Date.now() - days * DAY_MS;
+  const from = settings.historyFrom ?? settings.since;
+  if (start >= from) return { settings, result: { imported: 0, error: null, complete: true } };
+
+  const problem = await precheck(settings);
+  if (problem) return { settings, result: { imported: 0, error: problem, complete: false } };
+
+  const finish = (error: string | null, complete: boolean) => ({
+    settings: complete ? { ...state.settings, historyFrom: start } : state.settings,
+    result: { imported: state.imported, error, complete },
+  });
+
+  try {
+    for (let page = 0; page < MAX_HISTORY_PAGES; page++) {
+      const messages = await readInboxBefore(state.settings.historyFrom ?? from, PAGE_SIZE);
+      for (const sms of messages) {
+        if (sms.date < start) return finish(null, true);
+        state = await handleMessage(familyId, state, sms);
+        state = { ...state, settings: { ...state.settings, historyFrom: sms.date } };
+      }
+      // Ran out of inbox before reaching `start`: everything that exists has been handled.
+      if (messages.length < PAGE_SIZE) return finish(null, true);
+    }
+  } catch (err) {
+    return finish(getErrorMessage(err, "Couldn't import past SMS"), false);
+  }
+  return finish(null, false);
 }

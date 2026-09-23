@@ -5,6 +5,7 @@ import {
   Laptop,
   MonitorSmartphone,
   Share,
+  ShieldAlert,
   ShieldCheck,
   SquarePlus,
   Wifi,
@@ -139,7 +140,7 @@ export function GetTheApp() {
             <div className="mt-auto space-y-3">
               <p className="text-sm text-ink-muted">
                 A direct install — no Play Store needed. Your phone will warn about "unknown
-                sources"; that's expected for a side-loaded app.
+                sources", and Google Play Protect may block it — see the steps below.
               </p>
               <a href={apkPath} download>
                 <Button className="w-full" icon={<Download size={16} />} disabled={apkAvailable === null}>
@@ -168,7 +169,8 @@ export function GetTheApp() {
           {[
             "Download the APK using the button above (from your phone's browser).",
             "Open the downloaded file. Android will ask to allow installs from this source the first time — allow it just for your browser.",
-            "Tap Install, then open Family Finance from your app list.",
+            "If Play Protect says “App blocked to protect your device”, pause Play Protect scanning as described below, then open the file again.",
+            "Tap Install, then open Family Finance from your app list — and turn Play Protect scanning back on.",
             "Sign in with the same account you use on the web.",
           ].map((step, i) => (
             <li key={i} className={cn("flex items-start gap-3")}>
@@ -179,6 +181,31 @@ export function GetTheApp() {
             </li>
           ))}
         </ol>
+        <div className="mt-4 rounded-xl border border-line px-3.5 py-3 text-sm text-ink-muted">
+          <p className="flex items-center gap-2 font-semibold text-ink">
+            <ShieldAlert size={15} className="shrink-0 text-warn" />
+            Blocked by Play Protect?
+          </p>
+          <p className="mt-1.5">
+            The app can read bank SMS to record transactions for you, and in some countries (India
+            included) Google blocks side-loaded apps that ask for SMS access — with no &ldquo;Install
+            anyway&rdquo; button. To install it:
+          </p>
+          <ol className="mt-2 list-decimal space-y-1 pl-5">
+            <li>Open the <span className="font-semibold text-ink">Play Store</span> and tap your profile picture.</li>
+            <li>
+              Go to <span className="font-semibold text-ink">Play Protect</span> → the settings (gear) icon.
+            </li>
+            <li>
+              Turn off <span className="font-semibold text-ink">Scan apps with Play Protect</span> and install the APK.
+            </li>
+            <li>Turn scanning back on once Family Finance is installed.</li>
+          </ol>
+          <p className="mt-2 text-xs text-ink-subtle">
+            SMS is only read after you switch it on inside the app, and messages never leave your phone.
+            If an update is ever blocked the same way, repeat these steps.
+          </p>
+        </div>
         <div className="mt-4 flex items-start gap-2.5 rounded-xl bg-surface-sunken/60 px-3.5 py-3 text-xs text-ink-subtle">
           <Wifi size={14} className="mt-0.5 shrink-0" />
           The app talks to the same server as the website — your data stays in sync across both.

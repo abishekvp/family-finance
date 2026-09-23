@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- updatePeriodMillis is only a fallback: the app pushes fresh data, and a midnight alarm rolls the day over. -->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+  android:description="@string/ff_widget_today_description"
+  android:initialLayout="@layout/ff_widget_today"
+  android:minWidth="180dp"
+  android:minHeight="110dp"
+  android:minResizeWidth="180dp"
+  android:minResizeHeight="110dp"
+  android:previewLayout="@layout/ff_widget_today"
+  android:resizeMode="horizontal|vertical"
+  android:targetCellWidth="4"
+  android:targetCellHeight="2"
+  android:updatePeriodMillis="3600000"
+  android:widgetCategory="home_screen" />

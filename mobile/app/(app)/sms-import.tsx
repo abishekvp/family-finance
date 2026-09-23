@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Linking, Platform, ScrollView, Text, View } from "react-native";
-import { formatDistanceToNow } from "date-fns";
-import { CreditCard, MessageSquareText, RefreshCw, ShieldCheck, Wallet } from "lucide-react-native";
+import { format, formatDistanceToNow } from "date-fns";
+import { CreditCard, History, MessageSquareText, RefreshCw, ShieldCheck, Wallet } from "lucide-react-native";
 import { api } from "../../src/api/client";
 import type { Account } from "../../src/api/types";
 import { useAuth } from "../../src/context/AuthContext";
@@ -11,11 +11,11 @@ import { getErrorMessage } from "../../src/api/errors";
 import { Button, Card, CardHeader, Chip, ErrorText, Field, SkeletonRows, SuccessText, Toggle } from "../../src/components/ui";
 
 const HISTORY_OPTIONS: { days: number; label: string }[] = [
-  { days: 0, label: "New only" },
   { days: 7, label: "7 days" },
   { days: 30, label: "30 days" },
   { days: 90, label: "90 days" },
 ];
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 export default function SmsImport() {
   const { user } = useAuth();
@@ -29,7 +29,7 @@ export default function SmsImport() {
   const [accountsLoading, setAccountsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [setupAccountId, setSetupAccountId] = useState<string | null>(null);
-  const [historyDays, setHistoryDays] = useState(30);
+  const [historyDays, setHistoryDays] = useState(7);
   const [permissionDenied, setPermissionDenied] = useState(false);
   const [enabling, setEnabling] = useState(false);
 
@@ -59,7 +59,7 @@ export default function SmsImport() {
     if (!setupAccountId) return;
     setEnabling(true);
     try {
-      const granted = await sms.enable({ defaultAccountId: setupAccountId, historyDays });
+      const granted = await sms.enable({ defaultAccountId: setupAccountId });
       if (!granted) setPermissionDenied(true);
     } finally {
       setEnabling(false);
@@ -124,15 +124,8 @@ export default function SmsImport() {
 
         {canRecord && !settings.enabled && accounts.length > 0 && (
           <View style={{ gap: 16 }}>
-            <Field label="Record into">
+            <Field label="Record into" hint="Only alerts that arrive after you turn this on are recorded. You can import past messages afterwards if you want them.">
               <AccountChips accounts={accounts} selectedId={setupAccountId} onSelect={setSetupAccountId} />
-            </Field>
-            <Field label="Also import past messages from">
-              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-                {HISTORY_OPTIONS.map((o) => (
-                  <Chip key={o.days} label={o.label} selected={historyDays === o.days} onPress={() => setHistoryDays(o.days)} />
-                ))}
-              </View>
             </Field>
             {permissionDenied && (
               <View style={{ gap: 8 }}>
@@ -148,7 +141,7 @@ export default function SmsImport() {
             <Text style={{ color: colors.inkSubtle, fontSize: 12 }}>
               {sms.isSyncing
                 ? "Scanning messages…"
-                : `${lastRun ? `Last scanned ${lastRun}` : "Not scanned yet"} · ${settings.totalImported} recorded so far`}
+                : `${lastRun ? `Last scanned ${lastRun}` : "Recording new alerts from now on"} · ${settings.totalImported} recorded so far`}
             </Text>
             {sms.lastResult && !sms.lastResult.error && (
               <SuccessText>
@@ -168,6 +161,8 @@ export default function SmsImport() {
           </View>
         )}
       </Card>
+
+      {settings.enabled && canRecord && <PastMessagesCard historyDays={historyDays} onHistoryDaysChange={setHistoryDays} />}
 
       {settings.enabled && (
         <Card>
@@ -207,6 +202,66 @@ export default function SmsImport() {
         </View>
       </Card>
     </ScrollView>
+  );
+}
+
+/** Optional: record alerts that arrived before SMS import was turned on. */
+function PastMessagesCard({ historyDays, onHistoryDaysChange }: { historyDays: number; onHistoryDaysChange: (days: number) => void }) {
+  const { colors } = useTheme();
+  const sms = useSmsImport();
+  const { historyFrom, since } = sms.settings;
+  const coveredFrom = historyFrom ?? since;
+  const result = sms.historyResult;
+
+  // historyFrom 0 = imported by an older version of the app when import was first turned on.
+  if (coveredFrom === 0) {
+    return (
+      <Card>
+        <CardHeader title="Past messages" icon={<History size={16} color={colors.brand600} />} />
+        <Text style={{ color: colors.inkMuted, fontSize: 13 }}>Past messages were already imported when SMS recording was turned on.</Text>
+      </Card>
+    );
+  }
+
+  const alreadyCovered = Date.now() - historyDays * DAY_MS >= coveredFrom;
+  const importedSome = coveredFrom < since;
+
+  return (
+    <Card>
+      <CardHeader
+        title="Past messages"
+        subtitle="Optional — also record bank alerts you received before turning this on."
+        icon={<History size={16} color={colors.brand600} />}
+      />
+      <View style={{ gap: 12 }}>
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+          {HISTORY_OPTIONS.map((o) => (
+            <Chip key={o.days} label={o.label} selected={historyDays === o.days} onPress={() => onHistoryDaysChange(o.days)} />
+          ))}
+        </View>
+        {importedSome && (
+          <Text style={{ color: colors.inkSubtle, fontSize: 12 }}>Imported back to {format(coveredFrom, "d MMM yyyy")}.</Text>
+        )}
+        {result && !result.error && (
+          <SuccessText>
+            {`${
+              result.imported === 0
+                ? "No past transactions found"
+                : `Recorded ${result.imported} past transaction${result.imported === 1 ? "" : "s"}`
+            }${result.complete ? "." : " — tap Import again to continue further back."}`}
+          </SuccessText>
+        )}
+        <ErrorText>{result?.error}</ErrorText>
+        <Button
+          title={alreadyCovered ? "Already imported" : `Import past ${historyDays} days`}
+          variant="secondary"
+          loading={sms.isImportingHistory}
+          disabled={alreadyCovered || sms.isSyncing}
+          icon={<History size={16} color={colors.ink} />}
+          onPress={() => sms.importHistory(historyDays)}
+        />
+      </View>
+    </Card>
   );
 }
 
