@@ -5,6 +5,7 @@ import {
   setAccessToken,
   setStoredRefreshToken,
 } from "./tokenStore";
+import { decryptIncoming, encryptOutgoing } from "./vaultSession";
 
 // The built APK ships pointed at the production deployment. `EXPO_PUBLIC_API_URL` overrides it
 // for local development (e.g. `EXPO_PUBLIC_API_URL=http://localhost:4000/api expo start`, with
@@ -19,10 +20,18 @@ export function setOnAuthExpired(handler: (() => void) | null) {
   onAuthExpired = handler;
 }
 
+const TRANSACTIONS_URL = /\/families\/([^/]+)\/transactions(?:\/|$|\?)/;
+
 api.interceptors.request.use((config) => {
   const token = getAccessToken();
   if (token) {
     config.headers.set("Authorization", `Bearer ${token}`);
+  }
+  // End-to-end encryption: payee/notes are sealed with the family key before they leave the device.
+  const match = config.url?.match(TRANSACTIONS_URL);
+  const method = config.method?.toLowerCase();
+  if (match && (method === "post" || method === "patch") && config.data && typeof config.data === "object") {
+    config.data = encryptOutgoing(match[1], config.data as Record<string, unknown>);
   }
   return config;
 });
@@ -56,11 +65,13 @@ async function refreshAccessToken(): Promise<string | null> {
 }
 
 api.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    if (response.config.url?.match(TRANSACTIONS_URL)) decryptIncoming(response.data);
+    return response;
+  },
   async (error: AxiosError) => {
     const originalRequest = error.config as (InternalAxiosRequestConfig & { _retry?: boolean }) | undefined;
-    const isAuthRoute =
-      originalRequest?.url?.includes("/auth/login") || originalRequest?.url?.includes("/auth/register");
+    const isAuthRoute = /\/auth\/(login|register|password|passkeys\/login|oauth)/.test(originalRequest?.url ?? "");
 
     if (error.response?.status === 401 && originalRequest && !originalRequest._retry && !isAuthRoute) {
       originalRequest._retry = true;

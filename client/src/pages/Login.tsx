@@ -1,19 +1,22 @@
 import { useState, type FormEvent } from "react";
-import { Link, Navigate, useLocation, useNavigate } from "react-router-dom";
+import { Link, Navigate, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { Eye, EyeOff } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { getErrorMessage } from "../api/errors";
 import { AuthShell } from "../components/AuthShell";
 import { Button, ErrorText, Field, Input } from "../components/ui";
+import { SocialSignIn } from "../components/SocialSignIn";
 
 export function Login() {
   const { user, login } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const [searchParams] = useSearchParams();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // Google/Microsoft bounce back here with ?oauth_error=… when something went wrong.
+  const [error, setError] = useState<string | null>(searchParams.get("oauth_error"));
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   if (user) {
@@ -66,6 +69,13 @@ export function Login() {
         <Field label="Password">
           {(props) => (
             <div className="relative">
+              <Link
+                to="/forgot-password"
+                state={{ email }}
+                className="absolute -top-7 right-0 text-xs font-semibold text-brand-600 hover:underline"
+              >
+                Forgot password?
+              </Link>
               <Input
                 {...props}
                 type={showPassword ? "text" : "password"}
@@ -94,6 +104,10 @@ export function Login() {
           {isSubmitting ? "Signing in…" : "Sign in"}
         </Button>
       </form>
+
+      <div className="mt-6">
+        <SocialSignIn onSignedIn={() => navigate("/", { replace: true })} />
+      </div>
     </AuthShell>
   );
 }

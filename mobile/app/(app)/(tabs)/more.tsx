@@ -1,6 +1,6 @@
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { Platform, Pressable, ScrollView, Text, View } from "react-native";
 import { useRouter } from "expo-router";
-import { ChevronRight, LogOut, type LucideIcon, PiggyBank, Settings as SettingsIcon, Tag, Target, Users } from "lucide-react-native";
+import { ChevronRight, LogOut, type LucideIcon, MessageSquareText, PiggyBank, Settings as SettingsIcon, ShieldCheck, Tag, Target, Users } from "lucide-react-native";
 import { useAuth } from "../../../src/context/AuthContext";
 import { useTheme } from "../../../src/context/ThemeContext";
 import { Avatar, Button, Card } from "../../../src/components/ui";
@@ -9,10 +9,15 @@ import { ThemePicker } from "../../../src/components/ThemePicker";
 
 const MENU_ITEMS: { path: string; label: string; hint: string; icon: LucideIcon }[] = [
   { path: "/family", label: "Family", hint: "Members, roles, and invites", icon: Users },
+  { path: "/account", label: "Account & security", hint: "Profile, email, passkeys, app lock, encryption", icon: ShieldCheck },
   { path: "/settings", label: "Settings", hint: "Currency, defaults, and preferences", icon: SettingsIcon },
   { path: "/categories", label: "Categories", hint: "Manage income and expense categories", icon: Tag },
   { path: "/budgets", label: "Budgets", hint: "Set and track monthly budgets", icon: PiggyBank },
   { path: "/goals", label: "Goals", hint: "Save toward a target, together", icon: Target },
+  // Reading SMS is Android-only.
+  ...(Platform.OS === "android"
+    ? [{ path: "/sms-import", label: "SMS transactions", hint: "Record bank and card alerts automatically", icon: MessageSquareText }]
+    : []),
 ];
 
 export default function More() {

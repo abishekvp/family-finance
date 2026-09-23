@@ -14,6 +14,8 @@ import { Stats } from "./pages/Stats";
 import { Accounts } from "./pages/Accounts";
 import { Settings } from "./pages/Settings";
 import { GetTheApp } from "./pages/GetTheApp";
+import { ForgotPassword } from "./pages/ForgotPassword";
+import { Account } from "./pages/Account";
 
 export default function App() {
   return (
@@ -21,6 +23,7 @@ export default function App() {
       <Route path="/" element={<Landing />} />
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
+      <Route path="/forgot-password" element={<ForgotPassword />} />
 
       <Route element={<ProtectedRoute />}>
         <Route path="/onboarding" element={<Onboarding />} />
@@ -33,6 +36,7 @@ export default function App() {
             <Route path="/stats" element={<Stats />} />
             <Route path="/accounts" element={<Accounts />} />
             <Route path="/settings" element={<Settings />} />
+            <Route path="/account" element={<Account />} />
             <Route path="/family" element={<FamilySettings />} />
             <Route path="/get-the-app" element={<GetTheApp />} />
           </Route>

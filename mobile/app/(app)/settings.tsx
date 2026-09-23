@@ -1,10 +1,12 @@
 import { useState } from "react";
 import { ScrollView, Text, View } from "react-native";
-import { CalendarCog, Coins } from "lucide-react-native";
+import { CalendarCog, Coins, RefreshCw, Smartphone } from "lucide-react-native";
 import { api } from "../../src/api/client";
 import { useAuth } from "../../src/context/AuthContext";
 import { usePrefs, type LandingView, type WeekStart } from "../../src/context/PrefsContext";
 import { useTheme } from "../../src/context/ThemeContext";
+import { useAppUpdate } from "../../src/context/UpdateContext";
+import { currentAppVersion } from "../../src/lib/appUpdate";
 import { getErrorMessage } from "../../src/api/errors";
 import { Button, Card, CardHeader, Chip, ErrorText, Field, Input, SuccessText, Toggle } from "../../src/components/ui";
 
@@ -99,6 +101,46 @@ export default function Settings() {
           </View>
         </View>
       </Card>
+
+      <AppUpdateCard />
     </ScrollView>
+  );
+}
+
+function AppUpdateCard() {
+  const { colors } = useTheme();
+  const { status, release, error, checkForUpdates, install } = useAppUpdate();
+
+  const statusText =
+    status === "checking"
+      ? "Checking for updates…"
+      : status === "upToDate"
+        ? "You're on the latest version."
+        : release
+          ? `Version ${release.version} is available.`
+          : null;
+
+  return (
+    <Card>
+      <CardHeader title="App updates" icon={<Smartphone size={16} color={colors.brand600} />} />
+      <View style={{ gap: 12 }}>
+        <View>
+          <Text style={{ fontSize: 13, fontWeight: "700", color: colors.ink, marginBottom: 4 }}>Installed version {currentAppVersion()}</Text>
+          {statusText && <Text style={{ color: colors.inkSubtle, fontSize: 12 }}>{statusText}</Text>}
+        </View>
+        <ErrorText>{error}</ErrorText>
+        {release ? (
+          <Button title={status === "downloading" ? "Downloading" : "Update now"} loading={status === "downloading"} onPress={install} />
+        ) : (
+          <Button
+            title="Check for updates"
+            variant="secondary"
+            loading={status === "checking"}
+            icon={<RefreshCw size={16} color={colors.ink} />}
+            onPress={() => checkForUpdates({ manual: true })}
+          />
+        )}
+      </View>
+    </Card>
   );
 }

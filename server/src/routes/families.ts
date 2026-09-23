@@ -11,6 +11,7 @@ import { categoriesRouter } from "./categories";
 import { transactionsRouter } from "./transactions";
 import { budgetsRouter } from "./budgets";
 import { goalsRouter } from "./goals";
+import { encryptionRouter } from "./encryption";
 
 export const familiesRouter = Router();
 
@@ -22,6 +23,7 @@ familiesRouter.use("/:familyId/categories", categoriesRouter);
 familiesRouter.use("/:familyId/transactions", transactionsRouter);
 familiesRouter.use("/:familyId/budgets", budgetsRouter);
 familiesRouter.use("/:familyId/goals", goalsRouter);
+familiesRouter.use("/:familyId/encryption", encryptionRouter);
 
 const createFamilySchema = z.object({
   name: z.string().trim().min(1, "Family name is required").max(100),
@@ -143,7 +145,11 @@ familiesRouter.delete(
       if (adminCount <= 1) throw new AppError(400, "Cannot remove the last admin of a family");
     }
 
-    await prisma.familyMembership.delete({ where: { id: membership.id } });
+    await prisma.$transaction([
+      prisma.familyMembership.delete({ where: { id: membership.id } }),
+      // Drop their sealed copy of the family data key along with the membership.
+      prisma.familyKey.deleteMany({ where: { familyId: req.params.familyId, userId: req.params.userId } }),
+    ]);
     res.status(204).send();
   })
 );

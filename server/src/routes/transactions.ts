@@ -4,6 +4,7 @@ import { Prisma, Role, TransactionStatus, TransactionType } from "@prisma/client
 import { prisma } from "../lib/prisma";
 import { asyncHandler, AppError } from "../middleware/errorHandler";
 import { requireAuth, requireFamilyRole } from "../middleware/auth";
+import { assertEncryptionPolicy, maybeEncryptedText } from "../lib/encryption";
 
 export const transactionsRouter = Router({ mergeParams: true });
 transactionsRouter.use(requireAuth);
@@ -178,8 +179,8 @@ const createTransactionSchema = z.object({
   date: z.string().datetime().optional(),
   categoryId: z.string().min(1).nullable().optional(),
   transferToAccountId: z.string().min(1).nullable().optional(),
-  payee: z.string().trim().max(200).nullable().optional(),
-  notes: z.string().trim().max(1000).nullable().optional(),
+  payee: maybeEncryptedText(200, 2048).nullable().optional(),
+  notes: maybeEncryptedText(1000, 8192).nullable().optional(),
   status: transactionStatusSchema.optional(),
   tags: z.array(z.string()).optional(),
 });
@@ -193,6 +194,7 @@ transactionsRouter.post(
     const familyId = req.params.familyId;
     const requesterId = req.user!.id;
     const parsed = createTransactionSchema.parse(req.body);
+    await assertEncryptionPolicy(familyId, { payee: parsed.payee, notes: parsed.notes });
 
     const categoryIdInput = parsed.type === TransactionType.TRANSFER ? null : parsed.categoryId ?? null;
     const transferToAccountIdInput = parsed.transferToAccountId ?? null;
@@ -243,6 +245,7 @@ transactionsRouter.patch(
     assertCanModify(existing.userId, requesterId, req.familyMembership!.role);
 
     const parsed = updateTransactionSchema.parse(req.body);
+    await assertEncryptionPolicy(familyId, { payee: parsed.payee, notes: parsed.notes });
 
     const mergedType = parsed.type ?? existing.type;
     const mergedAccountId = parsed.accountId ?? existing.accountId;

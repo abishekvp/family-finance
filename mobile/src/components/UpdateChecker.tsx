@@ -1,70 +1,17 @@
-import { useEffect, useState } from "react";
-import { Linking, Text, View } from "react-native";
-import Constants from "expo-constants";
-import * as SecureStore from "expo-secure-store";
+import { Text, View } from "react-native";
 import { Download, Sparkles } from "lucide-react-native";
-import { api, API_BASE_URL } from "../api/client";
+import { useAppUpdate } from "../context/UpdateContext";
 import { useTheme } from "../context/ThemeContext";
-import { Button, Sheet } from "./ui";
+import { Button, ErrorText, ProgressBar, Sheet } from "./ui";
 
-const DISMISSED_VERSION_KEY = "familyFinance.dismissedUpdateVersion";
-// Strips the "/api" suffix API_BASE_URL carries; used as the base to resolve apkUrl when it's
-// the local dev fallback path rather than a full Vercel Blob URL.
-const SERVER_ORIGIN = API_BASE_URL.replace(/\/api\/?$/, "");
-
-function isNewer(remote: string, local: string): boolean {
-  const r = remote.split(".").map(Number);
-  const l = local.split(".").map(Number);
-  for (let i = 0; i < Math.max(r.length, l.length); i++) {
-    const rp = r[i] ?? 0;
-    const lp = l[i] ?? 0;
-    if (rp > lp) return true;
-    if (rp < lp) return false;
-  }
-  return false;
-}
-
+/** The "Update available" prompt. State and checking live in UpdateContext. */
 export function UpdateChecker() {
   const { colors } = useTheme();
-  const [available, setAvailable] = useState<{ version: string; apkUrl: string } | null>(null);
+  const { release, status, progress, error, sheetOpen, install, dismiss } = useAppUpdate();
 
-  useEffect(() => {
-    let cancelled = false;
-    const currentVersion = Constants.expoConfig?.version ?? "0.0.0";
+  if (!release || !sheetOpen) return null;
 
-    (async () => {
-      try {
-        const res = await api.get<{ latestVersion: string; apkUrl: string }>("/app/version");
-        if (cancelled || !isNewer(res.data.latestVersion, currentVersion)) return;
-
-        const dismissed = await SecureStore.getItemAsync(DISMISSED_VERSION_KEY);
-        if (dismissed === res.data.latestVersion) return;
-
-        setAvailable({ version: res.data.latestVersion, apkUrl: res.data.apkUrl });
-      } catch {
-        // Offline or the endpoint is unreachable — fail silently, this is a nice-to-have.
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  if (!available) return null;
-
-  function dismiss() {
-    if (available) SecureStore.setItemAsync(DISMISSED_VERSION_KEY, available.version).catch(() => undefined);
-    setAvailable(null);
-  }
-
-  function update() {
-    // apkUrl is a full Vercel Blob URL once a release has been published (see
-    // server/src/routes/app.ts), or the local dev fallback path otherwise —
-    // `new URL` resolves either against SERVER_ORIGIN without doubling up.
-    if (available) Linking.openURL(new URL(available.apkUrl, SERVER_ORIGIN).toString()).catch(() => undefined);
-    setAvailable(null);
-  }
+  const downloading = status === "downloading";
 
   return (
     <Sheet visible title="Update available" onClose={dismiss}>
@@ -74,16 +21,41 @@ export function UpdateChecker() {
             <Sparkles size={17} color={colors.brand600} />
           </View>
           <Text style={{ flex: 1, fontSize: 13.5, color: colors.inkMuted, lineHeight: 19 }}>
-            Version {available.version} of Family Finance is ready. Update to get the latest fixes and
+            Version {release.version} of Family Finance is ready. Update to get the latest fixes and
             features.
           </Text>
         </View>
+
+        {release.notes ? (
+          <View style={{ backgroundColor: colors.surfaceSunken, borderRadius: 14, padding: 14, gap: 6 }}>
+            <Text style={{ fontSize: 12, fontWeight: "700", color: colors.inkSubtle, textTransform: "uppercase", letterSpacing: 0.6 }}>
+              What's new
+            </Text>
+            <Text style={{ fontSize: 13.5, color: colors.ink, lineHeight: 19 }}>{release.notes}</Text>
+          </View>
+        ) : null}
+
+        {downloading && (
+          <View style={{ gap: 6 }}>
+            <ProgressBar value={progress ?? 0} />
+            <Text style={{ fontSize: 12, color: colors.inkSubtle }}>
+              {progress == null ? "Downloading…" : `Downloading… ${Math.round(progress * 100)}%`}
+            </Text>
+          </View>
+        )}
+        <ErrorText>{error}</ErrorText>
+
         <View style={{ flexDirection: "row", gap: 8 }}>
           <View style={{ flex: 1 }}>
             <Button title="Later" variant="secondary" onPress={dismiss} />
           </View>
           <View style={{ flex: 1 }}>
-            <Button title="Update" icon={<Download size={16} color="#fff" />} onPress={update} />
+            <Button
+              title={downloading ? "Downloading" : "Update now"}
+              loading={downloading}
+              icon={<Download size={16} color="#fff" />}
+              onPress={install}
+            />
           </View>
         </View>
       </View>

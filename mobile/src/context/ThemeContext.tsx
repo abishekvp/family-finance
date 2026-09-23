@@ -5,7 +5,8 @@ import { DARK, LIGHT, type Palette } from "../theme";
 
 export type ThemeChoice = "light" | "dark" | "system";
 
-const THEME_KEY = "theme:v1";
+// SecureStore keys may only contain [A-Za-z0-9._-]; a ":" makes every read and write throw.
+const THEME_KEY = "familyFinance.theme";
 
 interface ThemeContextValue {
   choice: ThemeChoice;

@@ -12,6 +12,10 @@
   },
   "rewrites": [
     {
+      "source": "/.well-known/assetlinks.json",
+      "destination": "/api"
+    },
+    {
       "source": "/api/(.*)",
       "destination": "/api"
     },

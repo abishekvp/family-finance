@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { KeyboardAvoidingView, Platform, ScrollView, Text, View } from "react-native";
+import { KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, View } from "react-native";
 import { Link, useRouter } from "expo-router";
 import { Eye, EyeOff } from "lucide-react-native";
 import { useAuth } from "../src/context/AuthContext";
@@ -7,6 +7,8 @@ import { useTheme } from "../src/context/ThemeContext";
 import { getErrorMessage } from "../src/api/errors";
 import { Button, ErrorText, Field, IconButton, Input } from "../src/components/ui";
 import { Logo } from "../src/components/Logo";
+import { SocialSignIn } from "../src/components/SocialSignIn";
+import { href } from "../src/lib/nav";
 
 export default function Login() {
   const { login } = useAuth();
@@ -56,9 +58,20 @@ export default function Login() {
               </View>
             </Field>
 
+            <Pressable
+              onPress={() => router.push(href("/forgot-password", { email }))}
+              style={{ alignSelf: "flex-end", marginTop: -8, paddingVertical: 4 }}
+            >
+              <Text style={{ color: colors.brand600, fontWeight: "700", fontSize: 13 }}>Forgot password?</Text>
+            </Pressable>
+
             <ErrorText>{error}</ErrorText>
 
             <Button title={isSubmitting ? "Signing in…" : "Sign in"} size="lg" loading={isSubmitting} onPress={handleSubmit} />
+          </View>
+
+          <View style={{ marginTop: 24 }}>
+            <SocialSignIn />
           </View>
 
           <View style={{ flexDirection: "row", justifyContent: "center", marginTop: 24 }}>

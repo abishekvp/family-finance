@@ -1,6 +1,7 @@
 import { Navigate, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { Logo } from "./Logo";
+import { SecurityGate } from "./SecurityGate";
 
 export function ProtectedRoute() {
   const { user, isLoading } = useAuth();
@@ -21,5 +22,9 @@ export function ProtectedRoute() {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
-  return <Outlet />;
+  return (
+    <SecurityGate>
+      <Outlet />
+    </SecurityGate>
+  );
 }

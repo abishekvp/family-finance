@@ -22,7 +22,10 @@
       },
       "predictiveBackGestureEnabled": false,
       "package": "com.anonymous.familyfinance",
-      "versionCode": 1
+      "versionCode": 1,
+      "permissions": [
+        "android.permission.REQUEST_INSTALL_PACKAGES"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -39,8 +42,22 @@
           "backgroundColor": "#4C36C9"
         }
       ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/android-icon-monochrome.png",
+          "color": "#4C36C9"
+        }
+      ],
       "./plugins/withLanCleartext",
-      "./plugins/withCmakeShortPath"
+      "./plugins/withCmakeShortPath",
+      "expo-web-browser",
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Allow Family Finance to use Face ID to unlock the app."
+        }
+      ]
     ]
   }
 }

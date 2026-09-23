@@ -6,6 +6,7 @@ import { api } from "../../../src/api/client";
 import type { Account, Transaction } from "../../../src/api/types";
 import { useAuth } from "../../../src/context/AuthContext";
 import { usePrefs } from "../../../src/context/PrefsContext";
+import { useSmsImport } from "../../../src/context/SmsImportContext";
 import { useTheme } from "../../../src/context/ThemeContext";
 import { getErrorMessage } from "../../../src/api/errors";
 import { ErrorText, IconButton, Money, Segmented, SkeletonRows, tap } from "../../../src/components/ui";
@@ -87,6 +88,15 @@ export default function TransactionsHub() {
       loadAll();
     }, [loadAll])
   );
+
+  // An SMS scan can record transactions while this screen is already showing.
+  const { syncVersion } = useSmsImport();
+  const seenSyncVersion = useRef(syncVersion);
+  useEffect(() => {
+    if (syncVersion === seenSyncVersion.current) return;
+    seenSyncVersion.current = syncVersion;
+    loadAll();
+  }, [syncVersion, loadAll]);
 
   useLayoutEffect(() => {
     navigation.setOptions({

@@ -30,3 +30,17 @@ export function generateRefreshToken(): { token: string; tokenHash: string; expi
 export function hashRefreshToken(token: string): string {
   return crypto.createHash("sha256").update(token).digest("hex");
 }
+
+// Short-lived, single-purpose tokens (an in-progress email change, OAuth state). They're signed
+// with a purpose-specific secret so they can never be replayed as access tokens, or vice versa.
+function purposeSecret(purpose: string) {
+  return `${requireEnv("JWT_ACCESS_SECRET")}:${purpose}`;
+}
+
+export function signPurposeToken(purpose: string, payload: Record<string, unknown>, expiresIn: `${number}m`): string {
+  return jwt.sign(payload, purposeSecret(purpose), { expiresIn });
+}
+
+export function verifyPurposeToken<T>(purpose: string, token: string): T {
+  return jwt.verify(token, purposeSecret(purpose)) as T;
+}

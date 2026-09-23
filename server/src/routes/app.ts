@@ -27,8 +27,17 @@ appRouter.get("/version", async (_req, res) => {
     });
     if (!manifestRes.ok) throw new Error(`manifest responded ${manifestRes.status}`);
 
-    const manifest = (await manifestRes.json()) as { versionName?: string };
-    res.json({ latestVersion: manifest.versionName ?? APP_VERSION_FALLBACK.latest, apkUrl });
+    const manifest = (await manifestRes.json()) as {
+      versionName?: string;
+      notes?: string | null;
+      releasedAt?: string;
+    };
+    res.json({
+      latestVersion: manifest.versionName ?? APP_VERSION_FALLBACK.latest,
+      apkUrl,
+      notes: manifest.notes ?? null,
+      releasedAt: manifest.releasedAt ?? null,
+    });
   } catch {
     // No manifest uploaded yet — still point at the blob APK if one exists,
     // just without a version number to compare against.

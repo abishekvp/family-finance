@@ -4,12 +4,17 @@ import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import * as SplashScreen from "expo-splash-screen";
+import * as WebBrowser from "expo-web-browser";
 import { AuthProvider, useAuth } from "../src/context/AuthContext";
+import { SecurityProvider } from "../src/context/SecurityContext";
 import { ThemeProvider, useTheme } from "../src/context/ThemeContext";
+import { UpdateProvider } from "../src/context/UpdateContext";
 import { Logo } from "../src/components/Logo";
 import { UpdateChecker } from "../src/components/UpdateChecker";
 
 SplashScreen.preventAutoHideAsync().catch(() => undefined);
+// Closes the Google/Microsoft Custom Tab when it redirects back to familyfinance://oauth-callback.
+WebBrowser.maybeCompleteAuthSession();
 
 function RootNavigator() {
   const { user, isLoading } = useAuth();
@@ -41,7 +46,10 @@ function RootNavigator() {
         <Stack.Protected guard={!user}>
           <Stack.Screen name="login" />
           <Stack.Screen name="register" />
+          <Stack.Screen name="forgot-password" />
         </Stack.Protected>
+
+        <Stack.Screen name="oauth-callback" />
 
         <Stack.Screen
           name="invite/[token]"
@@ -57,7 +65,11 @@ export default function RootLayout() {
     <SafeAreaProvider>
       <ThemeProvider>
         <AuthProvider>
-          <RootNavigator />
+          <SecurityProvider>
+            <UpdateProvider>
+              <RootNavigator />
+            </UpdateProvider>
+          </SecurityProvider>
         </AuthProvider>
       </ThemeProvider>
     </SafeAreaProvider>

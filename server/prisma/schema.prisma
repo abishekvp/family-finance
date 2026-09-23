@@ -48,6 +48,23 @@ enum InviteStatus {
   REVOKED
 }
 
+enum OAuthProvider {
+  GOOGLE
+  MICROSOFT
+}
+
+enum VerificationPurpose {
+  PASSWORD_RESET
+  EMAIL_CHANGE_CURRENT
+  EMAIL_CHANGE_NEW
+}
+
+enum ChallengePurpose {
+  PASSKEY_REGISTER
+  PASSKEY_AUTH
+  OAUTH_EXCHANGE
+}
+
 enum BudgetPeriod {
   MONTHLY
   WEEKLY
@@ -57,10 +74,16 @@ enum BudgetPeriod {
 model User {
   id              String    @id @default(cuid())
   email           String    @unique
-  passwordHash    String
+  // Null for accounts created through Google/Microsoft that never set a password.
+  passwordHash    String?
+  // Display name, kept in sync as "firstName lastName" so existing consumers keep working.
   name            String
+  firstName       String    @default("")
+  lastName        String    @default("")
   avatarUrl       String?
   emailVerifiedAt DateTime?
+  // Cross-device UI preferences (landing view, week start, carry-over), shared by web and mobile.
+  preferences     Json?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
@@ -73,6 +96,102 @@ model User {
   auditLogs         AuditLog[]
   refreshTokens     RefreshToken[]
   sentInvites       Invite[]           @relation("InviteSender")
+  oauthIdentities   OAuthIdentity[]
+  passkeys          Passkey[]
+  verificationCodes VerificationCode[]
+  vault             UserVault?
+  familyKeys        FamilyKey[]
+}
+
+model OAuthIdentity {
+  id        String        @id @default(cuid())
+  userId    String
+  provider  OAuthProvider
+  subject   String
+  email     String?
+  createdAt DateTime      @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, subject])
+  @@index([userId])
+}
+
+model Passkey {
+  id           String    @id @default(cuid())
+  userId       String
+  credentialId String    @unique
+  publicKey    Bytes
+  counter      BigInt    @default(0)
+  transports   String[]  @default([])
+  deviceType   String?
+  backedUp     Boolean   @default(false)
+  name         String
+  createdAt    DateTime  @default(now())
+  lastUsedAt   DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// Short-lived server-side state for WebAuthn ceremonies and one-time OAuth exchange codes —
+// kept in the database because the API runs as stateless serverless functions.
+model AuthChallenge {
+  id        String           @id @default(cuid())
+  userId    String?
+  purpose   ChallengePurpose
+  challenge String           @unique
+  expiresAt DateTime
+  createdAt DateTime         @default(now())
+
+  @@index([expiresAt])
+}
+
+// Emailed one-time codes (password reset, email change). Only a hash of the code is stored.
+model VerificationCode {
+  id         String              @id @default(cuid())
+  userId     String?
+  email      String
+  purpose    VerificationPurpose
+  codeHash   String
+  attempts   Int                 @default(0)
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime            @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([email, purpose])
+  @@index([userId, purpose])
+}
+
+// Zero-knowledge vault. The server only ever sees the KDF parameters, the public key, and the
+// private key encrypted under a key derived from the user's master password (never sent here).
+model UserVault {
+  userId              String   @id
+  kdfSalt             String
+  kdfIterations       Int
+  publicKey           String
+  encryptedPrivateKey String
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// A family's data key, sealed to one member's vault public key.
+model FamilyKey {
+  id         String   @id @default(cuid())
+  familyId   String
+  userId     String
+  wrappedKey String
+  createdAt  DateTime @default(now())
+
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([familyId, userId])
 }
 
 model RefreshToken {
@@ -89,11 +208,13 @@ model RefreshToken {
 }
 
 model Family {
-  id        String   @id @default(cuid())
-  name      String
-  currency  String   @default("USD")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id                String   @id @default(cuid())
+  name              String
+  currency          String   @default("USD")
+  // When on, transaction payee/notes are stored as client-side ciphertext (see FamilyKey).
+  encryptionEnabled Boolean  @default(false)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
   memberships  FamilyMembership[]
   accounts     Account[]
@@ -103,6 +224,7 @@ model Family {
   goals        Goal[]
   invites      Invite[]
   auditLogs    AuditLog[]
+  familyKeys   FamilyKey[]
 }
 
 model FamilyMembership {
@@ -154,11 +276,11 @@ model Account {
   createdAt         DateTime    @default(now())
   updatedAt         DateTime    @updatedAt
 
-  family              Family        @relation(fields: [familyId], references: [id], onDelete: Cascade)
-  owner               User?         @relation("AccountOwner", fields: [ownerId], references: [id])
-  transactions        Transaction[] @relation("TransactionAccount")
-  incomingTransfers   Transaction[] @relation("TransactionTransferTo")
-  goals               Goal[]
+  family            Family        @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  owner             User?         @relation("AccountOwner", fields: [ownerId], references: [id])
+  transactions      Transaction[] @relation("TransactionAccount")
+  incomingTransfers Transaction[] @relation("TransactionTransferTo")
+  goals             Goal[]
 
   @@index([familyId])
   @@index([ownerId])

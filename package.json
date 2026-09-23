@@ -15,7 +15,7 @@
     "build:android": "cd mobile && npm run build:android",
     "build:mobile": "npm run build:android",
     "build": "npm run build:client && npm run build:server",
-    "build:all": "npm run build && npm run build:android",
+    "build:all": "node scripts/release.mjs",
     "start": "npm run start --workspace server",
     "prisma:generate": "npm run prisma:generate --workspace server",
     "prisma:migrate": "npm run prisma:migrate --workspace server",

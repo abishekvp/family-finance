@@ -5,6 +5,7 @@ import { authRouter } from "./routes/auth";
 import { familiesRouter, invitesRouter } from "./routes/families";
 import { appRouter } from "./routes/app";
 import { errorHandler } from "./middleware/errorHandler";
+import { ANDROID_PACKAGE_NAME, androidCertFingerprints } from "./lib/config";
 
 export function createApp() {
   const app = express();
@@ -13,6 +14,24 @@ export function createApp() {
   app.use(cookieParser());
 
   app.get("/api/health", (_req, res) => res.json({ ok: true }));
+
+  // Digital Asset Links: lets the Android app use this domain's passkeys (Credential Manager) and
+  // share saved sign-ins with it. On Vercel, /.well-known/assetlinks.json is rewritten to /api/assetlinks.
+  const assetLinks = (_req: express.Request, res: express.Response) => {
+    const fingerprints = androidCertFingerprints();
+    res.json(
+      fingerprints.length === 0
+        ? []
+        : [
+            {
+              relation: ["delegate_permission/common.handle_all_urls", "delegate_permission/common.get_login_creds"],
+              target: { namespace: "android_app", package_name: ANDROID_PACKAGE_NAME, sha256_cert_fingerprints: fingerprints },
+            },
+          ]
+    );
+  };
+  app.get("/.well-known/assetlinks.json", assetLinks);
+  app.get("/api/assetlinks", assetLinks);
   app.use("/api/auth", authRouter);
   app.use("/api/families", familiesRouter);
   app.use("/api/invites", invitesRouter);

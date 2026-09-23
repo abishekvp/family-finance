@@ -5,6 +5,7 @@ import { useAuth } from "../context/AuthContext";
 import { getErrorMessage } from "../api/errors";
 import { AuthShell } from "../components/AuthShell";
 import { Button, ErrorText, Field, Input, ProgressBar } from "../components/ui";
+import { SocialSignIn } from "../components/SocialSignIn";
 
 function scorePassword(password: string) {
   let score = 0;
@@ -127,6 +128,10 @@ export function Register() {
           {isSubmitting ? "Creating account…" : "Create account"}
         </Button>
       </form>
+
+      <div className="mt-6">
+        <SocialSignIn onSignedIn={() => navigate("/", { replace: true })} />
+      </div>
     </AuthShell>
   );
 }

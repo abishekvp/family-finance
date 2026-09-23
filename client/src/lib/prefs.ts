@@ -1,6 +1,7 @@
-// Local-only user preferences for the Transactions/Settings experience.
-// These have no backend model — persisted to localStorage under a single JSON blob.
-// (Mobile persists the same shape to expo-secure-store under the same key.)
+// User preferences for the Transactions/Settings experience. The server is the source of truth
+// (so web and mobile agree); localStorage is a synchronous cache that pages read on mount. The
+// cache is refreshed from /auth/me on every sign-in / reload, and every change is written through.
+import { api } from "../api/client";
 
 export type LandingView = "Daily" | "Calendar";
 export type WeekStart = "Sunday" | "Monday";
@@ -8,6 +9,13 @@ export type WeekStart = "Sunday" | "Monday";
 export interface Prefs {
   defaultView: LandingView;
   weekStart: WeekStart;
+  carryOver: boolean;
+}
+
+/** The wire format shared with the server and the mobile app. */
+export interface ServerPrefs {
+  defaultView: "daily" | "calendar";
+  weekStart: "sunday" | "monday";
   carryOver: boolean;
 }
 
@@ -34,12 +42,33 @@ export function loadPrefs(): Prefs {
   }
 }
 
-export function savePrefs(prefs: Prefs) {
+function cachePrefs(prefs: Prefs) {
   try {
     localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
   } catch {
     // Ignore write failures (private browsing, storage disabled, etc).
   }
+}
+
+/** Saves locally and to the account. */
+export function savePrefs(prefs: Prefs) {
+  cachePrefs(prefs);
+  const body: ServerPrefs = {
+    defaultView: prefs.defaultView === "Calendar" ? "calendar" : "daily",
+    weekStart: prefs.weekStart === "Monday" ? "monday" : "sunday",
+    carryOver: prefs.carryOver,
+  };
+  api.put("/auth/me/preferences", body).catch(() => undefined);
+}
+
+/** Replaces the local cache with the account's saved preferences. */
+export function applyServerPrefs(server: ServerPrefs | undefined) {
+  if (!server) return;
+  cachePrefs({
+    defaultView: server.defaultView === "calendar" ? "Calendar" : "Daily",
+    weekStart: server.weekStart === "monday" ? "Monday" : "Sunday",
+    carryOver: server.carryOver,
+  });
 }
 
 /** weekStartsOn value for date-fns (0 = Sunday, 1 = Monday). */

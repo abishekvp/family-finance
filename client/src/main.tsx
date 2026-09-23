@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import App from "./App";
 import { AuthProvider } from "./context/AuthContext";
+import { SecurityProvider } from "./context/SecurityContext";
 import { ThemeProvider } from "./lib/theme";
 import { InstallProvider } from "./lib/install";
 import { ToastProvider } from "./components/ui";
@@ -18,7 +19,9 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
           <Aurora />
           <BrowserRouter>
             <AuthProvider>
-              <App />
+              <SecurityProvider>
+                <App />
+              </SecurityProvider>
             </AuthProvider>
           </BrowserRouter>
         </ToastProvider>

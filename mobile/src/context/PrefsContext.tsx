@@ -1,5 +1,7 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import * as SecureStore from "expo-secure-store";
+import { api } from "../api/client";
+import { useAuth, type ServerPrefs } from "./AuthContext";
 
 export type LandingView = "daily" | "calendar";
 export type WeekStart = "sunday" | "monday";
@@ -10,12 +12,14 @@ export interface Prefs {
   carryOver: boolean;
 }
 
-const PREFS_KEY = "prefs:v1";
+// SecureStore keys may only contain [A-Za-z0-9._-]. The old "prefs:v1" key made every read and
+// write throw (silently caught), so preferences never survived an app restart.
+const PREFS_KEY = "familyFinance.prefs";
 
 export const DEFAULT_PREFS: Prefs = {
   landingView: "daily",
   weekStart: "sunday",
-  carryOver: false,
+  carryOver: true,
 };
 
 interface PrefsContextValue {
@@ -30,19 +34,35 @@ function isValidPrefs(value: unknown): value is Partial<Prefs> {
   return typeof value === "object" && value !== null;
 }
 
+function fromServer(server: ServerPrefs): Prefs {
+  return { landingView: server.defaultView, weekStart: server.weekStart, carryOver: server.carryOver };
+}
+
+/**
+ * Preferences live on the account (so the web app and this app agree); SecureStore is a local
+ * cache so the right values show instantly on launch and offline.
+ */
 export function PrefsProvider({ children }: { children: ReactNode }) {
-  const [prefs, setPrefs] = useState<Prefs>(DEFAULT_PREFS);
-  const [isLoading, setIsLoading] = useState(true);
+  const { user } = useAuth();
+  const [prefs, setPrefs] = useState<Prefs>(() => (user?.preferences ? fromServer(user.preferences) : DEFAULT_PREFS));
+  const [isLoading, setIsLoading] = useState(!user?.preferences);
+  const prefsRef = useRef(prefs);
+  prefsRef.current = prefs;
 
   useEffect(() => {
+    if (user?.preferences) {
+      const next = fromServer(user.preferences);
+      setPrefs(next);
+      setIsLoading(false);
+      SecureStore.setItemAsync(PREFS_KEY, JSON.stringify(next)).catch(() => undefined);
+      return;
+    }
     (async () => {
       try {
         const raw = await SecureStore.getItemAsync(PREFS_KEY);
         if (raw) {
           const parsed: unknown = JSON.parse(raw);
-          if (isValidPrefs(parsed)) {
-            setPrefs({ ...DEFAULT_PREFS, ...parsed });
-          }
+          if (isValidPrefs(parsed)) setPrefs({ ...DEFAULT_PREFS, ...parsed });
         }
       } catch {
         // Corrupt or missing prefs blob — fall back to defaults silently.
@@ -50,14 +70,18 @@ export function PrefsProvider({ children }: { children: ReactNode }) {
         setIsLoading(false);
       }
     })();
-  }, []);
+  }, [user?.preferences]);
 
   const updatePrefs = useCallback(async (patch: Partial<Prefs>) => {
-    setPrefs((current) => {
-      const next = { ...current, ...patch };
-      SecureStore.setItemAsync(PREFS_KEY, JSON.stringify(next)).catch(() => undefined);
-      return next;
-    });
+    const next = { ...prefsRef.current, ...patch };
+    prefsRef.current = next;
+    setPrefs(next);
+    await SecureStore.setItemAsync(PREFS_KEY, JSON.stringify(next)).catch(() => undefined);
+    const body: Partial<ServerPrefs> = {};
+    if (patch.landingView) body.defaultView = patch.landingView;
+    if (patch.weekStart) body.weekStart = patch.weekStart;
+    if (patch.carryOver !== undefined) body.carryOver = patch.carryOver;
+    await api.put("/auth/me/preferences", body).catch(() => undefined);
   }, []);
 
   const value = useMemo(() => ({ prefs, isLoading, updatePrefs }), [prefs, isLoading, updatePrefs]);

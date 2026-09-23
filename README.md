@@ -133,6 +133,31 @@ fixed filenames, so re-running it always replaces the previous build at the same
 page and the mobile app's update prompt; without `ASSET_STORE_ID` configured it falls back to
 serving a static `client/public/downloads/family-finance.apk` if one has been committed there.
 
+For a full release, run `npm run build:all -- --notes "What changed"` from the repo root instead:
+it builds the web app, bumps `expo.version` (patch by default; `--bump minor|major`) and
+`expo.android.versionCode` in `mobile/app.json`, then runs the Android build + upload above with
+those notes attached. Without `--notes` it prompts for them. If the Android build fails, the
+version bump is rolled back. Commit `mobile/app.json` afterwards.
+
+Installed apps check for a newer build on launch and when returning to the foreground (Settings →
+App updates also has a manual "Check for updates"). When one exists they post an "Update available"
+notification and show a prompt with the release notes; "Update now" downloads the APK in-app and
+hands it to Android's package installer.
+
+### Recording transactions from SMS (Android)
+
+More → SMS transactions is an opt-in switch that reads bank, card and UPI alerts from the phone's
+inbox and records each as a transaction (tagged `sms`). It runs on launch, whenever the app returns
+to the foreground, and on "Scan now"; it only reads messages newer than the last scan, skips OTPs,
+reminders, money requests and promotions, and drops the same spend alerted twice within 10 minutes.
+Card/account last digits seen in alerts can be mapped to app accounts; everything else goes to the
+default account. Payee → category is learned from the family's existing transactions.
+
+The native reader is a local Expo module in `mobile/modules/sms-reader` (autolinked; it adds the
+`READ_SMS` permission to the manifest), and the parser is `mobile/src/lib/smsParser.ts`. It needs
+a native build — it isn't available in Expo Go. `READ_SMS` is restricted on Google Play, which is
+fine for the sideloaded APK but would need Google's SMS-permission declaration to publish there.
+
 ## Deploying
 
 ### Vercel (the default `EXPO_PUBLIC_API_URL` target)
@@ -149,6 +174,26 @@ static `client/dist` build. To deploy:
 4. Deploy. The mobile app's default `EXPO_PUBLIC_API_URL` expects
    `https://finance-family-manager.vercel.app` — update `mobile/src/api/client.ts` if the
    project's domain ever changes.
+
+### Sign-in, email and security configuration
+
+All optional — each feature reports a clear "not configured" error until its variables are set.
+See `.env.example` for the full list.
+
+| Feature | Variables | Notes |
+| --- | --- | --- |
+| Public URL | `PUBLIC_APP_URL` | e.g. `https://finance-family-manager.vercel.app`. Used for OAuth redirect URIs and the WebAuthn RP ID. |
+| Email (forgot password, email change) | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM` | Any SMTP provider (Gmail app password, Resend, SES…). In development without SMTP, codes are printed to the server log. |
+| Sign in with Google | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Google Cloud → OAuth client of type **Web application**, authorized redirect URI `${PUBLIC_APP_URL}/api/auth/oauth/google/callback`. Serves web and the Android app. |
+| Sign in with Microsoft | `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET`, `MICROSOFT_TENANT` (default `common`) | Entra ID app registration, **Web** platform redirect URI `${PUBLIC_APP_URL}/api/auth/oauth/microsoft/callback`. |
+| Passkeys in the Android app | `ANDROID_CERT_SHA256` | SHA-256 fingerprint(s) of the APK signing certificate (`keytool -list -v -keystore mobile/android/app/debug.keystore -alias androiddebugkey -storepass android`). Published at `/.well-known/assetlinks.json`. Web passkeys need nothing extra. |
+
+**End-to-end encryption.** Account → Security lets a member set a master password. An admin can
+then encrypt the family: transaction payees and notes are encrypted on-device with a family key
+that is sealed to each member's key pair. The server stores only ciphertext and can't read them.
+Amounts, dates and categories stay in plaintext so balances and budgets still compute server-side.
+The master password can't be recovered: a member who resets it gets the family key re-shared the
+next time another member unlocks the app.
 
 ### Self-hosted (single Node process)
 

@@ -7,6 +7,7 @@ import { useTheme } from "../src/context/ThemeContext";
 import { getErrorMessage } from "../src/api/errors";
 import { Button, ErrorText, Field, IconButton, Input, ProgressBar } from "../src/components/ui";
 import { Logo } from "../src/components/Logo";
+import { SocialSignIn } from "../src/components/SocialSignIn";
 
 function scorePassword(password: string) {
   let score = 0;
@@ -86,6 +87,10 @@ export default function Register() {
             <ErrorText>{error}</ErrorText>
 
             <Button title={isSubmitting ? "Creating account…" : "Create account"} size="lg" loading={isSubmitting} onPress={handleSubmit} />
+          </View>
+
+          <View style={{ marginTop: 24 }}>
+            <SocialSignIn />
           </View>
 
           <View style={{ flexDirection: "row", justifyContent: "center", marginTop: 24 }}>
