@@ -19,6 +19,7 @@
     "start": "npm run start --workspace server",
     "prisma:generate": "npm run prisma:generate --workspace server",
     "prisma:migrate": "npm run prisma:migrate --workspace server",
+    "prisma:deploy": "npm run prisma:deploy --workspace server",
     "prisma:studio": "npm run prisma:studio --workspace server"
   },
   "devDependencies": {
