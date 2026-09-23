@@ -8,7 +8,8 @@ import { useTheme } from "../context/ThemeContext";
 import { Button, Sheet } from "./ui";
 
 const DISMISSED_VERSION_KEY = "familyFinance.dismissedUpdateVersion";
-// Strips the "/api" suffix API_BASE_URL carries so we can resolve the server-relative apkUrl.
+// Strips the "/api" suffix API_BASE_URL carries; used as the base to resolve apkUrl when it's
+// the local dev fallback path rather than a full Vercel Blob URL.
 const SERVER_ORIGIN = API_BASE_URL.replace(/\/api\/?$/, "");
 
 function isNewer(remote: string, local: string): boolean {
@@ -58,7 +59,10 @@ export function UpdateChecker() {
   }
 
   function update() {
-    if (available) Linking.openURL(SERVER_ORIGIN + available.apkUrl).catch(() => undefined);
+    // apkUrl is a full Vercel Blob URL once a release has been published (see
+    // server/src/routes/app.ts), or the local dev fallback path otherwise —
+    // `new URL` resolves either against SERVER_ORIGIN without doubling up.
+    if (available) Linking.openURL(new URL(available.apkUrl, SERVER_ORIGIN).toString()).catch(() => undefined);
     setAvailable(null);
   }
 

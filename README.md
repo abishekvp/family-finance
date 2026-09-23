@@ -115,9 +115,23 @@ native codegen for react-native-gesture-handler/rnscreens/rnsvg with "Filename l
 characters". `mobile/android/app/build.gradle` already redirects the CMake staging directory to
 `%USERPROFILE%\ffcxx` to avoid this — no action needed unless you've customized that file.
 
-The APK lands at `mobile/android/app/build/outputs/apk/release/app-release.apk`. Copy it to
-`client/public/downloads/family-finance.apk` and rebuild the client so `/get-the-app` can serve
-it for download.
+The APK lands at `mobile/android/app/build/outputs/apk/release/app-release.apk`.
+
+**Publishing it** (so `/get-the-app` and the in-app update checker pick it up — no server
+redeploy needed): set `ASSET_STORE_ID` and `BLOB_READ_WRITE_TOKEN` from a
+[Vercel Blob store](https://vercel.com/dashboard/stores) in the repo-root `.env`, then run the
+release build through npm so the postbuild hook uploads it automatically:
+
+```bash
+cd mobile
+npm run build:android:release   # runs the gradlew command above, then uploads to Vercel Blob
+```
+
+That uploads the APK plus a small version manifest (read from `app.json`) to Blob storage under
+fixed filenames, so re-running it always replaces the previous build at the same URL. `GET
+/api/app/version` (`server/src/routes/app.ts`) reads the manifest to answer both the web download
+page and the mobile app's update prompt; without `ASSET_STORE_ID` configured it falls back to
+serving a static `client/public/downloads/family-finance.apk` if one has been committed there.
 
 ## Deploying
 
