@@ -41,7 +41,6 @@ export default function AppLayout() {
               <Stack.Screen name="sms-import" options={{ headerShown: true, title: "SMS transactions" }} />
               <Stack.Screen name="lending" options={{ headerShown: true, title: "Lend & borrow" }} />
               <Stack.Screen name="lending-person" options={{ headerShown: true, title: "Lend & borrow" }} />
-              <Stack.Screen name="lending-form" options={{ presentation: "modal", headerShown: true, title: "Lend & borrow" }} />
               <Stack.Screen
                 name="transaction-form"
                 options={{ presentation: "modal", headerShown: true, title: "Transaction" }}

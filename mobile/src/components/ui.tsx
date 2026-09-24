@@ -208,7 +208,11 @@ export function Button({
   return (
     <Pressable disabled={isDisabled} onPress={handlePress} {...props}>
       {({ pressed }) => (
-        <View style={[baseStyle, variantStyle, style as ViewStyle, pressed && !isDisabled && { opacity: 0.75 }]}>
+        // collapsable={false}: a transparent button is flattened out of the native tree until its
+        // opacity changes (disabled, pressed), and Android then re-parents the icon inside it. If that
+        // lands while the screen is closing — e.g. the edit form's Delete button re-enabling after a
+        // save — Fabric throws "The specified child already has a parent" and the app crashes.
+        <View collapsable={false} style={[baseStyle, variantStyle, style as ViewStyle, pressed && !isDisabled && { opacity: 0.75 }]}>
           {content}
         </View>
       )}
@@ -235,7 +239,9 @@ export function IconButton({
   return (
     <Pressable disabled={disabled} onPress={handlePress} hitSlop={8} {...props}>
       {({ pressed }) => (
+        // Never flattened, for the same reason as Button's inner view.
         <View
+          collapsable={false}
           style={{
             width: size,
             height: size,
@@ -596,10 +602,16 @@ export function Segmented<T extends string>({
                 borderRadius: RADIUS.md,
                 backgroundColor: active ? colors.surface : "transparent",
               },
-              fullWidth && { flex: 1, alignItems: "center" },
+              fullWidth && { flex: 1, alignItems: "center", paddingHorizontal: 6 },
             ]}
           >
-            <Text style={{ fontSize: 13, fontWeight: "700", color: active ? colors.brand600 : colors.inkMuted }}>
+            {/* One line, shrinking slightly if a label is long for its share of the row. */}
+            <Text
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.8}
+              style={{ fontSize: 13, fontWeight: "700", color: active ? colors.brand600 : colors.inkMuted }}
+            >
               {opt.label}
             </Text>
           </Pressable>

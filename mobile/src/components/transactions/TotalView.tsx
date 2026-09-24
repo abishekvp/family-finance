@@ -7,6 +7,7 @@ import type { Account, Budget, Transaction } from "../../api/types";
 import { useTheme } from "../../context/ThemeContext";
 import { Button, Card, CardHeader, Dot, ErrorText, Money, ProgressBar } from "../ui";
 import { safePercent } from "../../lib/format";
+import { localDateInput } from "../../lib/dateUtils";
 import { getErrorMessage } from "../../api/errors";
 import { CarryOverRow } from "./CarryOverRow";
 
@@ -76,7 +77,7 @@ export function TotalView({
   async function handleExport() {
     const header = "date,type,account,category,payee,amount,notes";
     const rows = transactions.map((t) =>
-      [t.date.slice(0, 10), t.type, t.account.name, t.category?.name ?? "", t.payee ?? "", t.amount.toFixed(2), (t.notes ?? "").replace(/[\r\n,]/g, " ")]
+      [localDateInput(new Date(t.date)), t.type, t.account.name, t.category?.name ?? "", t.payee ?? "", t.amount.toFixed(2), (t.notes ?? "").replace(/[\r\n,]/g, " ")]
         .map((field) => `"${String(field).replace(/"/g, '""')}"`)
         .join(",")
     );

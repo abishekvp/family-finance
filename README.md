@@ -195,13 +195,21 @@ declared in its own manifest, since `android/` is generated):
 
 ### Lend & borrow
 
-More → Lend & borrow tracks money lent to or borrowed from friends and relatives, including a friend
-paying for something of yours that you'll pay back. Each person is an account of type `PERSON`
-(private unless shared with the family) whose balance is what they owe you (positive) or what you owe
-them (negative). Lending, borrowing and repayments are recorded as transfers between your account and
-the person, so balances stay right while none of it counts as income or expense; "paid for
-something" is an ordinary expense posted to the person's account. People are left out of the account
-chips for income and expenses (and SMS mapping), and count toward liabilities when you owe them. The
+Money lent to or borrowed from friends and relatives, and what has come back. Each person is an
+account of type `PERSON` (private unless shared with the family) whose balance is what they owe you
+(positive) or what you owe them (negative). Entries are recorded from the transaction form's
+**Lend/Borrow** type — *Lent*, *Borrowed*, *Got back* or *Paid back* — as transfers between one of
+your accounts and the person, so balances stay right while none of it counts as income, expense or
+budget spending. Any existing transaction can be switched to Lend/Borrow when editing it. A
+lend/borrow entry may carry a category (what it was for; the server only allows one on a transfer
+with a person) and a "return by" date (`Transaction.dueDate`); the kind is stored as a
+`lending:<kind>` tag. "Paid for something" on a person is an ordinary expense posted to their account.
+
+More → Lend & borrow lists people with open balances, their next return date and an Overdue flag.
+A person's screen splits the history into loans (`trackLoans` in `mobile/src/lib/lending.ts`): money
+moving one way first repays the oldest open loans in the other direction, so each loan shows how much
+has been returned, what's left and whether it's overdue. People are left out of the account chips for
+income, expenses and transfers (and SMS mapping), and count toward liabilities when you owe them. The
 web app shows them under Accounts → Lend & borrow and can add them as a "Person" account.
 
 ## Deploying

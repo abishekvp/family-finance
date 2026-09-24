@@ -60,6 +60,8 @@ export interface Transaction {
   payee: string | null;
   notes: string | null;
   tags: string[];
+  /** When money lent to or borrowed from a person is expected back. */
+  dueDate: string | null;
   createdAt: string;
   updatedAt: string;
   account: { id: string; name: string; currency: string };

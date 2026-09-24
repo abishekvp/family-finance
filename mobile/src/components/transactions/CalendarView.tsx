@@ -5,7 +5,7 @@ import type { Account, Transaction } from "../../api/types";
 import { useTheme } from "../../context/ThemeContext";
 import { EmptyState, Money } from "../ui";
 import type { WeekStart } from "../../context/PrefsContext";
-import { weekStartsOn } from "../../lib/dateUtils";
+import { localDateInput, weekStartsOn } from "../../lib/dateUtils";
 import { CarryOverRow } from "./CarryOverRow";
 import { TransactionRow } from "./TransactionRow";
 
@@ -43,7 +43,7 @@ export function CalendarView({
   const totalsByDay = useMemo(() => {
     const map = new Map<string, { income: number; expense: number }>();
     for (const t of transactions) {
-      const key = t.date.slice(0, 10);
+      const key = localDateInput(new Date(t.date));
       const entry = map.get(key) ?? { income: 0, expense: 0 };
       if (t.type === "INCOME") entry.income += t.amount;
       else if (t.type === "EXPENSE") entry.expense += t.amount;
@@ -67,7 +67,7 @@ export function CalendarView({
 
   const todayKey = dayKey(new Date());
   const selectedTransactions = selectedDay
-    ? transactions.filter((t) => t.date.slice(0, 10) === selectedDay).sort((a, b) => (a.date < b.date ? 1 : -1))
+    ? transactions.filter((t) => localDateInput(new Date(t.date)) === selectedDay).sort((a, b) => (a.date < b.date ? 1 : -1))
     : [];
 
   return (

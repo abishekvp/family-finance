@@ -1,16 +1,20 @@
-import { useCallback, useLayoutEffect, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useState, type ReactNode } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { useFocusEffect, useLocalSearchParams, useNavigation, useRouter } from "expo-router";
-import { ArrowDownLeft, ArrowUpRight, Pencil, ShoppingBag, Trash2 } from "lucide-react-native";
+import { ArrowDownLeft, ArrowUpRight, CheckCircle2, Pencil, ShoppingBag, Trash2 } from "lucide-react-native";
 import { api } from "../../src/api/client";
 import type { Account, Transaction } from "../../src/api/types";
 import { useAuth } from "../../src/context/AuthContext";
 import { useTheme } from "../../src/context/ThemeContext";
 import { getErrorMessage } from "../../src/api/errors";
-import { Avatar, Button, Card, ErrorText, Field, Input, Sheet, SkeletonRows } from "../../src/components/ui";
+import { Avatar, Badge, Button, Card, ErrorText, Field, Input, ProgressBar, Sheet, SkeletonRows } from "../../src/components/ui";
 import { formatCurrency } from "../../src/lib/format";
 import { href } from "../../src/lib/nav";
-import { describeBalance, describeEntry, isSettled, type LendingKind } from "../../src/lib/lending";
+import { describeBalance, describeEntry, isSettled, trackLoans, type LendingKind, type Loan } from "../../src/lib/lending";
+
+function formatDay(date: Date) {
+  return date.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+}
 
 export default function LendingPerson() {
   const { user } = useAuth();
@@ -56,8 +60,23 @@ export default function LendingPerson() {
     navigation.setOptions({ title: person?.name ?? "Lend & borrow" });
   }, [navigation, person?.name]);
 
+  const loans = useMemo(() => (person ? trackLoans(history, person) : []), [history, person]);
+  const openLoans = loans.filter((l) => !l.settled);
+  const returnedLoans = loans.filter((l) => l.settled);
+
   function record(kind: LendingKind, amount?: number) {
-    router.push(href("/lending-form", { kind, personId: id, ...(amount ? { amount: String(Number(amount.toFixed(2))) } : {}) }));
+    router.push(
+      href("/transaction-form", {
+        type: "LENDING",
+        kind,
+        personId: id,
+        ...(amount ? { amount: String(Number(amount.toFixed(2))) } : {}),
+      })
+    );
+  }
+
+  function openTransaction(t: Transaction) {
+    router.push(href("/transaction-form", { id: t.id, transaction: JSON.stringify(t) }));
   }
 
   async function handleRemove() {
@@ -68,7 +87,6 @@ export default function LendingPerson() {
     } catch (err) {
       setError(getErrorMessage(err, "Unable to remove"));
       setConfirmRemove(false);
-    } finally {
       setIsRemoving(false);
     }
   }
@@ -92,6 +110,7 @@ export default function LendingPerson() {
   const balance = person.balance;
   const settled = isSettled(balance);
   const theyOwe = balance > 0;
+  const overdue = openLoans.filter((l) => l.overdue).reduce((sum, l) => sum + l.remaining, 0);
 
   return (
     <ScrollView style={{ backgroundColor: colors.canvas }} contentContainerStyle={{ padding: 16, gap: 16 }}>
@@ -107,6 +126,12 @@ export default function LendingPerson() {
         >
           {describeBalance(person.name, balance, person.currency)}
         </Text>
+        {overdue > 0 && (
+          // Badge aligns itself to the start; the wrapper keeps it centred in the card.
+          <View>
+            <Badge tone="expense">{`${formatCurrency(overdue, person.currency)} overdue`}</Badge>
+          </View>
+        )}
         {!person.owner && <Text style={{ fontSize: 12, color: colors.inkSubtle }}>Shared with your family</Text>}
       </Card>
 
@@ -115,32 +140,20 @@ export default function LendingPerson() {
       {canRecord && (
         <View style={{ gap: 10 }}>
           {settled ? (
-            <View style={{ flexDirection: "row", gap: 10 }}>
-              <View style={{ flex: 1 }}>
-                <Button title="Lend" icon={<ArrowUpRight size={16} color={colors.white} />} onPress={() => record("gave")} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Button title="Borrow" variant="secondary" icon={<ArrowDownLeft size={16} color={colors.ink} />} onPress={() => record("got")} />
-              </View>
-            </View>
+            <ButtonPair
+              primary={{ title: "Lend", icon: "out", onPress: () => record("lent") }}
+              secondary={{ title: "Borrow", icon: "in", onPress: () => record("borrowed") }}
+            />
           ) : theyOwe ? (
-            <View style={{ flexDirection: "row", gap: 10 }}>
-              <View style={{ flex: 1 }}>
-                <Button title="Got paid back" icon={<ArrowDownLeft size={16} color={colors.white} />} onPress={() => record("got", balance)} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Button title="Lend more" variant="secondary" icon={<ArrowUpRight size={16} color={colors.ink} />} onPress={() => record("gave")} />
-              </View>
-            </View>
+            <ButtonPair
+              primary={{ title: "Got paid back", icon: "in", onPress: () => record("got-back", balance) }}
+              secondary={{ title: "Lend more", icon: "out", onPress: () => record("lent") }}
+            />
           ) : (
-            <View style={{ flexDirection: "row", gap: 10 }}>
-              <View style={{ flex: 1 }}>
-                <Button title="Pay back" icon={<ArrowUpRight size={16} color={colors.white} />} onPress={() => record("gave", -balance)} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Button title="Borrow more" variant="secondary" icon={<ArrowDownLeft size={16} color={colors.ink} />} onPress={() => record("got")} />
-              </View>
-            </View>
+            <ButtonPair
+              primary={{ title: "Pay back", icon: "out", onPress: () => record("paid-back", -balance) }}
+              secondary={{ title: "Borrow more", icon: "in", onPress: () => record("borrowed") }}
+            />
           )}
           <Button
             title={`${person.name} paid for something`}
@@ -151,24 +164,37 @@ export default function LendingPerson() {
         </View>
       )}
 
-      <View style={{ gap: 8 }}>
-        <Text style={{ fontSize: 12, fontWeight: "800", color: colors.inkSubtle, textTransform: "uppercase", paddingHorizontal: 2 }}>History</Text>
+      {openLoans.length > 0 && (
+        <Section title="Waiting to be returned">
+          <Card style={{ padding: 0 }}>
+            {openLoans.map((loan, i) => (
+              <LoanRow key={i} loan={loan} currency={person.currency} first={i === 0} onPress={loan.transaction ? () => openTransaction(loan.transaction!) : undefined} />
+            ))}
+          </Card>
+        </Section>
+      )}
+
+      {returnedLoans.length > 0 && (
+        <Section title="Returned">
+          <Card style={{ padding: 0 }}>
+            {returnedLoans.map((loan, i) => (
+              <LoanRow key={i} loan={loan} currency={person.currency} first={i === 0} onPress={loan.transaction ? () => openTransaction(loan.transaction!) : undefined} />
+            ))}
+          </Card>
+        </Section>
+      )}
+
+      <Section title="History">
         {history.length === 0 ? (
           <Text style={{ color: colors.inkSubtle, fontSize: 13, paddingHorizontal: 2 }}>Nothing recorded yet.</Text>
         ) : (
           <Card style={{ padding: 0 }}>
             {history.map((t, i) => (
-              <HistoryRow
-                key={t.id}
-                transaction={t}
-                personId={person.id}
-                first={i === 0}
-                onPress={() => router.push(href("/transaction-form", { id: t.id, transaction: JSON.stringify(t) }))}
-              />
+              <HistoryRow key={t.id} transaction={t} personId={person.id} first={i === 0} onPress={() => openTransaction(t)} />
             ))}
           </Card>
         )}
-      </View>
+      </Section>
 
       {canRecord && (
         <View style={{ gap: 10, marginTop: 8 }}>
@@ -209,12 +235,95 @@ export default function LendingPerson() {
   );
 }
 
+function Section({ title, children }: { title: string; children: ReactNode }) {
+  const { colors } = useTheme();
+  return (
+    <View style={{ gap: 8 }}>
+      <Text style={{ fontSize: 12, fontWeight: "800", color: colors.inkSubtle, textTransform: "uppercase", paddingHorizontal: 2 }}>{title}</Text>
+      {children}
+    </View>
+  );
+}
+
+type PairButton = { title: string; icon: "in" | "out"; onPress: () => void };
+
+function ButtonPair({ primary, secondary }: { primary: PairButton; secondary: PairButton }) {
+  const { colors } = useTheme();
+  const icon = (dir: "in" | "out", color: string) =>
+    dir === "out" ? <ArrowUpRight size={16} color={color} /> : <ArrowDownLeft size={16} color={color} />;
+  return (
+    <View style={{ flexDirection: "row", gap: 10 }}>
+      <View style={{ flex: 1 }}>
+        <Button title={primary.title} icon={icon(primary.icon, colors.white)} onPress={primary.onPress} />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Button title={secondary.title} variant="secondary" icon={icon(secondary.icon, colors.ink)} onPress={secondary.onPress} />
+      </View>
+    </View>
+  );
+}
+
+/** One loan and how much of it has come back. */
+function LoanRow({ loan, currency, first, onPress }: { loan: Loan; currency: string; first: boolean; onPress?: () => void }) {
+  const { colors } = useTheme();
+  const lent = loan.direction === "lent";
+  const title = loan.transaction
+    ? `${lent ? "You lent" : "You borrowed"} ${formatCurrency(loan.amount, currency)}`
+    : `${lent ? "They owed you" : "You owed"} ${formatCurrency(loan.amount, currency)} to start`;
+  const detail = [formatDay(loan.date), loan.transaction?.category?.name, loan.transaction?.notes].filter(Boolean).join(" · ");
+
+  let status: string;
+  if (loan.settled) status = "Fully returned";
+  else if (loan.returned > 0) status = `${formatCurrency(loan.returned, currency)} returned · ${formatCurrency(loan.remaining, currency)} left`;
+  else status = `${formatCurrency(loan.remaining, currency)} left`;
+
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={!onPress}
+      style={({ pressed }) => [
+        { padding: 14, gap: 8, borderTopWidth: first ? 0 : 1, borderTopColor: colors.line },
+        pressed && { backgroundColor: colors.surfaceSunken },
+      ]}
+    >
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+        {loan.settled ? (
+          <CheckCircle2 size={18} color={colors.income} />
+        ) : lent ? (
+          <ArrowUpRight size={18} color={colors.inkMuted} />
+        ) : (
+          <ArrowDownLeft size={18} color={colors.inkMuted} />
+        )}
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={{ fontWeight: "700", color: colors.ink }} numberOfLines={1}>
+            {title}
+          </Text>
+          {detail ? (
+            <Text style={{ fontSize: 12, color: colors.inkSubtle, marginTop: 2 }} numberOfLines={1}>
+              {detail}
+            </Text>
+          ) : null}
+        </View>
+      </View>
+      {!loan.settled && <ProgressBar value={loan.returned / loan.amount} tone={lent ? "income" : "expense"} />}
+      <View style={{ flexDirection: "row", justifyContent: "space-between", gap: 8 }}>
+        <Text style={{ fontSize: 12, color: loan.settled ? colors.income : colors.inkMuted, fontWeight: "600" }}>{status}</Text>
+        {!loan.settled && loan.dueDate && (
+          <Text style={{ fontSize: 12, fontWeight: "700", color: loan.overdue ? colors.expense : colors.inkMuted }}>
+            {loan.overdue ? `Overdue since ${formatDay(loan.dueDate)}` : `Return by ${formatDay(loan.dueDate)}`}
+          </Text>
+        )}
+      </View>
+    </Pressable>
+  );
+}
+
 function HistoryRow({ transaction, personId, first, onPress }: { transaction: Transaction; personId: string; first: boolean; onPress: () => void }) {
   const { colors } = useTheme();
   const { effect, label, detail } = describeEntry(transaction, personId);
   const isExpense = transaction.type === "EXPENSE";
   const Icon = isExpense ? ShoppingBag : transaction.type === "TRANSFER" && transaction.transferToAccountId === personId ? ArrowUpRight : ArrowDownLeft;
-  const date = new Date(transaction.date).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+  const date = formatDay(new Date(transaction.date));
 
   return (
     <Pressable
@@ -232,7 +341,7 @@ function HistoryRow({ transaction, personId, first, onPress }: { transaction: Tr
           {label}
         </Text>
         <Text style={{ fontSize: 12, color: colors.inkSubtle, marginTop: 2 }} numberOfLines={1}>
-          {[date, detail].filter(Boolean).join(" · ")}
+          {[date, transaction.category?.name, detail].filter(Boolean).join(" · ")}
         </Text>
         {transaction.notes ? (
           <Text style={{ fontSize: 12, color: colors.inkMuted, marginTop: 2 }} numberOfLines={2}>

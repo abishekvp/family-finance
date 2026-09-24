@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { Prisma, Role, TransactionStatus, TransactionType } from "@prisma/client";
+import { AccountType, Prisma, Role, TransactionStatus, TransactionType } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { asyncHandler, AppError } from "../middleware/errorHandler";
 import { requireAuth, requireFamilyRole } from "../middleware/auth";
@@ -32,6 +32,7 @@ function serializeTransaction(t: TransactionWithRelations) {
     payee: t.payee,
     notes: t.notes,
     tags: t.tags,
+    dueDate: t.dueDate ? t.dueDate.toISOString() : null,
     createdAt: t.createdAt.toISOString(),
     updatedAt: t.updatedAt.toISOString(),
     account: t.account,
@@ -82,7 +83,20 @@ async function resolveRelations(
     if (!isVisible(destAccount.ownerId, requesterId)) {
       throw new AppError(403, "Cannot post a transaction to another member's private account");
     }
-    return { categoryId: null, transferToAccountId: transferToAccountIdInput };
+    // Money lent to or borrowed from a person may say what it was for. It stays a transfer, so the
+    // category never counts toward spending, income or budgets. Plain transfers carry none.
+    const isLending = account.type === AccountType.PERSON || destAccount.type === AccountType.PERSON;
+    if (!isLending || !categoryIdInput) {
+      return { categoryId: null, transferToAccountId: transferToAccountIdInput };
+    }
+    const category = await prisma.category.findFirst({
+      where: { id: categoryIdInput, familyId, isArchived: false },
+    });
+    if (!category) throw new AppError(404, "Category not found");
+    if (!isVisible(category.ownerId, requesterId)) {
+      throw new AppError(403, "Cannot use another member's private category");
+    }
+    return { categoryId: categoryIdInput, transferToAccountId: transferToAccountIdInput };
   }
 
   if (transferToAccountIdInput) {
@@ -184,6 +198,7 @@ const createTransactionSchema = z.object({
   notes: maybeEncryptedText(1000, 8192).nullable().optional(),
   status: transactionStatusSchema.optional(),
   tags: z.array(z.string()).optional(),
+  dueDate: z.string().datetime().nullable().optional(),
 });
 
 const updateTransactionSchema = createTransactionSchema.partial();
@@ -197,7 +212,7 @@ transactionsRouter.post(
     const parsed = createTransactionSchema.parse(req.body);
     await assertEncryptionPolicy(familyId, { payee: parsed.payee, notes: parsed.notes });
 
-    const categoryIdInput = parsed.type === TransactionType.TRANSFER ? null : parsed.categoryId ?? null;
+    const categoryIdInput = parsed.categoryId ?? null;
     const transferToAccountIdInput = parsed.transferToAccountId ?? null;
 
     const { categoryId, transferToAccountId } = await resolveRelations(
@@ -223,6 +238,7 @@ transactionsRouter.post(
         payee: parsed.payee ?? null,
         notes: parsed.notes ?? null,
         tags: parsed.tags ?? [],
+        dueDate: parsed.dueDate ? new Date(parsed.dueDate) : null,
       },
       include: TRANSACTION_INCLUDE,
     });
@@ -251,10 +267,8 @@ transactionsRouter.patch(
     const mergedType = parsed.type ?? existing.type;
     const mergedAccountId = parsed.accountId ?? existing.accountId;
 
-    let mergedCategoryId: string | null = "categoryId" in req.body ? parsed.categoryId ?? null : existing.categoryId;
-    if (mergedType === TransactionType.TRANSFER) {
-      mergedCategoryId = null;
-    }
+    // resolveRelations drops the category from a transfer that doesn't involve a person.
+    const mergedCategoryId: string | null = "categoryId" in req.body ? parsed.categoryId ?? null : existing.categoryId;
 
     const mergedTransferToAccountId: string | null =
       "transferToAccountId" in req.body ? parsed.transferToAccountId ?? null : existing.transferToAccountId;
@@ -274,6 +288,7 @@ transactionsRouter.patch(
     const mergedNotes = "notes" in req.body ? parsed.notes ?? null : existing.notes;
     const mergedStatus = parsed.status ?? existing.status;
     const mergedTags = parsed.tags ?? existing.tags;
+    const mergedDueDate = "dueDate" in req.body ? (parsed.dueDate ? new Date(parsed.dueDate) : null) : existing.dueDate;
 
     const updated = await prisma.transaction.update({
       where: { id: existing.id },
@@ -288,6 +303,7 @@ transactionsRouter.patch(
         notes: mergedNotes,
         status: mergedStatus,
         tags: mergedTags,
+        dueDate: mergedDueDate,
       },
       include: TRANSACTION_INCLUDE,
     });

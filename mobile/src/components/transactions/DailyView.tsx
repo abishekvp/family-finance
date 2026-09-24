@@ -6,9 +6,12 @@ import { useTheme } from "../../context/ThemeContext";
 import { EmptyState, Money } from "../ui";
 import { CarryOverRow } from "./CarryOverRow";
 import { TransactionRow } from "./TransactionRow";
+import { localDateInput } from "../../lib/dateUtils";
 
+// The local day, not dateStr.slice(0, 10): that is the UTC day, which files anything from local
+// midnight until the UTC offset (5:30 AM in India) under the previous day.
 function dayKey(dateStr: string) {
-  return dateStr.slice(0, 10);
+  return localDateInput(new Date(dateStr));
 }
 
 function dayLabel(key: string) {

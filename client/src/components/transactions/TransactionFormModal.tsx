@@ -152,7 +152,8 @@ export function TransactionFormModal({
         type: form.type,
         amount: Number(form.amount) || 0,
         date: form.date ? new Date(form.date).toISOString() : undefined,
-        categoryId: form.type === "TRANSFER" ? null : form.categoryId || null,
+        // A transfer only keeps a category when it lends to or borrows from a person (the server drops it otherwise).
+        categoryId: form.categoryId || null,
         transferToAccountId: form.type === "TRANSFER" ? form.transferToAccountId : null,
         payee: form.payee.trim() || null,
         notes: form.notes.trim() || null,

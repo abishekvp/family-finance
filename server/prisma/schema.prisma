@@ -328,6 +328,8 @@ model Transaction {
   payee               String?
   notes               String?
   tags                String[]          @default([])
+  // When money lent to or borrowed from a person (a transfer to/from a PERSON account) is expected back.
+  dueDate             DateTime?
   isDeleted           Boolean           @default(false)
   deletedAt           DateTime?
   createdAt           DateTime          @default(now())
