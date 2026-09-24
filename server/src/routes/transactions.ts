@@ -150,7 +150,8 @@ transactionsRouter.get(
       where: {
         familyId,
         isDeleted: false,
-        ...(accountId ? { accountId } : {}),
+        // Both legs: what the account paid out and the transfers that landed on it.
+        ...(accountId ? { OR: [{ accountId }, { transferToAccountId: accountId }] } : {}),
         ...(categoryId ? { categoryId } : {}),
         ...(type ? { type } : {}),
         ...(from || to

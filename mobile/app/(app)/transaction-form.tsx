@@ -12,6 +12,7 @@ import { CategoryPicker } from "../../src/components/CategoryPicker";
 import { currencySymbol } from "../../src/lib/format";
 import { localDateInput } from "../../src/lib/dateUtils";
 import { href } from "../../src/lib/nav";
+import { isPerson } from "../../src/lib/lending";
 import { refreshTodayWidget } from "../../src/lib/todayWidget";
 import { moveToBackground } from "../../modules/home-widgets";
 
@@ -37,9 +38,8 @@ export default function TransactionForm() {
   const family = user!.families[0];
   const router = useRouter();
   const navigation = useNavigation();
-  // `type` presets a new transaction; `source=widget` marks a home-screen quick add.
-  const params = useLocalSearchParams<{ id?: string; transaction?: string; type?: string; source?: string }>();
-  const fromWidget = params.source === "widget";
+  // `type` and `accountId` preset a new transaction; `source=widget` marks a home-screen quick add.
+  const params = useLocalSearchParams<{ id?: string; transaction?: string; type?: string; accountId?: string; source?: string }>();
 
   const initial = useMemo<Transaction | null>(() => {
     if (!params.transaction) return null;
@@ -50,6 +50,9 @@ export default function TransactionForm() {
     }
   }, [params.transaction]);
   const isEdit = !!initial;
+  // Only a new quick add can come from a widget. An edit is always opened from inside the app, and
+  // must never send the app to the background when it closes.
+  const fromWidget = params.source === "widget" && !isEdit;
 
   useLayoutEffect(() => {
     navigation.setOptions({ title: isEdit ? "Edit transaction" : "Add transaction" });
@@ -80,7 +83,7 @@ export default function TransactionForm() {
   }, [family.id]);
 
   const [type, setType] = useState<TransactionType>(initial?.type ?? parseType(params.type) ?? "EXPENSE");
-  const [accountId, setAccountId] = useState(initial?.accountId ?? "");
+  const [accountId, setAccountId] = useState(initial?.accountId ?? params.accountId ?? "");
   const [categoryId, setCategoryId] = useState<string | null>(initial?.categoryId ?? null);
   const [transferToAccountId, setTransferToAccountId] = useState<string | null>(initial?.transferToAccountId ?? null);
   const [amount, setAmount] = useState(initial ? String(initial.amount) : "");
@@ -96,12 +99,18 @@ export default function TransactionForm() {
   const canDelete = isEdit && family.role !== "VIEWER";
 
   useEffect(() => {
-    if (!accountId && accounts.length > 0) setAccountId(accounts[0].id);
+    if (accountId || accounts.length === 0) return;
+    // Start on a real account, never on a friend's lend & borrow tab.
+    setAccountId((accounts.find((a) => !isPerson(a)) ?? accounts[0]).id);
   }, [accounts, accountId]);
 
   const categoriesForType = categories.filter((c) => c.type === (type === "TRANSFER" ? "EXPENSE" : type));
+  // People are transfer ends (lend & borrow). For income and expenses they only show once chosen,
+  // e.g. from a person's "paid for something".
+  const sourceAccounts = accounts.filter((a) => !isPerson(a) || type === "TRANSFER" || a.id === accountId);
   const transferTargets = accounts.filter((a) => a.id !== accountId);
   const selectedAccount = accounts.find((a) => a.id === accountId);
+  const paidByPerson = selectedAccount && isPerson(selectedAccount) && type !== "TRANSFER" ? selectedAccount : null;
   const symbol = currencySymbol(selectedAccount?.currency ?? "USD");
 
   const amountValue = Number(amount);
@@ -264,11 +273,18 @@ export default function TransactionForm() {
           ) : (
             <ScrollView horizontal showsHorizontalScrollIndicator={false}>
               <View style={{ flexDirection: "row", gap: 8 }}>
-                {accounts.map((a) => (
+                {sourceAccounts.map((a) => (
                   <Chip key={a.id} label={a.name} selected={accountId === a.id} onPress={() => handleSelectAccount(a.id)} />
                 ))}
               </View>
             </ScrollView>
+          )}
+          {paidByPerson && (
+            <Text style={{ color: colors.inkSubtle, fontSize: 12, marginTop: 8 }}>
+              {type === "EXPENSE"
+                ? `${paidByPerson.name} paid, so this adds to what you owe them.`
+                : `${paidByPerson.name} received it for you, so this adds to what they owe you.`}
+            </Text>
           )}
         </Field>
 

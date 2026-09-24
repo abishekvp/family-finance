@@ -6,6 +6,10 @@ import { useTheme } from "../../src/context/ThemeContext";
 import { SecurityGate } from "../../src/components/SecurityGate";
 import { TodayWidgetSync } from "../../src/components/TodayWidgetSync";
 
+// A screen opened straight from a deep link (a home-screen widget's quick add) still gets the
+// tabs underneath it, so going back lands on the transactions list instead of leaving the app.
+export const unstable_settings = { initialRouteName: "(tabs)" };
+
 export default function AppLayout() {
   const { user } = useAuth();
   const { colors } = useTheme();
@@ -35,6 +39,9 @@ export default function AppLayout() {
               <Stack.Screen name="budgets" options={{ headerShown: true, title: "Budgets" }} />
               <Stack.Screen name="goals" options={{ headerShown: true, title: "Goals" }} />
               <Stack.Screen name="sms-import" options={{ headerShown: true, title: "SMS transactions" }} />
+              <Stack.Screen name="lending" options={{ headerShown: true, title: "Lend & borrow" }} />
+              <Stack.Screen name="lending-person" options={{ headerShown: true, title: "Lend & borrow" }} />
+              <Stack.Screen name="lending-form" options={{ presentation: "modal", headerShown: true, title: "Lend & borrow" }} />
               <Stack.Screen
                 name="transaction-form"
                 options={{ presentation: "modal", headerShown: true, title: "Transaction" }}

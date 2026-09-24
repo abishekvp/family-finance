@@ -1,0 +1,130 @@
+import { useCallback, useState } from "react";
+import { Pressable, ScrollView, Text, View } from "react-native";
+import { useFocusEffect, useRouter } from "expo-router";
+import { ArrowDownLeft, ArrowUpRight, ChevronRight, HandCoins } from "lucide-react-native";
+import { api } from "../../src/api/client";
+import type { Account } from "../../src/api/types";
+import { useAuth } from "../../src/context/AuthContext";
+import { useTheme } from "../../src/context/ThemeContext";
+import { getErrorMessage } from "../../src/api/errors";
+import { Avatar, Button, Card, EmptyState, ErrorText, Money, SkeletonRows, StatTile } from "../../src/components/ui";
+import { href } from "../../src/lib/nav";
+import { balanceStatus, isPerson, isSettled, lendingTotals } from "../../src/lib/lending";
+
+export default function Lending() {
+  const { user } = useAuth();
+  const { colors } = useTheme();
+  const family = user!.families[0];
+  const canRecord = family.role !== "VIEWER";
+  const router = useRouter();
+  const [people, setPeople] = useState<Account[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await api.get<Account[]>(`/families/${family.id}/accounts`);
+      setPeople(res.data.filter(isPerson));
+      setError(null);
+    } catch (err) {
+      setError(getErrorMessage(err, "Unable to load"));
+    } finally {
+      setIsLoading(false);
+    }
+  }, [family.id]);
+
+  useFocusEffect(
+    useCallback(() => {
+      load();
+    }, [load])
+  );
+
+  const { owedToYou, youOwe } = lendingTotals(people);
+  const open = people.filter((p) => !isSettled(p.balance)).sort((a, b) => Math.abs(b.balance) - Math.abs(a.balance));
+  const settled = people.filter((p) => isSettled(p.balance));
+
+  function record(kind: "gave" | "got") {
+    router.push(href("/lending-form", { kind }));
+  }
+
+  return (
+    <ScrollView style={{ backgroundColor: colors.canvas }} contentContainerStyle={{ padding: 16, gap: 16 }}>
+      <View style={{ flexDirection: "row", gap: 10 }}>
+        <StatTile label="Owed to you" value={owedToYou} currency={family.currency} tone="income" loading={isLoading} />
+        <StatTile label="You owe" value={youOwe} currency={family.currency} tone="expense" loading={isLoading} />
+      </View>
+
+      {canRecord && (
+        <View style={{ flexDirection: "row", gap: 10 }}>
+          <View style={{ flex: 1 }}>
+            <Button title="Lend" icon={<ArrowUpRight size={16} color={colors.white} />} onPress={() => record("gave")} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Button title="Borrow" variant="secondary" icon={<ArrowDownLeft size={16} color={colors.ink} />} onPress={() => record("got")} />
+          </View>
+        </View>
+      )}
+
+      <Text style={{ color: colors.inkSubtle, fontSize: 12, lineHeight: 17 }}>
+        Money you lend or borrow moves between your accounts and the person, so it changes your balances but never counts as
+        income or an expense.
+      </Text>
+
+      <ErrorText>{error}</ErrorText>
+
+      {isLoading ? (
+        <SkeletonRows rows={3} />
+      ) : people.length === 0 ? (
+        <EmptyState
+          icon={<HandCoins size={20} color={colors.brand600} />}
+          title="Nothing lent or borrowed"
+          description="Track money you lend to friends or borrow from them, and what's been paid back."
+        />
+      ) : (
+        <>
+          {open.length > 0 && <PeopleList title="Open" people={open} onPress={(p) => router.push(href("/lending-person", { id: p.id }))} />}
+          {settled.length > 0 && <PeopleList title="Settled up" people={settled} onPress={(p) => router.push(href("/lending-person", { id: p.id }))} />}
+        </>
+      )}
+    </ScrollView>
+  );
+}
+
+function PeopleList({ title, people, onPress }: { title: string; people: Account[]; onPress: (p: Account) => void }) {
+  const { colors } = useTheme();
+  return (
+    <View style={{ gap: 8 }}>
+      <Text style={{ fontSize: 12, fontWeight: "800", color: colors.inkSubtle, textTransform: "uppercase", paddingHorizontal: 2 }}>{title}</Text>
+      <Card style={{ padding: 0 }}>
+        {people.map((p, i) => {
+          const settled = isSettled(p.balance);
+          return (
+            <Pressable
+              key={p.id}
+              onPress={() => onPress(p)}
+              style={({ pressed }) => [
+                { flexDirection: "row", alignItems: "center", gap: 12, padding: 14, borderTopWidth: i === 0 ? 0 : 1, borderTopColor: colors.line },
+                pressed && { backgroundColor: colors.surfaceSunken },
+              ]}
+            >
+              <Avatar name={p.name} size={38} />
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={{ fontWeight: "700", color: colors.ink }} numberOfLines={1}>
+                  {p.name}
+                </Text>
+                <Text style={{ fontSize: 12, color: colors.inkSubtle, marginTop: 2 }}>
+                  {balanceStatus(p.balance)}
+                  {p.owner ? "" : " · Shared"}
+                </Text>
+              </View>
+              {!settled && (
+                <Money amount={Math.abs(p.balance)} currency={p.currency} tone={p.balance > 0 ? "income" : "expense"} style={{ fontWeight: "800" }} />
+              )}
+              <ChevronRight size={16} color={colors.inkSubtle} />
+            </Pressable>
+          );
+        })}
+      </Card>
+    </View>
+  );
+}

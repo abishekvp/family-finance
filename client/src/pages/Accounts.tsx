@@ -3,6 +3,7 @@ import { useOutletContext } from "react-router-dom";
 import {
   Banknote,
   CreditCard,
+  HandCoins,
   Landmark,
   LineChart,
   PiggyBank,
@@ -42,6 +43,7 @@ const GROUPS: { title: string; types: AccountType[] }[] = [
   { title: "Accounts", types: ["BANK", "SAVINGS", "INVESTMENT"] },
   { title: "Card", types: ["CREDIT_CARD", "DEBIT_CARD"] },
   { title: "Loans", types: ["LOAN"] },
+  { title: "Lend & borrow", types: ["PERSON"] },
 ];
 
 const TYPE_ICONS: Record<AccountType, LucideIcon> = {
@@ -52,7 +54,15 @@ const TYPE_ICONS: Record<AccountType, LucideIcon> = {
   DEBIT_CARD: CreditCard,
   INVESTMENT: LineChart,
   LOAN: Banknote,
+  PERSON: HandCoins,
 };
+
+/** What a person's tab means: a positive balance is money they owe you, a negative one money you owe them. */
+function personStatus(balance: number) {
+  if (balance > 0) return "Owes you";
+  if (balance < 0) return "You owe";
+  return "Settled up";
+}
 
 export function Accounts() {
   const { family, scope } = useOutletContext<LayoutContext>();
@@ -92,7 +102,8 @@ export function Accounts() {
   const totals = useMemo(() => {
     const total = scopedAccounts.reduce((s, a) => s + (a.balance ?? 0), 0);
     const liabilities = scopedAccounts.reduce((s, a) => {
-      if (a.type === "CREDIT_CARD" || a.type === "LOAN") {
+      // Money you owe a friend is a debt like any other.
+      if (a.type === "CREDIT_CARD" || a.type === "LOAN" || a.type === "PERSON") {
         return s + Math.max(0, -(a.balance ?? 0));
       }
       return s;
@@ -167,6 +178,7 @@ export function Accounts() {
                     const balance = account.balance ?? 0;
                     const creditLimit = account.creditLimit != null ? Number(account.creditLimit) : null;
                     const utilisation = account.type === "CREDIT_CARD" && creditLimit ? Math.max(0, -balance) : null;
+                    const isPerson = account.type === "PERSON";
                     return (
                       <li key={account.id} className="py-3">
                         <div className="flex items-center gap-3">
@@ -181,7 +193,7 @@ export function Accounts() {
                             <div className="min-w-0">
                               <p className="truncate text-sm font-semibold text-ink">{account.name}</p>
                               <p className="flex items-center gap-1.5 truncate text-xs text-ink-subtle">
-                                {humanizeEnum(account.type)}
+                                {isPerson ? personStatus(balance) : humanizeEnum(account.type)}
                                 <Badge tone={account.owner ? "neutral" : "brand"} className="normal-case">
                                   {account.owner ? account.owner.name : "Shared"}
                                 </Badge>
@@ -190,9 +202,9 @@ export function Accounts() {
                           </button>
                           <div className="flex shrink-0 items-center gap-2">
                             <Money
-                              amount={balance}
+                              amount={isPerson ? Math.abs(balance) : balance}
                               currency={account.currency}
-                              tone={balance < 0 ? "expense" : undefined}
+                              tone={balance < 0 ? "expense" : isPerson && balance > 0 ? "income" : undefined}
                               className="text-sm font-bold"
                             />
                             {isConfirming ? (
@@ -337,7 +349,10 @@ function AccountFormModal({
         </div>
 
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Opening balance">
+          <Field
+            label="Opening balance"
+            hint={type === "PERSON" ? "Positive if they already owe you, negative if you owe them" : undefined}
+          >
             {(props) => (
               <Input {...props} type="number" step="0.01" value={openingBalance} onChange={(e) => setOpeningBalance(e.target.value)} />
             )}

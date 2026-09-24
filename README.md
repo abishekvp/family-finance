@@ -184,12 +184,25 @@ declared in its own manifest, since `android/` is generated):
 
 - **Quick add** — Expense / Income / Transfer buttons that deep-link to
   `familyfinance://transaction-form?type=…&source=widget`. After saving, a form opened this way sends
-  the app back to the background; the same form opened inside the app just returns to where you were.
+  the app back to the background; the same form opened inside the app (including every edit) just
+  returns to where you were. A quick add Android replays from Recents after the app was killed opens
+  the app normally instead (`app/+native-intent.tsx`).
 - **Today's transactions** — today's spent / income totals and a scrollable list of the day's
   transactions. The widget can't fetch data itself (payees are end-to-end encrypted and only the app
   holds the key), so the app pushes a snapshot (`src/lib/todayWidget.ts`) on launch, on returning to
   the foreground, after every save/delete, and after SMS imports. The snapshot lives in the app's
   no-backup storage and is wiped on sign-out; a midnight alarm rolls the widget over to the new day.
+
+### Lend & borrow
+
+More → Lend & borrow tracks money lent to or borrowed from friends and relatives, including a friend
+paying for something of yours that you'll pay back. Each person is an account of type `PERSON`
+(private unless shared with the family) whose balance is what they owe you (positive) or what you owe
+them (negative). Lending, borrowing and repayments are recorded as transfers between your account and
+the person, so balances stay right while none of it counts as income or expense; "paid for
+something" is an ordinary expense posted to the person's account. People are left out of the account
+chips for income and expenses (and SMS mapping), and count toward liabilities when you owe them. The
+web app shows them under Accounts → Lend & borrow and can add them as a "Person" account.
 
 ## Deploying
 

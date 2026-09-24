@@ -9,6 +9,7 @@ export const ACCOUNT_TYPES = [
   "DEBIT_CARD",
   "INVESTMENT",
   "LOAN",
+  "PERSON",
 ] as const;
 export type AccountType = (typeof ACCOUNT_TYPES)[number];
 

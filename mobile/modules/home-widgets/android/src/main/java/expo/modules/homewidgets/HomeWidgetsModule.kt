@@ -1,5 +1,6 @@
 package expo.modules.homewidgets
 
+import android.content.Intent
 import expo.modules.kotlin.exception.Exceptions
 import expo.modules.kotlin.functions.Queues
 import expo.modules.kotlin.modules.Module
@@ -30,5 +31,14 @@ class HomeWidgetsModule : Module() {
     AsyncFunction("moveToBackground") {
       appContext.currentActivity?.moveTaskToBack(true) ?: false
     }.runOnQueue(Queues.MAIN)
+
+    /**
+     * True when Android relaunched the app from Recents. It then replays the intent that first
+     * started the task — possibly a quick add tapped long ago — rather than a fresh tap.
+     */
+    Function("launchedFromHistory") {
+      val flags = appContext.currentActivity?.intent?.flags ?: 0
+      (flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) != 0
+    }
   }
 }

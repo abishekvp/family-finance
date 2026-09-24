@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { ArrowRightLeft, Landmark, MinusCircle, PlusCircle } from "lucide-react";
+import { ArrowRightLeft, HandCoins, Landmark, MinusCircle, PlusCircle } from "lucide-react";
 import { api } from "../../api/client";
 import { getErrorMessage } from "../../api/errors";
 import { Button, Chip, ErrorText, Field, Input, Label, Modal, Segmented, Select } from "../ui";
@@ -58,10 +58,15 @@ interface FormState {
   notes: string;
 }
 
+/** A new transaction starts on the first real account — never on a friend's lend & borrow tab. */
+function defaultAccountId(accounts: Account[]) {
+  return (accounts.find((a) => a.type !== "PERSON") ?? accounts[0])?.id ?? "";
+}
+
 function emptyForm(accounts: Account[]): FormState {
   return {
     type: "EXPENSE",
-    accountId: accounts[0]?.id ?? "",
+    accountId: defaultAccountId(accounts),
     transferToAccountId: "",
     categoryId: "",
     amount: "",
@@ -110,7 +115,7 @@ export function TransactionFormModal({
 
   useEffect(() => {
     if (!form.accountId && accounts.length > 0) {
-      setForm((f) => ({ ...f, accountId: accounts[0].id }));
+      setForm((f) => ({ ...f, accountId: defaultAccountId(accounts) }));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accounts]);
@@ -127,6 +132,9 @@ export function TransactionFormModal({
   }
   const flatCategoryChoices = categoriesForType.length <= 14;
 
+  // People (lend & borrow tabs) are transfer ends; for income and expenses they only show once
+  // chosen, e.g. "a friend paid for this".
+  const sourceAccounts = accounts.filter((a) => a.type !== "PERSON" || form.type === "TRANSFER" || a.id === form.accountId);
   const transferTargets = accounts.filter((a) => a.id !== form.accountId);
   const selectedAccount = accounts.find((a) => a.id === form.accountId);
   const symbol = currencySymbol(selectedAccount?.currency ?? "USD");
@@ -259,7 +267,7 @@ export function TransactionFormModal({
         <div>
           <Label>Account</Label>
           <div className="flex flex-wrap gap-2">
-            {accounts.map((a) => (
+            {sourceAccounts.map((a) => (
               <Chip
                 key={a.id}
                 type="button"
@@ -269,7 +277,7 @@ export function TransactionFormModal({
                   if (form.transferToAccountId === a.id) update("transferToAccountId", "");
                 }}
               >
-                <Landmark size={12} />
+                {a.type === "PERSON" ? <HandCoins size={12} /> : <Landmark size={12} />}
                 {a.name}
               </Chip>
             ))}

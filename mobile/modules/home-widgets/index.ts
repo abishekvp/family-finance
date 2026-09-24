@@ -23,6 +23,7 @@ interface HomeWidgetsNative {
   setTodaySnapshot(json: string): Promise<void>;
   clearTodaySnapshot(): Promise<void>;
   moveToBackground(): Promise<boolean>;
+  launchedFromHistory(): boolean;
 }
 
 // Null on iOS, web, Expo Go, and builds that predate the widgets, so every call is a no-op there.
@@ -39,4 +40,9 @@ export async function clearTodaySnapshot() {
 /** Sends the app to the background (like pressing Home). Resolves false where that isn't possible. */
 export async function moveToBackground() {
   return (await native?.moveToBackground()) ?? false;
+}
+
+/** Whether Android relaunched the app from Recents, replaying the intent that first started it. */
+export function launchedFromHistory() {
+  return native?.launchedFromHistory() ?? false;
 }

@@ -1,9 +1,11 @@
 import { useCallback, useMemo, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
-import { useFocusEffect } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import {
   Banknote,
+  ChevronRight,
   CreditCard,
+  HandCoins,
   Landmark,
   LineChart,
   PiggyBank,
@@ -18,7 +20,9 @@ import { useAuth } from "../../../src/context/AuthContext";
 import { useTheme } from "../../../src/context/ThemeContext";
 import { getErrorMessage } from "../../../src/api/errors";
 import { Badge, Button, Card, CardHeader, Chip, EmptyState, ErrorText, Field, IconButton, Input, Money, ProgressBar, SkeletonRows, StatTile, Toggle } from "../../../src/components/ui";
-import { humanizeEnum, safePercent } from "../../../src/lib/format";
+import { formatCurrency, humanizeEnum, safePercent } from "../../../src/lib/format";
+import { href } from "../../../src/lib/nav";
+import { isPerson, lendingTotals } from "../../../src/lib/lending";
 
 const ACCOUNT_TYPES: AccountType[] = ["CASH", "BANK", "SAVINGS", "CREDIT_CARD", "DEBIT_CARD", "INVESTMENT", "LOAN"];
 
@@ -30,6 +34,7 @@ const TYPE_ICONS: Record<AccountType, LucideIcon> = {
   DEBIT_CARD: CreditCard,
   INVESTMENT: LineChart,
   LOAN: Banknote,
+  PERSON: HandCoins,
 };
 
 const GROUPS: { key: string; label: string; types: AccountType[] }[] = [
@@ -43,6 +48,7 @@ export default function AccountsScreen() {
   const { user } = useAuth();
   const { colors } = useTheme();
   const family = user!.families[0];
+  const router = useRouter();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -83,9 +89,18 @@ export default function AccountsScreen() {
 
   const totals = useMemo(() => {
     const total = accounts.reduce((sum, a) => sum + a.balance, 0);
-    const liabilities = accounts.reduce((sum, a) => (a.type === "CREDIT_CARD" || a.type === "LOAN" ? sum + Math.max(0, -a.balance) : sum), 0);
+    // Money you owe a friend is a debt like any other.
+    const liabilities = accounts.reduce(
+      (sum, a) => (a.type === "CREDIT_CARD" || a.type === "LOAN" || a.type === "PERSON" ? sum + Math.max(0, -a.balance) : sum),
+      0
+    );
     return { total, liabilities, assets: total + liabilities };
   }, [accounts]);
+
+  // Friends you lend to or borrow from live on the Lend & borrow screen, not in the account list.
+  const ownAccounts = useMemo(() => accounts.filter((a) => !isPerson(a)), [accounts]);
+  const people = useMemo(() => accounts.filter(isPerson), [accounts]);
+  const lending = lendingTotals(people);
 
   return (
     <ScrollView style={{ backgroundColor: colors.canvas }} contentContainerStyle={{ padding: 16, gap: 16 }}>
@@ -125,11 +140,11 @@ export default function AccountsScreen() {
 
       {isLoading ? (
         <SkeletonRows rows={4} />
-      ) : accounts.length === 0 ? (
+      ) : ownAccounts.length === 0 ? (
         <EmptyState icon={<Wallet size={20} color={colors.brand600} />} title="No accounts yet" description="Add a common family account or a private one of your own." />
       ) : (
         GROUPS.map((group) => {
-          const groupAccounts = accounts.filter((a) => group.types.includes(a.type));
+          const groupAccounts = ownAccounts.filter((a) => group.types.includes(a.type));
           if (groupAccounts.length === 0) return null;
           const subtotal = groupAccounts.reduce((sum, a) => sum + a.balance, 0);
           return (
@@ -206,6 +221,25 @@ export default function AccountsScreen() {
             </View>
           );
         })
+      )}
+
+      {!isLoading && people.length > 0 && (
+        <Pressable onPress={() => router.push(href("/lending"))}>
+          {({ pressed }) => (
+            <Card style={[{ flexDirection: "row", alignItems: "center", gap: 12 }, pressed && { opacity: 0.8 }]}>
+              <View style={{ width: 40, height: 40, borderRadius: 12, backgroundColor: colors.brandSoft, alignItems: "center", justifyContent: "center" }}>
+                <HandCoins size={17} color={colors.brand600} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontWeight: "700", color: colors.ink }}>Lend & borrow</Text>
+                <Text style={{ color: colors.inkSubtle, fontSize: 12, marginTop: 3 }}>
+                  {`${formatCurrency(lending.owedToYou, family.currency)} owed to you · ${formatCurrency(lending.youOwe, family.currency)} you owe`}
+                </Text>
+              </View>
+              <ChevronRight size={17} color={colors.inkSubtle} />
+            </Card>
+          )}
+        </Pressable>
       )}
     </ScrollView>
   );

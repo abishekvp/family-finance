@@ -8,6 +8,7 @@ import { useAuth } from "../../src/context/AuthContext";
 import { useTheme } from "../../src/context/ThemeContext";
 import { useSmsImport } from "../../src/context/SmsImportContext";
 import { getErrorMessage } from "../../src/api/errors";
+import { isPerson } from "../../src/lib/lending";
 import { Button, Card, CardHeader, Chip, ErrorText, Field, SkeletonRows, SuccessText, Toggle } from "../../src/components/ui";
 
 const HISTORY_OPTIONS: { days: number; label: string }[] = [
@@ -39,7 +40,8 @@ export default function SmsImport() {
       .get<Account[]>(`/families/${family.id}/accounts`)
       .then((res) => {
         if (cancelled) return;
-        const active = res.data.filter((a) => !a.isArchived);
+        // Bank alerts land in your own accounts, never on a friend's lend & borrow tab.
+        const active = res.data.filter((a) => !a.isArchived && !isPerson(a));
         setAccounts(active);
         setSetupAccountId((current) => current ?? active.find((a) => a.type === "BANK")?.id ?? active[0]?.id ?? null);
       })

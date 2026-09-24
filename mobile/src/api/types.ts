@@ -1,7 +1,7 @@
 // Shared TS interfaces mirroring the server's JSON response shapes exactly.
 // See the SHARED CONTRACT for the authoritative field list — do not invent fields here.
 
-export type AccountType = "CASH" | "BANK" | "SAVINGS" | "CREDIT_CARD" | "DEBIT_CARD" | "INVESTMENT" | "LOAN";
+export type AccountType = "CASH" | "BANK" | "SAVINGS" | "CREDIT_CARD" | "DEBIT_CARD" | "INVESTMENT" | "LOAN" | "PERSON";
 export type CategoryType = "INCOME" | "EXPENSE";
 export type TransactionType = "INCOME" | "EXPENSE" | "TRANSFER";
 export type TransactionStatus = "PENDING" | "CLEARED";

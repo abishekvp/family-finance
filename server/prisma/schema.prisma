@@ -23,6 +23,9 @@ enum AccountType {
   DEBIT_CARD
   INVESTMENT
   LOAN
+  // A friend or relative you lend to or borrow from. Its balance is what they owe you (positive)
+  // or what you owe them (negative); money moves to and from it as transfers, never income/expense.
+  PERSON
 }
 
 enum CategoryType {
