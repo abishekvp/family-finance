@@ -1,12 +1,12 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { KeyboardAvoidingView, Platform, ScrollView, Text, View } from "react-native";
 import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
-import { Plus, Trash2 } from "lucide-react-native";
+import { Plus, Repeat, Trash2 } from "lucide-react-native";
 import { api } from "../../src/api/client";
-import type { Account, Category, Transaction, TransactionType } from "../../src/api/types";
+import type { Account, Category, RecurringFrequency, Transaction, TransactionType } from "../../src/api/types";
 import { useAuth } from "../../src/context/AuthContext";
 import { useTheme } from "../../src/context/ThemeContext";
-import { getErrorMessage } from "../../src/api/errors";
+import { ClientError, getErrorMessage } from "../../src/api/errors";
 import { Button, Chip, ErrorText, Field, Input, Segmented, SkeletonRows, Toggle } from "../../src/components/ui";
 import { CategoryPicker } from "../../src/components/CategoryPicker";
 import { currencySymbol } from "../../src/lib/format";
@@ -28,6 +28,7 @@ import {
   type LendingKind,
 } from "../../src/lib/lending";
 import { refreshTodayWidget } from "../../src/lib/todayWidget";
+import { FREQUENCIES, describeSchedule } from "../../src/lib/recurring";
 import { moveToBackground } from "../../modules/home-widgets";
 
 /** "LENDING" is saved as a transfer between one of your accounts and a person. */
@@ -140,6 +141,10 @@ export default function TransactionForm() {
   const [dueDate, setDueDate] = useState(initial?.dueDate ? localDateInput(new Date(initial.dueDate)) : "");
   // A person created by a save whose transaction then failed — reused on retry, never created twice.
   const createdPerson = useRef<Account | null>(null);
+  // "Repeat" on a new income or expense: this transaction becomes the first of a repeating payment.
+  const [repeat, setRepeat] = useState<RecurringFrequency | null>(null);
+  // Saved on an attempt whose repeating schedule then failed; a retry only creates the schedule.
+  const savedTransactionId = useRef<string | null>(null);
   const didInitFromAccounts = useRef(false);
 
   // Once accounts are known: a transfer with a person opens as Lend/Borrow, and a new entry starts
@@ -178,6 +183,8 @@ export default function TransactionForm() {
   const transferTargets = accounts.filter((a) => a.id !== accountId && (!isPerson(a) || a.id === transferToAccountId));
   const selectedAccount = accounts.find((a) => a.id === accountId);
   const paidByPerson = selectedAccount && isPerson(selectedAccount) && !isLending && type !== "TRANSFER" ? selectedAccount : null;
+  // A salary, rent or subscription can be set to repeat as it's added (not from a person's account).
+  const canRepeat = !isEdit && (type === "INCOME" || type === "EXPENSE") && !paidByPerson;
   const symbol = currencySymbol(selectedAccount?.currency ?? family.currency);
 
   const person = isLending && !addingPerson ? people.find((p) => p.id === personId) ?? null : null;
@@ -302,15 +309,35 @@ export default function TransactionForm() {
       const payload = buildPayload(isLending ? await resolvePersonId() : null);
       if (isEdit && initial) {
         await api.patch(`/families/${family.id}/transactions/${initial.id}`, payload);
-      } else {
-        await api.post(`/families/${family.id}/transactions`, payload);
+      } else if (!savedTransactionId.current) {
+        const res = await api.post<Transaction>(`/families/${family.id}/transactions`, payload);
+        savedTransactionId.current = res.data.id;
       }
+      if (canRepeat && repeat && savedTransactionId.current) {
+        try {
+          await api.post(`/families/${family.id}/recurring`, {
+            type,
+            amount: amountValue,
+            accountId,
+            categoryId,
+            payee: payee.trim() || null,
+            notes: notes.trim() || null,
+            frequency: repeat,
+            startDate: date.trim(),
+            firstTransactionId: savedTransactionId.current,
+          });
+        } catch (err) {
+          throw new ClientError(`Saved, but couldn't make it repeat: ${getErrorMessage(err, "try again")}`);
+        }
+      }
+      savedTransactionId.current = null;
       refreshTodayWidget(family.id, family.currency);
       if (andAddAnother && !isEdit) {
         setAmount("");
         setPayee("");
         setNotes("");
         setDueDate("");
+        setRepeat(null);
         setDate(todayIso());
         if (isLending) {
           // A person just added is now one of the chips, with an up-to-date balance.
@@ -523,6 +550,38 @@ export default function TransactionForm() {
               />
             )}
           </Field>
+        )}
+
+        {canRepeat && (
+          <Field
+            label="Repeat"
+            hint={
+              repeat
+                ? `${describeSchedule({ frequency: repeat, startDate: date.trim() })}, recorded automatically${
+                    type === "EXPENSE" ? ` and counted in your ${repeat === "YEARLY" ? "yearly" : "monthly"} budget` : ""
+                  }.`
+                : "For a salary, rent, a home maker's pay or a subscription."
+            }
+          >
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+              <Chip label="Doesn't repeat" selected={!repeat} onPress={() => setRepeat(null)} />
+              {FREQUENCIES.map((f) => (
+                <Chip key={f.value} label={f.label} selected={repeat === f.value} onPress={() => setRepeat(f.value)} />
+              ))}
+            </View>
+          </Field>
+        )}
+
+        {isEdit && initial?.recurringId && (
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 10, padding: 12, borderRadius: 14, backgroundColor: colors.surfaceSunken }}>
+            <Repeat size={16} color={colors.inkMuted} />
+            <Text style={{ flex: 1, fontSize: 12.5, color: colors.inkMuted }}>
+              Recorded from a repeating payment. Changes here affect only this one.
+            </Text>
+            <Text style={{ fontSize: 12.5, fontWeight: "700", color: colors.brand600 }} onPress={() => router.push(href("/recurring"))}>
+              Manage
+            </Text>
+          </View>
         )}
 
         <Field label="Notes" hint="Optional">

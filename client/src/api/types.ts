@@ -74,6 +74,8 @@ export interface Transaction {
   tags: string[];
   /** When money lent to or borrowed from a person is expected back. */
   dueDate?: string | null;
+  /** The repeating payment this was recorded from, if any. */
+  recurringId?: string | null;
   createdAt: string;
   updatedAt: string;
   account: { id: string; name: string; currency: string };
@@ -91,10 +93,14 @@ export interface Budget {
   month: number | null;
   year: number;
   rollover: boolean;
+  /** Carried into each new month (or year) when it starts. */
+  repeats?: boolean;
   createdAt: string;
   updatedAt: string;
   category: { id: string; name: string; color: string; icon: string; type: CategoryType };
   spent: number;
+  /** Repeating payments in this category still to come in the period. */
+  upcoming?: number;
   remaining: number;
 }
 

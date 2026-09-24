@@ -12,6 +12,7 @@ import { getErrorMessage } from "../../../src/api/errors";
 import { ErrorText, IconButton, Money, Segmented, SkeletonRows, tap } from "../../../src/components/ui";
 import { monthRange, yearRange } from "../../../src/lib/dateUtils";
 import { href } from "../../../src/lib/nav";
+import { useRecurringVersion } from "../../../src/lib/recurring";
 import { DailyView } from "../../../src/components/transactions/DailyView";
 import { CalendarView } from "../../../src/components/transactions/CalendarView";
 import { MonthlyView } from "../../../src/components/transactions/MonthlyView";
@@ -97,6 +98,15 @@ export default function TransactionsHub() {
     seenSyncVersion.current = syncVersion;
     loadAll();
   }, [syncVersion, loadAll]);
+
+  // Likewise when repeating payments are recorded on launch or return to the app.
+  const recurringVersion = useRecurringVersion();
+  const seenRecurringVersion = useRef(recurringVersion);
+  useEffect(() => {
+    if (recurringVersion === seenRecurringVersion.current) return;
+    seenRecurringVersion.current = recurringVersion;
+    loadAll();
+  }, [recurringVersion, loadAll]);
 
   useLayoutEffect(() => {
     navigation.setOptions({

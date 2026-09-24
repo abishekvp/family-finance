@@ -1,7 +1,8 @@
 import { Router } from "express";
 import { z } from "zod";
-import { BudgetPeriod, CategoryType, Prisma, Role, TransactionType } from "@prisma/client";
+import { BudgetPeriod, CategoryType, Prisma, RecurringFrequency, Role, TransactionType } from "@prisma/client";
 import { prisma } from "../lib/prisma";
+import { occurrencesBetween } from "../lib/recurring";
 import { asyncHandler, AppError } from "../middleware/errorHandler";
 import { requireAuth, requireFamilyRole } from "../middleware/auth";
 
@@ -46,7 +47,13 @@ function periodRange(period: BudgetPeriod, year: number, month: number | null) {
   };
 }
 
-async function computeSpent(familyId: string, requesterId: string, categoryId: string, start: Date, end: Date) {
+// A yearly repeating payment (an annual subscription) belongs to the yearly budget, so it doesn't
+// eat a single month's budget in the month it happens to fall.
+function countsInPeriod(period: BudgetPeriod, frequency: RecurringFrequency) {
+  return period === BudgetPeriod.ANNUAL || frequency !== RecurringFrequency.YEARLY;
+}
+
+async function computeSpent(familyId: string, requesterId: string, categoryId: string, period: BudgetPeriod, start: Date, end: Date) {
   const spentAgg = await prisma.transaction.aggregate({
     where: {
       familyId,
@@ -55,10 +62,94 @@ async function computeSpent(familyId: string, requesterId: string, categoryId: s
       isDeleted: false,
       date: { gte: start, lt: end },
       account: { OR: [{ ownerId: null }, { ownerId: requesterId }] },
+      ...(period === BudgetPeriod.ANNUAL
+        ? {}
+        : { OR: [{ recurringId: null }, { recurring: { frequency: { not: RecurringFrequency.YEARLY } } }] }),
     },
     _sum: { amount: true },
   });
   return Number(spentAgg._sum.amount ?? 0);
+}
+
+type ExpenseRule = Prisma.RecurringTransactionGetPayload<object>;
+
+/** Repeating expenses in this category still to come in the period: committed, not yet spent. */
+function computeUpcoming(rules: ExpenseRule[], categoryId: string, period: BudgetPeriod, start: Date, end: Date) {
+  let total = 0;
+  for (const rule of rules) {
+    if (rule.categoryId !== categoryId || !countsInPeriod(period, rule.frequency)) continue;
+    total += occurrencesBetween(rule, rule.postedCount, start, end).length * Number(rule.amount);
+  }
+  return total;
+}
+
+const budgetKey = (b: { categoryId: string; ownerId: string | null }) => `${b.categoryId}|${b.ownerId ?? ""}`;
+
+type BudgetWithCategory = Prisma.BudgetGetPayload<{ include: { category: { select: typeof BUDGET_CATEGORY_SELECT } } }>;
+type ProjectedBudget = BudgetWithCategory & { projected: true; sourceId: string };
+
+/**
+ * Carries repeating budgets into the requested month (or year): the latest earlier budget for each
+ * category decides. If it repeats and this period has none yet, a copy is created once the period
+ * has started, or (for a future period, when asked) returned as a projection that isn't saved.
+ */
+async function carryRepeating(
+  familyId: string,
+  requesterId: string,
+  period: BudgetPeriod,
+  year: number,
+  month: number | null,
+  includeProjected: boolean
+): Promise<ProjectedBudget[]> {
+  const now = new Date();
+  const started =
+    period === BudgetPeriod.ANNUAL
+      ? year <= now.getUTCFullYear()
+      : year * 12 + (month! - 1) <= now.getUTCFullYear() * 12 + now.getUTCMonth();
+  const before: Prisma.BudgetWhereInput =
+    period === BudgetPeriod.ANNUAL ? { year: { lt: year } } : { OR: [{ year: { lt: year } }, { year, month: { lt: month! } }] };
+
+  const [earlier, present] = await Promise.all([
+    prisma.budget.findMany({
+      where: { familyId, period, category: { isArchived: false }, AND: [{ OR: [{ ownerId: null }, { ownerId: requesterId }] }, before] },
+      include: { category: { select: BUDGET_CATEGORY_SELECT } },
+      orderBy: [{ year: "desc" }, { month: "desc" }],
+    }),
+    prisma.budget.findMany({ where: { familyId, period, year, month }, select: { categoryId: true, ownerId: true } }),
+  ]);
+
+  const latest = new Map<string, BudgetWithCategory>();
+  for (const b of earlier) if (!latest.has(budgetKey(b))) latest.set(budgetKey(b), b);
+  const presentKeys = new Set(present.map(budgetKey));
+
+  const projected: ProjectedBudget[] = [];
+  for (const source of latest.values()) {
+    if (!source.repeats || presentKeys.has(budgetKey(source))) continue;
+    if (started) {
+      try {
+        await prisma.budget.create({
+          data: {
+            // Deterministic, so two devices opening the new month at once create it only once.
+            id: `${source.id}-${year}${month ? `-${String(month).padStart(2, "0")}` : ""}`,
+            familyId,
+            ownerId: source.ownerId,
+            categoryId: source.categoryId,
+            period,
+            amount: source.amount,
+            year,
+            month,
+            rollover: source.rollover,
+            repeats: true,
+          },
+        });
+      } catch (err) {
+        if (!(err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002")) throw err;
+      }
+    } else if (includeProjected) {
+      projected.push({ ...source, id: `projected-${source.id}`, year, month, projected: true, sourceId: source.id });
+    }
+  }
+  return projected;
 }
 
 budgetsRouter.get(
@@ -80,24 +171,53 @@ budgetsRouter.get(
         throw new AppError(400, "Invalid month filter");
       }
     }
+    let period: BudgetPeriod | undefined;
+    if (typeof req.query.period === "string") {
+      const parsed = z.nativeEnum(BudgetPeriod).safeParse(req.query.period);
+      if (!parsed.success) throw new AppError(400, "Invalid period filter");
+      period = parsed.data;
+    }
+    // Future periods can show repeating budgets that will be added when the period starts. Only
+    // clients that know those are read-only ask for them.
+    const includeProjected = req.query.includeProjected === "1";
 
-    const budgets = await prisma.budget.findMany({
-      where: {
-        familyId,
-        OR: [{ ownerId: null }, { ownerId: requesterId }],
-        ...(year !== undefined ? { year } : {}),
-        ...(month !== undefined ? { month } : {}),
-      },
-      include: { category: { select: BUDGET_CATEGORY_SELECT } },
-      orderBy: [{ year: "desc" }, { month: "desc" }, { createdAt: "asc" }],
-    });
+    let projected: ProjectedBudget[] = [];
+    if (year !== undefined && month !== undefined) {
+      projected = await carryRepeating(familyId, requesterId, BudgetPeriod.MONTHLY, year, month, includeProjected);
+    } else if (year !== undefined && period === BudgetPeriod.ANNUAL) {
+      projected = await carryRepeating(familyId, requesterId, BudgetPeriod.ANNUAL, year, null, includeProjected);
+    }
+
+    const [budgets, expenseRules] = await Promise.all([
+      prisma.budget.findMany({
+        where: {
+          familyId,
+          OR: [{ ownerId: null }, { ownerId: requesterId }],
+          ...(year !== undefined ? { year } : {}),
+          ...(month !== undefined ? { month } : {}),
+          ...(period !== undefined ? { period } : {}),
+        },
+        include: { category: { select: BUDGET_CATEGORY_SELECT } },
+        orderBy: [{ year: "desc" }, { month: "desc" }, { createdAt: "asc" }],
+      }),
+      prisma.recurringTransaction.findMany({
+        where: {
+          familyId,
+          type: TransactionType.EXPENSE,
+          isActive: true,
+          categoryId: { not: null },
+          account: { OR: [{ ownerId: null }, { ownerId: requesterId }] },
+        },
+      }),
+    ]);
 
     const withSpent = await Promise.all(
-      budgets.map(async (budget) => {
+      [...budgets, ...projected].map(async (budget) => {
         const { start, end } = periodRange(budget.period, budget.year, budget.month);
-        const spent = await computeSpent(familyId, requesterId, budget.categoryId, start, end);
+        const spent = await computeSpent(familyId, requesterId, budget.categoryId, budget.period, start, end);
+        const upcoming = computeUpcoming(expenseRules, budget.categoryId, budget.period, start, end);
         const amount = Number(budget.amount);
-        return { ...budget, amount, spent, remaining: amount - spent };
+        return { ...budget, amount, spent, upcoming, remaining: amount - spent };
       })
     );
 
@@ -113,6 +233,7 @@ const createBudgetSchema = z
     month: z.number().int().min(1).max(12).optional(),
     period: z.nativeEnum(BudgetPeriod).default(BudgetPeriod.MONTHLY),
     rollover: z.boolean().default(false),
+    repeats: z.boolean().default(false),
     isCommon: z.boolean().default(true),
   })
   .refine((data) => data.period === BudgetPeriod.ANNUAL || data.month !== undefined, {
@@ -150,11 +271,12 @@ budgetsRouter.post(
           year: data.year,
           month: data.period === BudgetPeriod.ANNUAL ? null : data.month ?? null,
           rollover: data.rollover,
+          repeats: data.repeats,
         },
         include: { category: { select: BUDGET_CATEGORY_SELECT } },
       });
 
-      res.status(201).json({ ...budget, amount: Number(budget.amount), spent: 0, remaining: Number(budget.amount) });
+      res.status(201).json({ ...budget, amount: Number(budget.amount), spent: 0, upcoming: 0, remaining: Number(budget.amount) });
     } catch (err) {
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
         throw new AppError(409, "A budget already exists for this category and period — edit it instead.");
@@ -167,6 +289,7 @@ budgetsRouter.post(
 const updateBudgetSchema = z.object({
   amount: z.number().finite().gt(0).optional(),
   rollover: z.boolean().optional(),
+  repeats: z.boolean().optional(),
 });
 
 budgetsRouter.patch(
@@ -190,6 +313,7 @@ budgetsRouter.patch(
       data: {
         ...(data.amount !== undefined ? { amount: data.amount } : {}),
         ...(data.rollover !== undefined ? { rollover: data.rollover } : {}),
+        ...(data.repeats !== undefined ? { repeats: data.repeats } : {}),
       },
       include: { category: { select: BUDGET_CATEGORY_SELECT } },
     });

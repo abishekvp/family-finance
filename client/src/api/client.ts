@@ -21,7 +21,8 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-const TRANSACTIONS_URL = /\/families\/([^/]+)\/transactions(?:\/|$|\?)/;
+// Transactions and repeating payments both carry end-to-end encrypted payee/notes.
+const TRANSACTIONS_URL = /\/families\/([^/]+)\/(?:transactions|recurring)(?:\/|$|\?)/;
 
 let refreshPromise: Promise<string | null> | null = null;
 

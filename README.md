@@ -212,6 +212,27 @@ has been returned, what's left and whether it's overdue. People are left out of 
 income, expenses and transfers (and SMS mapping), and count toward liabilities when you owe them. The
 web app shows them under Accounts → Lend & borrow and can add them as a "Person" account.
 
+### Repeating payments and budgets
+
+More → Repeating payments holds salaries, rent, a home maker's pay, subscriptions — anything that
+repeats weekly, monthly or yearly (`RecurringTransaction`). A schedule is kept on calendar days
+(`server/src/lib/recurring.ts`): monthly and yearly ones keep their day of the month, clamped for
+shorter months. There is no server-side scheduler: `POST /families/:id/recurring/run` records every
+occurrence whose day has come as a real transaction (tagged `recurring`, linked by `recurringId`,
+dated 9 AM on its own day in the caller's time zone, catching up on missed ones), and the apps call
+it on launch and on returning to the foreground (web: on load). Each occurrence is claimed by
+bumping `postedCount` from the value it was read at, so two devices never record it twice. Any new
+income or expense can be set to repeat from the transaction form; it becomes the first occurrence.
+
+Budgets are monthly or yearly. A monthly budget counts weekly and monthly repeating payments but not
+yearly ones, which count toward the yearly budget, and both show what repeating payments are still
+due in the period ("still to pay"). A budget marked to repeat is copied into each new month (or
+year) the first time that period is requested after it starts; clients that pass
+`includeProjected=1` also get read-only previews for future periods.
+
+Insights shows the period's spending as a stacked bar against the total budget ("overall money
+used", a segment per category), a pie chart of each category's share, and the per-category list.
+
 ## Deploying
 
 ### Vercel (the default `EXPO_PUBLIC_API_URL` target)

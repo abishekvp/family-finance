@@ -74,6 +74,12 @@ enum BudgetPeriod {
   ANNUAL
 }
 
+enum RecurringFrequency {
+  WEEKLY
+  MONTHLY
+  YEARLY
+}
+
 model User {
   id              String    @id @default(cuid())
   email           String    @unique
@@ -91,19 +97,20 @@ model User {
   updatedAt       DateTime  @updatedAt
 
   memberships       FamilyMembership[]
-  ownedAccounts     Account[]          @relation("AccountOwner")
-  ownedCategories   Category[]         @relation("CategoryOwner")
-  transactions      Transaction[]      @relation("TransactionActor")
-  ownedBudgets      Budget[]           @relation("BudgetOwner")
+  ownedAccounts     Account[]              @relation("AccountOwner")
+  ownedCategories   Category[]             @relation("CategoryOwner")
+  transactions      Transaction[]          @relation("TransactionActor")
+  ownedBudgets      Budget[]               @relation("BudgetOwner")
   goalContributions GoalContribution[]
   auditLogs         AuditLog[]
   refreshTokens     RefreshToken[]
-  sentInvites       Invite[]           @relation("InviteSender")
+  sentInvites       Invite[]               @relation("InviteSender")
   oauthIdentities   OAuthIdentity[]
   passkeys          Passkey[]
   verificationCodes VerificationCode[]
   vault             UserVault?
   familyKeys        FamilyKey[]
+  recurring         RecurringTransaction[] @relation("RecurringOwner")
 }
 
 model OAuthIdentity {
@@ -228,6 +235,7 @@ model Family {
   invites      Invite[]
   auditLogs    AuditLog[]
   familyKeys   FamilyKey[]
+  recurring    RecurringTransaction[]
 }
 
 model FamilyMembership {
@@ -279,11 +287,12 @@ model Account {
   createdAt         DateTime    @default(now())
   updatedAt         DateTime    @updatedAt
 
-  family            Family        @relation(fields: [familyId], references: [id], onDelete: Cascade)
-  owner             User?         @relation("AccountOwner", fields: [ownerId], references: [id])
-  transactions      Transaction[] @relation("TransactionAccount")
-  incomingTransfers Transaction[] @relation("TransactionTransferTo")
+  family            Family                 @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  owner             User?                  @relation("AccountOwner", fields: [ownerId], references: [id])
+  transactions      Transaction[]          @relation("TransactionAccount")
+  incomingTransfers Transaction[]          @relation("TransactionTransferTo")
   goals             Goal[]
+  recurring         RecurringTransaction[]
 
   @@index([familyId])
   @@index([ownerId])
@@ -303,12 +312,13 @@ model Category {
   createdAt  DateTime     @default(now())
   updatedAt  DateTime     @updatedAt
 
-  family       Family        @relation(fields: [familyId], references: [id], onDelete: Cascade)
-  owner        User?         @relation("CategoryOwner", fields: [ownerId], references: [id])
-  parent       Category?     @relation("CategoryChildren", fields: [parentId], references: [id])
-  children     Category[]    @relation("CategoryChildren")
+  family       Family                 @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  owner        User?                  @relation("CategoryOwner", fields: [ownerId], references: [id])
+  parent       Category?              @relation("CategoryChildren", fields: [parentId], references: [id])
+  children     Category[]             @relation("CategoryChildren")
   transactions Transaction[]
   budgets      Budget[]
+  recurring    RecurringTransaction[]
 
   @@index([familyId])
   @@index([parentId])
@@ -330,18 +340,22 @@ model Transaction {
   tags                String[]          @default([])
   // When money lent to or borrowed from a person (a transfer to/from a PERSON account) is expected back.
   dueDate             DateTime?
+  // The repeating payment this was recorded from, if any.
+  recurringId         String?
   isDeleted           Boolean           @default(false)
   deletedAt           DateTime?
   createdAt           DateTime          @default(now())
   updatedAt           DateTime          @updatedAt
 
-  family            Family    @relation(fields: [familyId], references: [id], onDelete: Cascade)
-  account           Account   @relation("TransactionAccount", fields: [accountId], references: [id])
-  transferToAccount Account?  @relation("TransactionTransferTo", fields: [transferToAccountId], references: [id])
-  category          Category? @relation(fields: [categoryId], references: [id])
-  user              User      @relation("TransactionActor", fields: [userId], references: [id])
+  family            Family                @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  account           Account               @relation("TransactionAccount", fields: [accountId], references: [id])
+  transferToAccount Account?              @relation("TransactionTransferTo", fields: [transferToAccountId], references: [id])
+  category          Category?             @relation(fields: [categoryId], references: [id])
+  user              User                  @relation("TransactionActor", fields: [userId], references: [id])
+  recurring         RecurringTransaction? @relation(fields: [recurringId], references: [id], onDelete: SetNull)
 
   @@index([familyId, date])
+  @@index([recurringId])
   @@index([accountId])
   @@index([categoryId])
 }
@@ -356,6 +370,8 @@ model Budget {
   month      Int?
   year       Int
   rollover   Boolean      @default(false)
+  // Carried into each new month (or year, for ANNUAL) when it starts.
+  repeats    Boolean      @default(false)
   createdAt  DateTime     @default(now())
   updatedAt  DateTime     @updatedAt
 
@@ -365,6 +381,39 @@ model Budget {
 
   @@unique([categoryId, ownerId, year, month])
   @@index([familyId])
+}
+
+// A payment that repeats — a salary, rent, a subscription. Each occurrence is recorded as a real
+// transaction once its day arrives (see POST /recurring/run), so it counts in balances and budgets.
+model RecurringTransaction {
+  id          String             @id @default(cuid())
+  familyId    String
+  userId      String
+  accountId   String
+  categoryId  String?
+  type        TransactionType
+  amount      Decimal            @db.Decimal(14, 2)
+  // Client-side ciphertext when the family uses end-to-end encryption, like a transaction's.
+  payee       String?
+  notes       String?
+  frequency   RecurringFrequency
+  // Calendar day of the first occurrence; monthly and yearly ones keep its day of the month.
+  startDate   DateTime           @db.Date
+  endDate     DateTime?          @db.Date
+  // Occurrences already recorded; the next is occurrence number `postedCount` from startDate.
+  postedCount Int                @default(0)
+  nextDate    DateTime           @db.Date
+  isActive    Boolean            @default(true)
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  family       Family        @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  user         User          @relation("RecurringOwner", fields: [userId], references: [id])
+  account      Account       @relation(fields: [accountId], references: [id])
+  category     Category?     @relation(fields: [categoryId], references: [id])
+  transactions Transaction[]
+
+  @@index([familyId, nextDate])
 }
 
 model Goal {

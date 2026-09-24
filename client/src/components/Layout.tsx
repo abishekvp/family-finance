@@ -16,6 +16,7 @@ import {
   Wallet,
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
+import { api } from "../api/client";
 import type { FamilySummary } from "../context/AuthContext";
 import { useTheme, type ThemeChoice } from "../lib/theme";
 import { Avatar, Badge, cn, Popover, Segmented } from "./ui";
@@ -72,6 +73,11 @@ export function Layout() {
   const location = useLocation();
   const [scope, setScope] = useState<Scope>(readScope);
   const family = user!.families[0];
+
+  // Records any repeating payments whose day has come (the mobile app does the same on open).
+  useEffect(() => {
+    api.post(`/families/${family.id}/recurring/run`, { tzOffset: new Date().getTimezoneOffset() }).catch(() => undefined);
+  }, [family.id]);
 
   useEffect(() => {
     try {

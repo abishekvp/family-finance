@@ -177,9 +177,9 @@ export function SecurityProvider({ children }: { children: ReactNode }) {
     async (direction: "encrypt" | "decrypt", key: Uint8Array) => {
       if (!familyId) return;
       for (;;) {
-        const { data } = await api.get<{ items: { id: string; payee: string | null; notes: string | null }[]; remaining: number }>(
+        const { data } = await api.get<{ items: { id: string; kind?: "transaction" | "recurring"; payee: string | null; notes: string | null }[]; remaining: number }>(
           `/families/${familyId}/encryption/pending`,
-          { params: { direction } }
+          { params: { direction, includeRecurring: "1" } }
         );
         if (data.items.length === 0) break;
         setProgress(`${direction === "encrypt" ? "Encrypting" : "Decrypting"} ${data.remaining} transactions…`);
@@ -189,7 +189,8 @@ export function SecurityProvider({ children }: { children: ReactNode }) {
           return isEncrypted(v) ? decryptField(key, familyId, v) : v;
         };
         await api.post(`/families/${familyId}/encryption/bulk`, {
-          items: data.items.map((t) => ({ id: t.id, payee: convert(t.payee), notes: convert(t.notes) })),
+          // Repeating payments carry payee/notes too; `kind` tells the server which table.
+          items: data.items.map((t) => ({ id: t.id, kind: t.kind, payee: convert(t.payee), notes: convert(t.notes) })),
         });
       }
       setProgress(null);

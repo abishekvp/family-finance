@@ -33,6 +33,7 @@ function serializeTransaction(t: TransactionWithRelations) {
     notes: t.notes,
     tags: t.tags,
     dueDate: t.dueDate ? t.dueDate.toISOString() : null,
+    recurringId: t.recurringId,
     createdAt: t.createdAt.toISOString(),
     updatedAt: t.updatedAt.toISOString(),
     account: t.account,

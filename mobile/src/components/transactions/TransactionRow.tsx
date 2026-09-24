@@ -65,6 +65,7 @@ export function TransactionRow({ transaction, onPress }: { transaction: Transact
         <Text style={{ color: colors.inkSubtle, fontSize: 12, marginTop: 2 }} numberOfLines={1}>
           {formatDate(t.date)} · {t.account.name}
           {isTransfer && t.transferToAccount ? ` → ${t.transferToAccount.name}` : ""}
+          {t.recurringId ? " · Repeating" : ""}
         </Text>
       </View>
       <Money

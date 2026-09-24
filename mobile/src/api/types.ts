@@ -62,6 +62,8 @@ export interface Transaction {
   tags: string[];
   /** When money lent to or borrowed from a person is expected back. */
   dueDate: string | null;
+  /** The repeating payment this was recorded from, if any. */
+  recurringId?: string | null;
   createdAt: string;
   updatedAt: string;
   account: { id: string; name: string; currency: string };
@@ -79,11 +81,43 @@ export interface Budget {
   month: number | null;
   year: number;
   rollover: boolean;
+  /** Carried into each new month (or year) when it starts. */
+  repeats: boolean;
   createdAt: string;
   updatedAt: string;
   category: { id: string; name: string; color: string; icon: string; type: CategoryType };
   spent: number;
+  /** Repeating payments in this category still to come in the period. */
+  upcoming: number;
   remaining: number;
+  /** A future period's copy of a repeating budget, not saved yet (read-only). */
+  projected?: boolean;
+  sourceId?: string;
+}
+
+export type RecurringFrequency = "WEEKLY" | "MONTHLY" | "YEARLY";
+
+export interface RecurringTransaction {
+  id: string;
+  familyId: string;
+  userId: string;
+  accountId: string;
+  categoryId: string | null;
+  type: "INCOME" | "EXPENSE";
+  amount: number;
+  payee: string | null;
+  notes: string | null;
+  frequency: RecurringFrequency;
+  /** Calendar days, YYYY-MM-DD. */
+  startDate: string;
+  endDate: string | null;
+  nextDate: string;
+  postedCount: number;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+  account: { id: string; name: string; currency: string };
+  category: { id: string; name: string; color: string; icon: string; type: CategoryType } | null;
 }
 
 export interface Goal {

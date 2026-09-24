@@ -20,7 +20,8 @@ export function setOnAuthExpired(handler: (() => void) | null) {
   onAuthExpired = handler;
 }
 
-const TRANSACTIONS_URL = /\/families\/([^/]+)\/transactions(?:\/|$|\?)/;
+// Transactions and repeating payments both carry payee/notes, which are end-to-end encrypted.
+const TRANSACTIONS_URL = /\/families\/([^/]+)\/(?:transactions|recurring)(?:\/|$|\?)/;
 
 api.interceptors.request.use((config) => {
   const token = getAccessToken();
