@@ -1,17 +1,17 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { KeyboardAvoidingView, Platform, ScrollView, Text, View } from "react-native";
+import { KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, View } from "react-native";
 import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
-import { Plus, Repeat, Trash2 } from "lucide-react-native";
+import { ArrowRight, Plus, Repeat, Trash2 } from "lucide-react-native";
 import { api } from "../../src/api/client";
-import type { Account, Category, RecurringFrequency, Transaction, TransactionType } from "../../src/api/types";
+import type { Account, Budget, Category, RecurringFrequency, Transaction, TransactionType } from "../../src/api/types";
 import { useAuth } from "../../src/context/AuthContext";
 import { useTheme } from "../../src/context/ThemeContext";
 import { ClientError, getErrorMessage } from "../../src/api/errors";
 import { Button, Chip, ErrorText, Field, Input, Segmented, SkeletonRows, Toggle } from "../../src/components/ui";
 import { CategoryPicker } from "../../src/components/CategoryPicker";
 import { NewCategoryForm } from "../../src/components/NewCategoryForm";
-import { currencySymbol } from "../../src/lib/format";
-import { localDateInput } from "../../src/lib/dateUtils";
+import { currencySymbol, formatCurrency } from "../../src/lib/format";
+import { MONTH_LABELS, localDateInput } from "../../src/lib/dateUtils";
 import { href } from "../../src/lib/nav";
 import {
   LENDING_KINDS,
@@ -246,6 +246,73 @@ export default function TransactionForm() {
     return describeBalance(personName, before + balanceEffect(kind, amountValue), person?.currency ?? family.currency);
   })();
 
+  // The budgets an expense counts in: those for its date's month, and the yearly ones.
+  const [budgets, setBudgets] = useState<Budget[]>([]);
+  const dateDay = parseDay(date);
+  const budgetYear = dateDay?.getFullYear();
+  const budgetMonth = dateDay ? dateDay.getMonth() + 1 : undefined;
+  const wantsBudgets = type === "EXPENSE";
+  useEffect(() => {
+    if (!wantsBudgets || !budgetYear || !budgetMonth) return;
+    let cancelled = false;
+    const url = `/families/${family.id}/budgets`;
+    Promise.all([
+      api.get<Budget[]>(url, { params: { year: budgetYear, month: budgetMonth } }),
+      api.get<Budget[]>(url, { params: { year: budgetYear, period: "ANNUAL" } }),
+    ])
+      .then(([monthRes, yearRes]) => {
+        if (!cancelled) setBudgets([...monthRes.data, ...yearRes.data]);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [family.id, wantsBudgets, budgetYear, budgetMonth]);
+
+  /** A budget's category and its subcategories: what it counts. */
+  function budgetCategoryIds(b: Budget) {
+    return [b.categoryId, ...categories.filter((c) => c.parentId === b.categoryId).map((c) => c.id)];
+  }
+  // Only budgets whose category can still be picked (a deleted category's budget can't take new entries).
+  const budgetChoices = budgets.filter((b) => categories.some((c) => c.id === b.categoryId));
+  const countsIn = wantsBudgets && categoryId ? budgetChoices.filter((b) => budgetCategoryIds(b).includes(categoryId)) : [];
+  /** What a budget has left once this expense is in it. An edited expense is already in its spent. */
+  function leftAfter(b: Budget) {
+    let left = b.remaining;
+    if (initial?.type === "EXPENSE" && initial.categoryId && budgetCategoryIds(b).includes(initial.categoryId)) {
+      const at = new Date(initial.date);
+      const samePeriod = at.getFullYear() === b.year && (b.period === "ANNUAL" || at.getMonth() + 1 === b.month);
+      if (samePeriod) left += initial.amount;
+    }
+    return left - (amountValue > 0 ? amountValue : 0);
+  }
+  const budgetHint = countsIn
+    .map((b) => {
+      const left = leftAfter(b);
+      const when = b.period === "ANNUAL" ? `in ${b.year}` : `in ${MONTH_LABELS[(b.month ?? 1) - 1]}`;
+      return left >= 0 ? `${b.category.name} ${when}: ${formatCurrency(left, family.currency)} left after this` : `Takes ${b.category.name} over by ${formatCurrency(-left, family.currency)} ${when}`;
+    })
+    .join("\n");
+  const overBudget = countsIn.some((b) => leftAfter(b) < 0);
+
+  /**
+   * Money someone returned, or money you're returning, recorded as plain income or an expense: turn it
+   * into a Lend/Borrow return so it settles the loan instead of counting as income or spending.
+   */
+  const canBeLoanReturn = (type === "INCOME" || type === "EXPENSE") && !paidByPerson && !initial?.recurringId;
+  function recordAsLoanReturn() {
+    const nextKind: LendingKind = type === "INCOME" ? "got-back" : "paid-back";
+    const typedName = payee.trim().toLowerCase();
+    const match = typedName ? people.find((p) => p.name.trim().toLowerCase() === typedName) : undefined;
+    handleSelectType("LENDING");
+    setKind(nextKind);
+    setRepaysId(null);
+    if (match) {
+      setAddingPerson(false);
+      setPersonId(match.id);
+    }
+  }
+
   function handleSelectType(next: FormType) {
     setType(next);
     if (next === "TRANSFER") setCategoryId(null);
@@ -442,6 +509,27 @@ export default function TransactionForm() {
 
         <Segmented fullWidth value={type} onChange={handleSelectType} options={TYPE_OPTIONS} />
 
+        {canBeLoanReturn && (
+          <Pressable
+            onPress={recordAsLoanReturn}
+            style={({ pressed }) => ({
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 10,
+              padding: 12,
+              borderRadius: 14,
+              backgroundColor: colors.surfaceSunken,
+              opacity: pressed ? 0.7 : 1,
+            })}
+          >
+            <Text style={{ flex: 1, fontSize: 12.5, color: colors.inkMuted }}>
+              {type === "INCOME" ? "Money someone returned? " : "Paying back money you borrowed? "}
+              <Text style={{ fontWeight: "700", color: colors.brand600 }}>{type === "INCOME" ? "Record it as a loan return" : "Record it as a loan payback"}</Text>
+            </Text>
+            <ArrowRight size={15} color={colors.brand600} />
+          </Pressable>
+        )}
+
         {isLending && (
           <View style={{ gap: 8 }}>
             <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
@@ -615,29 +703,52 @@ export default function TransactionForm() {
             )}
           </Field>
         ) : (
-          <Field label="Category" hint={isLending ? "Optional — what it was for. Tap again to clear." : "Tap again to clear."}>
-            <View style={{ gap: 12 }}>
-              <CategoryPicker
-                categories={categoriesForType}
-                selectedId={categoryId}
-                onSelect={(id) => setCategoryId(id === categoryId ? null : id)}
-                onAddNew={family.role !== "VIEWER" && !addingCategory ? () => setAddingCategory(true) : undefined}
-              />
-              {addingCategory && (
-                <NewCategoryForm
-                  familyId={family.id}
-                  type={newCategoryType}
-                  taken={categories}
-                  onCreated={(created) => {
-                    setCategories((list) => [...list, created]);
-                    setCategoryId(created.id);
-                    setAddingCategory(false);
-                  }}
-                  onCancel={() => setAddingCategory(false)}
+          <>
+            {wantsBudgets && budgetChoices.length > 0 && (
+              <Field
+                label="Counts in budget"
+                hint={countsIn.length > 0 ? budgetHint : "Pick the budget this comes out of, or a category below."}
+              >
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                  {budgetChoices.map((b) => (
+                    <Chip
+                      key={b.id}
+                      label={`${b.category.name}${b.period === "ANNUAL" ? " · yearly" : ""}${b.ownerId ? "" : " · Family"}`}
+                      color={overBudget && countsIn.includes(b) ? colors.expense : b.category.color}
+                      selected={countsIn.includes(b)}
+                      onPress={() => {
+                        setAddingCategory(false);
+                        setCategoryId(countsIn.includes(b) ? null : b.categoryId);
+                      }}
+                    />
+                  ))}
+                </View>
+              </Field>
+            )}
+            <Field label="Category" hint={isLending ? "Optional — what it was for. Tap again to clear." : "Tap again to clear."}>
+              <View style={{ gap: 12 }}>
+                <CategoryPicker
+                  categories={categoriesForType}
+                  selectedId={categoryId}
+                  onSelect={(id) => setCategoryId(id === categoryId ? null : id)}
+                  onAddNew={family.role !== "VIEWER" && !addingCategory ? () => setAddingCategory(true) : undefined}
                 />
-              )}
-            </View>
-          </Field>
+                {addingCategory && (
+                  <NewCategoryForm
+                    familyId={family.id}
+                    type={newCategoryType}
+                    taken={categories}
+                    onCreated={(created) => {
+                      setCategories((list) => [...list, created]);
+                      setCategoryId(created.id);
+                      setAddingCategory(false);
+                    }}
+                    onCancel={() => setAddingCategory(false)}
+                  />
+                )}
+              </View>
+            </Field>
+          </>
         )}
 
         {canRepeat && (
