@@ -34,6 +34,7 @@ function serializeTransaction(t: TransactionWithRelations) {
     tags: t.tags,
     dueDate: t.dueDate ? t.dueDate.toISOString() : null,
     recurringId: t.recurringId,
+    repaysId: t.repaysId,
     createdAt: t.createdAt.toISOString(),
     updatedAt: t.updatedAt.toISOString(),
     account: t.account,
@@ -120,6 +121,46 @@ async function resolveRelations(
   return { categoryId: categoryIdInput, transferToAccountId: null };
 }
 
+/**
+ * Checks that a return of money lent or borrowed pays back an entry with the same person that moved
+ * money the other way, and returns the link to persist. Anything that isn't a transfer with a
+ * person carries no link.
+ */
+async function resolveRepays(
+  familyId: string,
+  transactionId: string | null,
+  type: TransactionType,
+  accountId: string,
+  transferToAccountId: string | null,
+  repaysIdInput: string | null,
+  // False when the link is the one already saved: a loan deleted since just drops it.
+  requested = true
+): Promise<string | null> {
+  if (!repaysIdInput || type !== TransactionType.TRANSFER || !transferToAccountId) return null;
+  if (repaysIdInput === transactionId) throw new AppError(400, "An entry can't pay back itself");
+
+  const loan = await prisma.transaction.findFirst({
+    where: { id: repaysIdInput, familyId, isDeleted: false, type: TransactionType.TRANSFER },
+    include: { account: { select: { type: true } }, transferToAccount: { select: { type: true } } },
+  });
+  if (!loan) {
+    if (!requested) return null;
+    throw new AppError(404, "The loan being paid back was not found");
+  }
+
+  // A loan runs your account → person (lent) or person → your account (borrowed); its return runs
+  // the opposite way with the same person.
+  const personId =
+    loan.transferToAccount?.type === AccountType.PERSON ? loan.transferToAccountId : loan.account.type === AccountType.PERSON ? loan.accountId : null;
+  const opposite = !!personId && (personId === loan.transferToAccountId ? accountId === personId : transferToAccountId === personId);
+  if (!opposite) {
+    // An edit that moved the entry to another person or direction leaves the old link behind.
+    if (!requested) return null;
+    throw new AppError(400, personId ? "A return has to be with the same person, moving money the other way" : "Only money lent or borrowed can be paid back");
+  }
+  return loan.id;
+}
+
 const transactionTypeSchema = z.nativeEnum(TransactionType);
 const transactionStatusSchema = z.nativeEnum(TransactionStatus);
 
@@ -200,6 +241,7 @@ const createTransactionSchema = z.object({
   status: transactionStatusSchema.optional(),
   tags: z.array(z.string()).optional(),
   dueDate: z.string().datetime().nullable().optional(),
+  repaysId: z.string().min(1).nullable().optional(),
 });
 
 const updateTransactionSchema = createTransactionSchema.partial();
@@ -225,6 +267,8 @@ transactionsRouter.post(
       transferToAccountIdInput
     );
 
+    const repaysId = await resolveRepays(familyId, null, parsed.type, parsed.accountId, transferToAccountId, parsed.repaysId ?? null);
+
     const transaction = await prisma.transaction.create({
       data: {
         familyId,
@@ -240,6 +284,7 @@ transactionsRouter.post(
         notes: parsed.notes ?? null,
         tags: parsed.tags ?? [],
         dueDate: parsed.dueDate ? new Date(parsed.dueDate) : null,
+        repaysId,
       },
       include: TRANSACTION_INCLUDE,
     });
@@ -283,6 +328,16 @@ transactionsRouter.patch(
       mergedTransferToAccountId
     );
 
+    const repaysId = await resolveRepays(
+      familyId,
+      existing.id,
+      mergedType,
+      mergedAccountId,
+      transferToAccountId,
+      "repaysId" in req.body ? parsed.repaysId ?? null : existing.repaysId,
+      "repaysId" in req.body
+    );
+
     const mergedAmount = parsed.amount ?? Number(existing.amount);
     const mergedDate = parsed.date ? new Date(parsed.date) : existing.date;
     const mergedPayee = "payee" in req.body ? parsed.payee ?? null : existing.payee;
@@ -305,6 +360,7 @@ transactionsRouter.patch(
         status: mergedStatus,
         tags: mergedTags,
         dueDate: mergedDueDate,
+        repaysId,
       },
       include: TRANSACTION_INCLUDE,
     });

@@ -1,26 +1,58 @@
 import { useCallback, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { useFocusEffect, useRouter } from "expo-router";
-import { ChevronLeft, ChevronRight, PiggyBank, Repeat } from "lucide-react-native";
+import { ChevronLeft, ChevronRight, PiggyBank, Plus, Repeat } from "lucide-react-native";
 import { api } from "../../src/api/client";
 import type { Budget, Category, RecurringTransaction } from "../../src/api/types";
 import { useAuth } from "../../src/context/AuthContext";
 import { useTheme } from "../../src/context/ThemeContext";
 import { getErrorMessage } from "../../src/api/errors";
-import { Button, Card, Dot, EmptyState, ErrorText, Field, IconButton, Input, Money, Segmented, SkeletonRows, Toggle } from "../../src/components/ui";
-import { safePercent } from "../../src/lib/format";
+import {
+  Badge,
+  Button,
+  Card,
+  Checkbox,
+  Dot,
+  EmptyState,
+  ErrorText,
+  Field,
+  IconButton,
+  Input,
+  Money,
+  Segmented,
+  Sheet,
+  SkeletonRows,
+  Toggle,
+} from "../../src/components/ui";
+import { formatCurrency, safePercent } from "../../src/lib/format";
 import { MONTH_LABELS } from "../../src/lib/dateUtils";
 import { href } from "../../src/lib/nav";
 import { formatDayShort } from "../../src/lib/recurring";
 import { CategoryPicker } from "../../src/components/CategoryPicker";
+import { NewCategoryForm } from "../../src/components/NewCategoryForm";
 
 type Mode = "monthly" | "yearly";
+
+/** Monthly budgets hold weekly and monthly payments; yearly budgets hold yearly ones. */
+function belongsToMode(rule: RecurringTransaction, mode: Mode) {
+  return mode === "yearly" ? rule.frequency === "YEARLY" : rule.frequency !== "YEARLY";
+}
+
+/** What a repeating payment costs over a budget's period (a weekly one, about 52/12 times a month). */
+function perPeriod(rule: RecurringTransaction) {
+  return rule.frequency === "WEEKLY" ? (rule.amount * 52) / 12 : rule.amount;
+}
+
+function ruleName(rule: RecurringTransaction) {
+  return rule.payee || rule.category?.name || "Repeating payment";
+}
 
 export default function Budgets() {
   const { user } = useAuth();
   const { colors } = useTheme();
   const family = user!.families[0];
   const router = useRouter();
+  const canWrite = family.role !== "VIEWER";
   const [mode, setMode] = useState<Mode>("monthly");
   const [anchor, setAnchor] = useState(() => {
     const now = new Date();
@@ -35,6 +67,9 @@ export default function Budgets() {
   const [editing, setEditing] = useState<Budget | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  // Adding a repeating payment to a budget, or a budget to a repeating payment.
+  const [addingToBudget, setAddingToBudget] = useState<Budget | null>(null);
+  const [placingRule, setPlacingRule] = useState<RecurringTransaction | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -86,6 +121,19 @@ export default function Budgets() {
     }
   }
 
+  /** Counts a repeating payment in a budget (it moves into the budget's category), or takes it out. */
+  async function mapRule(budget: Budget, rule: RecurringTransaction, include: boolean) {
+    setActionError(null);
+    try {
+      const url = `/families/${family.id}/budgets/${budget.id}/recurring/${rule.id}`;
+      if (include) await api.put(url);
+      else await api.delete(url);
+      await load();
+    } catch (err) {
+      setActionError(getErrorMessage(err, include ? "Unable to add it to the budget" : "Unable to take it out of the budget"));
+    }
+  }
+
   function shift(delta: number) {
     setAnchor(({ year, month }) => {
       if (mode === "yearly") return { year: year + delta, month };
@@ -93,6 +141,9 @@ export default function Budgets() {
       return { year: d.getFullYear(), month: d.getMonth() + 1 };
     });
   }
+
+  /** Only the one who set it up (or an admin) can move a repeating payment. */
+  const canMoveRule = (rule: RecurringTransaction) => canWrite && (family.role === "ADMIN" || rule.userId === user!.id);
 
   const periodLabel = mode === "monthly" ? `${MONTH_LABELS[anchor.month - 1]} ${anchor.year}` : String(anchor.year);
   const periodStartLabel =
@@ -105,8 +156,12 @@ export default function Budgets() {
     (acc, b) => ({ amount: acc.amount + b.amount, spent: acc.spent + b.spent, upcoming: acc.upcoming + (b.upcoming ?? 0) }),
     { amount: 0, spent: 0, upcoming: 0 }
   );
-  // Repeating payments that belong to this view: monthly and weekly ones in a month, yearly ones in a year.
-  const periodRules = rules.filter((r) => r.isActive && (mode === "yearly" ? r.frequency === "YEARLY" : r.frequency !== "YEARLY"));
+  // Repeating expenses that belong to this view: monthly and weekly ones in a month, yearly ones in a year.
+  const periodRules = rules.filter((r) => r.isActive && belongsToMode(r, mode));
+  const periodExpenseRules = periodRules.filter((r) => r.type === "EXPENSE");
+  const budgetOf = (rule: RecurringTransaction) => budgets.find((b) => b.recurringIds?.includes(rule.id)) ?? null;
+  // Budgets a payment can be put in: real ones (a future month's preview isn't saved yet).
+  const mappableBudgets = budgets.filter((b) => !b.projected);
 
   return (
     <ScrollView style={{ backgroundColor: colors.canvas }} contentContainerStyle={{ padding: 16, gap: 16 }}>
@@ -148,17 +203,19 @@ export default function Budgets() {
         </Card>
       )}
 
-      <View style={{ flexDirection: "row", justifyContent: "flex-end" }}>
-        <Button
-          title={showAddForm ? "Cancel" : "Add budget"}
-          variant="secondary"
-          size="sm"
-          onPress={() => {
-            setEditing(null);
-            setShowAddForm((v) => !v);
-          }}
-        />
-      </View>
+      {canWrite && (
+        <View style={{ flexDirection: "row", justifyContent: "flex-end" }}>
+          <Button
+            title={showAddForm ? "Cancel" : "Add budget"}
+            variant="secondary"
+            size="sm"
+            onPress={() => {
+              setEditing(null);
+              setShowAddForm((v) => !v);
+            }}
+          />
+        </View>
+      )}
 
       {showAddForm && (
         <BudgetForm
@@ -167,6 +224,9 @@ export default function Budgets() {
           year={anchor.year}
           month={anchor.month}
           categories={availableCategories}
+          allCategories={categories}
+          rules={periodExpenseRules.filter(canMoveRule)}
+          budgetOf={budgetOf}
           onDone={() => {
             setShowAddForm(false);
             load();
@@ -192,6 +252,7 @@ export default function Budgets() {
                   familyId={family.id}
                   mode={mode}
                   budget={b}
+                  categoryIsPersonal={!!categories.find((c) => c.id === b.categoryId)?.ownerId}
                   onDone={() => {
                     setEditing(null);
                     load();
@@ -202,32 +263,40 @@ export default function Budgets() {
             }
             const over = b.spent > b.amount;
             const upcoming = b.upcoming ?? 0;
+            const inBudget = rules.filter((r) => b.recurringIds?.includes(r.id));
+            // Only its owner (or an admin, for a family budget) changes a budget.
+            const canEdit = canWrite && !b.projected && (b.ownerId ? b.ownerId === user!.id : family.role === "ADMIN");
             return (
               <Card key={b.id} style={{ gap: 10 }}>
-                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
                   <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flex: 1 }}>
                     <Dot color={b.category.color} />
-                    <Text style={{ fontWeight: "700", fontSize: 14.5, color: colors.ink }} numberOfLines={1}>
+                    <Text style={{ fontWeight: "700", fontSize: 14.5, color: colors.ink, flexShrink: 1 }} numberOfLines={1}>
                       {b.category.name}
                     </Text>
+                    <Badge tone={b.ownerId ? "neutral" : "brand"}>{b.ownerId ? "Personal" : "Family"}</Badge>
                   </View>
                   {b.projected ? (
-                    <Pressable onPress={() => stopRepeating(b)} hitSlop={8}>
-                      <Text style={{ color: colors.inkSubtle, fontSize: 12, fontWeight: "700" }}>Stop repeating</Text>
-                    </Pressable>
-                  ) : (
-                    <View style={{ flexDirection: "row", gap: 14 }}>
-                      <Pressable onPress={() => setEditing(b)} hitSlop={8}>
-                        <Text style={{ color: colors.brand600, fontSize: 12, fontWeight: "700" }}>Edit</Text>
+                    canWrite && (
+                      <Pressable onPress={() => stopRepeating(b)} hitSlop={8}>
+                        <Text style={{ color: colors.inkSubtle, fontSize: 12, fontWeight: "700" }}>Stop repeating</Text>
                       </Pressable>
-                      {confirmDeleteId === b.id ? (
-                        <Button title="Confirm" size="sm" variant="danger" onPress={() => handleDelete(b.id)} />
-                      ) : (
-                        <Pressable onPress={() => setConfirmDeleteId(b.id)} hitSlop={8}>
-                          <Text style={{ color: colors.inkSubtle, fontSize: 12, fontWeight: "700" }}>Delete</Text>
+                    )
+                  ) : (
+                    canEdit && (
+                      <View style={{ flexDirection: "row", gap: 14 }}>
+                        <Pressable onPress={() => setEditing(b)} hitSlop={8}>
+                          <Text style={{ color: colors.brand600, fontSize: 12, fontWeight: "700" }}>Edit</Text>
                         </Pressable>
-                      )}
-                    </View>
+                        {confirmDeleteId === b.id ? (
+                          <Button title="Confirm" size="sm" variant="danger" onPress={() => handleDelete(b.id)} />
+                        ) : (
+                          <Pressable onPress={() => setConfirmDeleteId(b.id)} hitSlop={8}>
+                            <Text style={{ color: colors.inkSubtle, fontSize: 12, fontWeight: "700" }}>Delete</Text>
+                          </Pressable>
+                        )}
+                      </View>
+                    )
                   )}
                 </View>
                 <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
@@ -247,6 +316,31 @@ export default function Budgets() {
                     repeating payments this {mode === "monthly" ? "month" : "year"}
                   </Text>
                 )}
+
+                {(inBudget.length > 0 || (!b.projected && canWrite)) && (
+                  <View style={{ gap: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: colors.line }}>
+                    {inBudget.map((r) => (
+                      <View key={r.id} style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                        <Repeat size={13} color={colors.inkSubtle} />
+                        <Text style={{ flex: 1, fontSize: 12.5, color: colors.ink }} numberOfLines={1}>
+                          {`${ruleName(r)} · ${formatCurrency(r.amount, r.account.currency)} · next ${formatDayShort(r.nextDate)}`}
+                        </Text>
+                        {!b.projected && canMoveRule(r) && (
+                          <Pressable onPress={() => mapRule(b, r, false)} hitSlop={8}>
+                            <Text style={{ color: colors.inkSubtle, fontSize: 12, fontWeight: "700" }}>Remove</Text>
+                          </Pressable>
+                        )}
+                      </View>
+                    ))}
+                    {!b.projected && canWrite && (
+                      <Pressable onPress={() => setAddingToBudget(b)} hitSlop={6} style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                        <Plus size={13} color={colors.brand600} />
+                        <Text style={{ color: colors.brand600, fontSize: 12.5, fontWeight: "700" }}>Add a repeating payment</Text>
+                      </Pressable>
+                    )}
+                  </View>
+                )}
+
                 {(b.projected || b.repeats || b.rollover) && (
                   <Text style={{ fontSize: 11, color: colors.inkSubtle }}>
                     {[
@@ -278,33 +372,143 @@ export default function Budgets() {
               : "Yearly subscriptions and renewals count toward the yearly budget."}
           </Text>
         ) : (
-          periodRules.map((r) => (
-            <Pressable
-              key={r.id}
-              onPress={() => router.push(href("/recurring-form", { rule: JSON.stringify(r) }))}
-              style={{ flexDirection: "row", alignItems: "center", gap: 10 }}
-            >
-              <Dot color={r.category?.color ?? colors.inkSubtle} />
-              <View style={{ flex: 1, minWidth: 0 }}>
-                <Text style={{ fontSize: 13, fontWeight: "700", color: colors.ink }} numberOfLines={1}>
-                  {r.payee || r.category?.name || "Repeating payment"}
-                </Text>
-                <Text style={{ fontSize: 11.5, color: colors.inkSubtle }} numberOfLines={1}>
-                  {[`Next ${formatDayShort(r.nextDate)}`, r.category?.name ?? "No category"].join(" · ")}
-                </Text>
+          periodRules.map((r) => {
+            const budget = r.type === "EXPENSE" ? budgetOf(r) : null;
+            const placeable = r.type === "EXPENSE" && !budget && canMoveRule(r) && mappableBudgets.length > 0;
+            return (
+              <View key={r.id} style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+                <Pressable
+                  onPress={() => router.push(href("/recurring-form", { rule: JSON.stringify(r) }))}
+                  style={{ flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 10 }}
+                >
+                  <Dot color={r.category?.color ?? colors.inkSubtle} />
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text style={{ fontSize: 13, fontWeight: "700", color: colors.ink }} numberOfLines={1}>
+                      {ruleName(r)}
+                    </Text>
+                    <Text style={{ fontSize: 11.5, color: budget || r.type === "INCOME" ? colors.inkSubtle : colors.warn }} numberOfLines={1}>
+                      {[
+                        `Next ${formatDayShort(r.nextDate)}`,
+                        r.type === "INCOME" ? r.category?.name ?? "Income" : budget ? `In ${budget.category.name} budget` : "Not in a budget",
+                      ].join(" · ")}
+                    </Text>
+                  </View>
+                  <Money
+                    amount={r.type === "EXPENSE" ? -r.amount : r.amount}
+                    currency={r.account.currency}
+                    tone={r.type === "EXPENSE" ? "expense" : "income"}
+                    signed
+                    style={{ fontSize: 13, fontWeight: "800" }}
+                  />
+                </Pressable>
+                {placeable && (
+                  <Pressable onPress={() => setPlacingRule(r)} hitSlop={8}>
+                    <Text style={{ color: colors.brand600, fontSize: 12, fontWeight: "700" }}>Add to budget</Text>
+                  </Pressable>
+                )}
               </View>
-              <Money
-                amount={r.type === "EXPENSE" ? -r.amount : r.amount}
-                currency={r.account.currency}
-                tone={r.type === "EXPENSE" ? "expense" : "income"}
-                signed
-                style={{ fontSize: 13, fontWeight: "800" }}
-              />
-            </Pressable>
-          ))
+            );
+          })
         )}
       </Card>
+
+      <ChoiceSheet
+        visible={!!addingToBudget}
+        title={addingToBudget ? `Add to ${addingToBudget.category.name}` : ""}
+        empty={
+          mode === "monthly"
+            ? "No other monthly or weekly repeating expenses. Add one under Repeating payments."
+            : "No other yearly repeating expenses. Add one under Repeating payments."
+        }
+        hint="It moves into this budget's category, along with what it already paid this period."
+        options={periodExpenseRules
+          .filter((r) => canMoveRule(r) && !addingToBudget?.recurringIds?.includes(r.id))
+          .map((r) => {
+            const current = budgetOf(r);
+            return {
+              key: r.id,
+              label: ruleName(r),
+              detail: [formatCurrency(r.amount, r.account.currency), current ? `now in ${current.category.name}` : r.category?.name ?? "no category"].join(" · "),
+              onPress: () => {
+                const target = addingToBudget!;
+                setAddingToBudget(null);
+                mapRule(target, r, true);
+              },
+            };
+          })}
+        onClose={() => setAddingToBudget(null)}
+      />
+
+      <ChoiceSheet
+        visible={!!placingRule}
+        title={placingRule ? `Count ${ruleName(placingRule)} in` : ""}
+        empty="Add a budget first."
+        hint="It moves into that budget's category, along with what it already paid this period."
+        options={mappableBudgets.map((b) => ({
+          key: b.id,
+          label: b.category.name,
+          detail: `${b.ownerId ? "Personal" : "Family"} · ${formatCurrency(b.amount, family.currency)}`,
+          color: b.category.color,
+          onPress: () => {
+            const rule = placingRule!;
+            setPlacingRule(null);
+            mapRule(b, rule, true);
+          },
+        }))}
+        onClose={() => setPlacingRule(null)}
+      />
     </ScrollView>
+  );
+}
+
+function ChoiceSheet({
+  visible,
+  title,
+  hint,
+  empty,
+  options,
+  onClose,
+}: {
+  visible: boolean;
+  title: string;
+  hint: string;
+  empty: string;
+  options: { key: string; label: string; detail: string; color?: string; onPress: () => void }[];
+  onClose: () => void;
+}) {
+  const { colors } = useTheme();
+  return (
+    <Sheet visible={visible} onClose={onClose} title={title}>
+      <ScrollView style={{ maxHeight: 420 }} contentContainerStyle={{ gap: 4, paddingBottom: 12 }}>
+        <Text style={{ fontSize: 12, color: colors.inkSubtle, marginBottom: 6 }}>{options.length === 0 ? empty : hint}</Text>
+        {options.map((o) => (
+          <Pressable
+            key={o.key}
+            onPress={o.onPress}
+            style={({ pressed }) => ({
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 10,
+              paddingVertical: 12,
+              paddingHorizontal: 4,
+              borderRadius: 12,
+              backgroundColor: pressed ? colors.surfaceSunken : "transparent",
+            })}
+          >
+            {o.color ? <Dot color={o.color} /> : <Repeat size={15} color={colors.inkSubtle} />}
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={{ fontSize: 14, fontWeight: "700", color: colors.ink }} numberOfLines={1}>
+                {o.label}
+              </Text>
+              <Text style={{ fontSize: 12, color: colors.inkSubtle, marginTop: 2 }} numberOfLines={1}>
+                {o.detail}
+              </Text>
+            </View>
+            <ChevronRight size={16} color={colors.inkSubtle} />
+          </Pressable>
+        ))}
+      </ScrollView>
+    </Sheet>
   );
 }
 
@@ -337,6 +541,9 @@ function BudgetForm({
   year,
   month,
   categories,
+  allCategories,
+  rules,
+  budgetOf,
   onDone,
   onCancel,
 }: {
@@ -344,22 +551,42 @@ function BudgetForm({
   mode: Mode;
   year: number;
   month: number;
+  /** Expense categories without a budget in this period yet. */
   categories: Category[];
+  allCategories: Category[];
+  /** Repeating expenses of this period the user may move into the new budget. */
+  rules: RecurringTransaction[];
+  budgetOf: (rule: RecurringTransaction) => Budget | null;
   onDone: () => void;
   onCancel: () => void;
 }) {
   const { colors } = useTheme();
+  const [created, setCreated] = useState<Category[]>([]);
   const [categoryId, setCategoryId] = useState<string | null>(null);
+  const [addingCategory, setAddingCategory] = useState(false);
   const [amount, setAmount] = useState("");
   const [repeats, setRepeats] = useState(true);
   const [rollover, setRollover] = useState(false);
-  const [isCommon, setIsCommon] = useState(true);
+  const [isCommon, setIsCommon] = useState(false);
+  const [ruleIds, setRuleIds] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  const choices = [...categories, ...created];
+  const category = choices.find((c) => c.id === categoryId) ?? null;
+  // A family budget on a category only you can see would show others an unnamed budget.
+  const categoryIsPersonal = !!category?.ownerId;
   const amountValue = Number(amount);
   const canSubmit = !!categoryId && amount.trim().length > 0 && amountValue > 0;
   const monthly = mode === "monthly";
+  const chosenRules = rules.filter((r) => ruleIds.includes(r.id));
+  const chosenTotal = chosenRules.reduce((sum, r) => sum + perPeriod(r), 0);
+
+  function selectCategory(id: string) {
+    setCategoryId(id);
+    // Payments already in this category count anyway; start with them ticked.
+    setRuleIds((ids) => [...new Set([...ids, ...rules.filter((r) => r.categoryId === id).map((r) => r.id)])]);
+  }
 
   async function handleSubmit() {
     setError(null);
@@ -371,7 +598,8 @@ function BudgetForm({
         year,
         ...(monthly ? { month, period: "MONTHLY", rollover } : { period: "ANNUAL" }),
         repeats,
-        isCommon,
+        isCommon: isCommon && !categoryIsPersonal,
+        recurringIds: ruleIds,
       });
       onDone();
     } catch (err) {
@@ -383,12 +611,73 @@ function BudgetForm({
   return (
     <Card style={{ gap: 14 }}>
       <Field label="Category">
-        {categories.length === 0 ? (
-          <Text style={{ color: colors.inkSubtle, fontSize: 13 }}>All expense categories already have a budget for this {monthly ? "month" : "year"}.</Text>
-        ) : (
-          <CategoryPicker categories={categories} selectedId={categoryId} onSelect={setCategoryId} />
-        )}
+        <View style={{ gap: 12 }}>
+          {choices.length === 0 && !addingCategory ? (
+            <Text style={{ color: colors.inkSubtle, fontSize: 13 }}>All expense categories already have a budget for this {monthly ? "month" : "year"}.</Text>
+          ) : null}
+          <CategoryPicker
+            categories={choices}
+            selectedId={categoryId}
+            onSelect={selectCategory}
+            onAddNew={addingCategory ? undefined : () => setAddingCategory(true)}
+          />
+          {addingCategory && (
+            <NewCategoryForm
+              familyId={familyId}
+              type="EXPENSE"
+              taken={allCategories}
+              onCreated={(c) => {
+                setCreated((list) => [...list, c]);
+                selectCategory(c.id);
+                setAddingCategory(false);
+              }}
+              onCancel={() => setAddingCategory(false)}
+            />
+          )}
+        </View>
       </Field>
+
+      {rules.length > 0 && (
+        <Field
+          label="Repeating payments in this budget"
+          hint={
+            chosenRules.length > 0
+              ? `They move into this budget's category. About ${formatCurrency(chosenTotal, chosenRules[0].account.currency)} a ${monthly ? "month" : "year"}.`
+              : "Tick the rent, salaries or subscriptions this budget should cover."
+          }
+        >
+          <View style={{ gap: 10 }}>
+            {rules.map((r) => {
+              const current = budgetOf(r);
+              const checked = ruleIds.includes(r.id);
+              return (
+                <Pressable
+                  key={r.id}
+                  onPress={() => setRuleIds((ids) => (checked ? ids.filter((id) => id !== r.id) : [...ids, r.id]))}
+                  style={{ flexDirection: "row", alignItems: "center", gap: 10 }}
+                >
+                  <Checkbox checked={checked} onChange={(next) => setRuleIds((ids) => (next ? [...ids, r.id] : ids.filter((id) => id !== r.id)))} />
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text style={{ fontSize: 13, fontWeight: "700", color: colors.ink }} numberOfLines={1}>
+                      {ruleName(r)}
+                    </Text>
+                    <Text style={{ fontSize: 11.5, color: colors.inkSubtle }} numberOfLines={1}>
+                      {[formatCurrency(r.amount, r.account.currency), current ? `now in ${current.category.name}` : r.category?.name ?? "no category"].join(" · ")}
+                    </Text>
+                  </View>
+                </Pressable>
+              );
+            })}
+            {chosenTotal > 0 && Math.abs(chosenTotal - amountValue) > 0.005 && (
+              <Pressable onPress={() => setAmount(String(Math.round(chosenTotal * 100) / 100))} hitSlop={6}>
+                <Text style={{ color: colors.brand600, fontSize: 12.5, fontWeight: "700" }}>
+                  Use their total as the amount ({formatCurrency(chosenTotal, chosenRules[0].account.currency)})
+                </Text>
+              </Pressable>
+            )}
+          </View>
+        </Field>
+      )}
 
       <Field label={monthly ? "Monthly amount" : "Yearly amount"}>
         <Input keyboardType="decimal-pad" value={amount} onChangeText={setAmount} placeholder="0.00" />
@@ -401,7 +690,19 @@ function BudgetForm({
         onChange={setRepeats}
       />
       {monthly && <ToggleRow label="Roll over unused amount" value={rollover} onChange={setRollover} />}
-      <ToggleRow label="Shared family budget" value={isCommon} onChange={setIsCommon} />
+      <ToggleRow
+        label="Family budget"
+        hint={
+          categoryIsPersonal
+            ? "Its category is personal, so this budget is personal too."
+            : isCommon
+              ? "Everyone in the family can see it."
+              : "Personal — only you can see it."
+        }
+        value={isCommon && !categoryIsPersonal}
+        onChange={setIsCommon}
+        disabled={categoryIsPersonal}
+      />
 
       <ErrorText>{error}</ErrorText>
       <View style={{ flexDirection: "row", gap: 8 }}>
@@ -416,7 +717,19 @@ function BudgetForm({
   );
 }
 
-function ToggleRow({ label, hint, value, onChange }: { label: string; hint?: string; value: boolean; onChange: (v: boolean) => void }) {
+function ToggleRow({
+  label,
+  hint,
+  value,
+  onChange,
+  disabled,
+}: {
+  label: string;
+  hint?: string;
+  value: boolean;
+  onChange: (v: boolean) => void;
+  disabled?: boolean;
+}) {
   const { colors } = useTheme();
   return (
     <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
@@ -424,7 +737,7 @@ function ToggleRow({ label, hint, value, onChange }: { label: string; hint?: str
         <Text style={{ fontSize: 13, fontWeight: "600", color: colors.ink }}>{label}</Text>
         {hint && <Text style={{ fontSize: 12, color: colors.inkSubtle, marginTop: 2 }}>{hint}</Text>}
       </View>
-      <Toggle value={value} onChange={onChange} />
+      <Toggle value={value} onChange={onChange} disabled={disabled} />
     </View>
   );
 }
@@ -433,12 +746,14 @@ function BudgetEditForm({
   familyId,
   mode,
   budget,
+  categoryIsPersonal,
   onDone,
   onCancel,
 }: {
   familyId: string;
   mode: Mode;
   budget: Budget;
+  categoryIsPersonal: boolean;
   onDone: () => void;
   onCancel: () => void;
 }) {
@@ -446,6 +761,7 @@ function BudgetEditForm({
   const [amount, setAmount] = useState(String(budget.amount));
   const [rollover, setRollover] = useState(budget.rollover);
   const [repeats, setRepeats] = useState(budget.repeats);
+  const [isCommon, setIsCommon] = useState(budget.ownerId === null);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const monthly = mode === "monthly";
@@ -457,7 +773,7 @@ function BudgetEditForm({
     setError(null);
     setIsSubmitting(true);
     try {
-      await api.patch(`/families/${familyId}/budgets/${budget.id}`, { amount: amountValue, rollover, repeats });
+      await api.patch(`/families/${familyId}/budgets/${budget.id}`, { amount: amountValue, rollover, repeats, isCommon });
       onDone();
     } catch (err) {
       setError(getErrorMessage(err, "Unable to update budget"));
@@ -473,6 +789,19 @@ function BudgetEditForm({
       </Field>
       <ToggleRow label={monthly ? "Add to upcoming months" : "Repeat every year"} value={repeats} onChange={setRepeats} />
       {monthly && <ToggleRow label="Roll over unused amount" value={rollover} onChange={setRollover} />}
+      <ToggleRow
+        label="Family budget"
+        hint={
+          categoryIsPersonal && !isCommon
+            ? "Its category is personal — share the category with the family first."
+            : isCommon
+              ? "Everyone in the family can see it."
+              : "Personal — only you can see it."
+        }
+        value={isCommon}
+        onChange={setIsCommon}
+        disabled={categoryIsPersonal && !isCommon}
+      />
       <ErrorText>{error}</ErrorText>
       <View style={{ flexDirection: "row", gap: 8 }}>
         <View style={{ flex: 1 }}>

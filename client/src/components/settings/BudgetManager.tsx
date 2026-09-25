@@ -238,7 +238,7 @@ function BudgetFormModal({
   const [categoryId, setCategoryId] = useState(budget?.categoryId ?? categories[0]?.id ?? "");
   const [amount, setAmount] = useState(budget ? String(budget.amount) : "");
   const [rollover, setRollover] = useState(budget?.rollover ?? false);
-  const [isCommon, setIsCommon] = useState(budget ? budget.ownerId === null : true);
+  const [isCommon, setIsCommon] = useState(budget ? budget.ownerId === null : false);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 

@@ -141,7 +141,7 @@ export default function AccountsScreen() {
       {isLoading ? (
         <SkeletonRows rows={4} />
       ) : ownAccounts.length === 0 ? (
-        <EmptyState icon={<Wallet size={20} color={colors.brand600} />} title="No accounts yet" description="Add a common family account or a private one of your own." />
+        <EmptyState icon={<Wallet size={20} color={colors.brand600} />} title="No accounts yet" description="Add a personal account, or a family one everyone can use." />
       ) : (
         GROUPS.map((group) => {
           const groupAccounts = ownAccounts.filter((a) => group.types.includes(a.type));
@@ -189,7 +189,7 @@ export default function AccountsScreen() {
                                 <Text style={{ fontWeight: "700", color: colors.ink }}>{account.name}</Text>
                                 <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 3 }}>
                                   <Text style={{ color: colors.inkSubtle, fontSize: 12 }}>{humanizeEnum(account.type)}</Text>
-                                  <Badge tone={account.owner ? "neutral" : "brand"}>{account.owner ? account.owner.name : "Shared"}</Badge>
+                                  <Badge tone={account.owner ? "neutral" : "brand"}>{account.owner ? "Personal" : "Family"}</Badge>
                                 </View>
                               </View>
                             </Pressable>
@@ -274,6 +274,7 @@ function AccountForm({
         await api.patch(`/families/${familyId}/accounts/${initial.id}`, {
           name,
           type,
+          ...(isCommon !== (initial.owner === null) ? { isCommon } : {}),
           openingBalance: Number(openingBalance) || 0,
           creditLimit: creditLimit.trim() ? Number(creditLimit) : undefined,
         });
@@ -317,12 +318,17 @@ function AccountForm({
         <Input keyboardType="decimal-pad" value={creditLimit} onChangeText={setCreditLimit} placeholder="Optional" />
       </Field>
 
-      {!isEdit && (
-        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-          <Text style={{ fontSize: 13, fontWeight: "600", color: colors.ink }}>Shared family account</Text>
-          <Toggle value={isCommon} onChange={setIsCommon} />
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+        <View style={{ flex: 1 }}>
+          <Text style={{ fontSize: 13, fontWeight: "600", color: colors.ink }}>Family account</Text>
+          <Text style={{ fontSize: 12, color: colors.inkSubtle, marginTop: 2 }}>
+            {isCommon
+              ? "Everyone in the family can see it and add to it. Only an admin can change it."
+              : "Personal — only you can see it."}
+          </Text>
         </View>
-      )}
+        <Toggle value={isCommon} onChange={setIsCommon} />
+      </View>
 
       <ErrorText>{error}</ErrorText>
       <View style={{ flexDirection: "row", gap: 8 }}>

@@ -1,7 +1,7 @@
 import { useCallback, useLayoutEffect, useMemo, useState, type ReactNode } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { useFocusEffect, useLocalSearchParams, useNavigation, useRouter } from "expo-router";
-import { ArrowDownLeft, ArrowUpRight, CheckCircle2, Pencil, ShoppingBag, Trash2 } from "lucide-react-native";
+import { ArrowDownLeft, ArrowUpRight, CheckCircle2, Pencil, ShoppingBag, Trash2, Undo2 } from "lucide-react-native";
 import { api } from "../../src/api/client";
 import type { Account, Transaction } from "../../src/api/types";
 import { useAuth } from "../../src/context/AuthContext";
@@ -64,13 +64,14 @@ export default function LendingPerson() {
   const openLoans = loans.filter((l) => !l.settled);
   const returnedLoans = loans.filter((l) => l.settled);
 
-  function record(kind: LendingKind, amount?: number) {
+  function record(kind: LendingKind, amount?: number, repaysId?: string) {
     router.push(
       href("/transaction-form", {
         type: "LENDING",
         kind,
         personId: id,
         ...(amount ? { amount: String(Number(amount.toFixed(2))) } : {}),
+        ...(repaysId ? { repaysId } : {}),
       })
     );
   }
@@ -168,7 +169,19 @@ export default function LendingPerson() {
         <Section title="Waiting to be returned">
           <Card style={{ padding: 0 }}>
             {openLoans.map((loan, i) => (
-              <LoanRow key={i} loan={loan} currency={person.currency} first={i === 0} onPress={loan.transaction ? () => openTransaction(loan.transaction!) : undefined} />
+              <LoanRow
+                key={i}
+                loan={loan}
+                currency={person.currency}
+                first={i === 0}
+                onPress={loan.transaction ? () => openTransaction(loan.transaction!) : undefined}
+                onOpenRepayment={openTransaction}
+                onRecordReturn={
+                  canRecord
+                    ? () => record(loan.direction === "lent" ? "got-back" : "paid-back", loan.remaining, loan.transaction?.id)
+                    : undefined
+                }
+              />
             ))}
           </Card>
         </Section>
@@ -178,7 +191,14 @@ export default function LendingPerson() {
         <Section title="Returned">
           <Card style={{ padding: 0 }}>
             {returnedLoans.map((loan, i) => (
-              <LoanRow key={i} loan={loan} currency={person.currency} first={i === 0} onPress={loan.transaction ? () => openTransaction(loan.transaction!) : undefined} />
+              <LoanRow
+                key={i}
+                loan={loan}
+                currency={person.currency}
+                first={i === 0}
+                onPress={loan.transaction ? () => openTransaction(loan.transaction!) : undefined}
+                onOpenRepayment={openTransaction}
+              />
             ))}
           </Card>
         </Section>
@@ -190,7 +210,14 @@ export default function LendingPerson() {
         ) : (
           <Card style={{ padding: 0 }}>
             {history.map((t, i) => (
-              <HistoryRow key={t.id} transaction={t} personId={person.id} first={i === 0} onPress={() => openTransaction(t)} />
+              <HistoryRow
+                key={t.id}
+                transaction={t}
+                personId={person.id}
+                repays={t.repaysId ? history.find((h) => h.id === t.repaysId) ?? null : null}
+                first={i === 0}
+                onPress={() => openTransaction(t)}
+              />
             ))}
           </Card>
         )}
@@ -263,8 +290,22 @@ function ButtonPair({ primary, secondary }: { primary: PairButton; secondary: Pa
   );
 }
 
-/** One loan and how much of it has come back. */
-function LoanRow({ loan, currency, first, onPress }: { loan: Loan; currency: string; first: boolean; onPress?: () => void }) {
+/** One loan, how much of it has come back and which entries returned it. */
+function LoanRow({
+  loan,
+  currency,
+  first,
+  onPress,
+  onOpenRepayment,
+  onRecordReturn,
+}: {
+  loan: Loan;
+  currency: string;
+  first: boolean;
+  onPress?: () => void;
+  onOpenRepayment: (t: Transaction) => void;
+  onRecordReturn?: () => void;
+}) {
   const { colors } = useTheme();
   const lent = loan.direction === "lent";
   const title = loan.transaction
@@ -314,11 +355,44 @@ function LoanRow({ loan, currency, first, onPress }: { loan: Loan; currency: str
           </Text>
         )}
       </View>
+      {loan.repayments.length > 0 && (
+        <View style={{ gap: 6, paddingLeft: 28 }}>
+          {loan.repayments.map((r, i) => (
+            <Pressable key={`${r.transaction.id}-${i}`} onPress={() => onOpenRepayment(r.transaction)} hitSlop={4} style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+              <Undo2 size={13} color={colors.inkSubtle} />
+              <Text style={{ flex: 1, fontSize: 12, color: colors.inkMuted }} numberOfLines={1}>
+                {`${formatCurrency(r.amount, currency)} returned ${formatDay(new Date(r.transaction.date))}`}
+                {r.transaction.repaysId === loan.transaction?.id ? "" : " · matched automatically"}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+      )}
+      {onRecordReturn && !loan.settled && (
+        <Pressable onPress={onRecordReturn} hitSlop={6} style={{ alignSelf: "flex-start", paddingLeft: 28 }}>
+          <Text style={{ fontSize: 12.5, fontWeight: "700", color: colors.brand600 }}>
+            {loan.direction === "lent" ? "Record money got back" : "Record paying back"}
+          </Text>
+        </Pressable>
+      )}
     </Pressable>
   );
 }
 
-function HistoryRow({ transaction, personId, first, onPress }: { transaction: Transaction; personId: string; first: boolean; onPress: () => void }) {
+function HistoryRow({
+  transaction,
+  personId,
+  repays,
+  first,
+  onPress,
+}: {
+  transaction: Transaction;
+  personId: string;
+  /** The loan this entry pays back, when it was linked to one. */
+  repays: Transaction | null;
+  first: boolean;
+  onPress: () => void;
+}) {
   const { colors } = useTheme();
   const { effect, label, detail } = describeEntry(transaction, personId);
   const isExpense = transaction.type === "EXPENSE";
@@ -343,6 +417,11 @@ function HistoryRow({ transaction, personId, first, onPress }: { transaction: Tr
         <Text style={{ fontSize: 12, color: colors.inkSubtle, marginTop: 2 }} numberOfLines={1}>
           {[date, transaction.category?.name, detail].filter(Boolean).join(" · ")}
         </Text>
+        {repays ? (
+          <Text style={{ fontSize: 12, color: colors.brand600, marginTop: 2 }} numberOfLines={1}>
+            {`Pays back “${repays.payee || "loan"}” · ${formatDay(new Date(repays.date))}`}
+          </Text>
+        ) : null}
         {transaction.notes ? (
           <Text style={{ fontSize: 12, color: colors.inkMuted, marginTop: 2 }} numberOfLines={2}>
             {transaction.notes}

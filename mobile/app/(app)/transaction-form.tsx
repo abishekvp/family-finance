@@ -9,6 +9,7 @@ import { useTheme } from "../../src/context/ThemeContext";
 import { ClientError, getErrorMessage } from "../../src/api/errors";
 import { Button, Chip, ErrorText, Field, Input, Segmented, SkeletonRows, Toggle } from "../../src/components/ui";
 import { CategoryPicker } from "../../src/components/CategoryPicker";
+import { NewCategoryForm } from "../../src/components/NewCategoryForm";
 import { currencySymbol } from "../../src/lib/format";
 import { localDateInput } from "../../src/lib/dateUtils";
 import { href } from "../../src/lib/nav";
@@ -21,9 +22,12 @@ import {
   isPerson,
   kindOf,
   kindTag,
+  loanLabel,
   moneyGoesOut,
   parseKind,
+  repaidDirection,
   startsLoan,
+  trackLoans,
   withoutKindTag,
   type LendingKind,
 } from "../../src/lib/lending";
@@ -62,8 +66,8 @@ export default function TransactionForm() {
   const family = user!.families[0];
   const router = useRouter();
   const navigation = useNavigation();
-  // `type`, `accountId`, `personId`, `kind` and `amount` preset a new entry; `source=widget` marks a
-  // home-screen quick add.
+  // `type`, `accountId`, `personId`, `kind`, `amount` and `repaysId` preset a new entry;
+  // `source=widget` marks a home-screen quick add.
   const params = useLocalSearchParams<{
     id?: string;
     transaction?: string;
@@ -72,6 +76,7 @@ export default function TransactionForm() {
     personId?: string;
     kind?: string;
     amount?: string;
+    repaysId?: string;
     source?: string;
   }>();
 
@@ -139,6 +144,10 @@ export default function TransactionForm() {
   const [newPersonName, setNewPersonName] = useState("");
   const [sharePerson, setSharePerson] = useState(false);
   const [dueDate, setDueDate] = useState(initial?.dueDate ? localDateInput(new Date(initial.dueDate)) : "");
+  // A return pays back this lend/borrow entry first; null matches it to the oldest open loans.
+  const [repaysId, setRepaysId] = useState<string | null>(initial?.repaysId ?? params.repaysId ?? null);
+  const [personHistory, setPersonHistory] = useState<Transaction[]>([]);
+  const [addingCategory, setAddingCategory] = useState(false);
   // A person created by a save whose transaction then failed — reused on retry, never created twice.
   const createdPerson = useRef<Account | null>(null);
   // "Repeat" on a new income or expense: this transaction becomes the first of a repeating payment.
@@ -190,6 +199,32 @@ export default function TransactionForm() {
   const person = isLending && !addingPerson ? people.find((p) => p.id === personId) ?? null : null;
   const personName = addingPerson ? newPersonName.trim() : person?.name ?? "";
   const hasPerson = addingPerson ? personName.length > 0 : !!person;
+
+  // A return can say which loan it pays back. This entry's own earlier save is left out, so the
+  // loans read as they stood before it.
+  const repaying = isLending && person ? repaidDirection(kind) : null;
+  const personLoanId = repaying ? person!.id : null;
+  useEffect(() => {
+    if (!personLoanId) return;
+    let cancelled = false;
+    api
+      .get<Transaction[]>(`/families/${family.id}/transactions`, { params: { accountId: personLoanId, limit: 1000 } })
+      .then((res) => {
+        if (!cancelled) setPersonHistory(res.data);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [family.id, personLoanId]);
+  const openLoans = useMemo(() => {
+    if (!repaying || !person) return [];
+    const history = personHistory.filter((t) => t.id !== initial?.id && (t.accountId === person.id || t.transferToAccountId === person.id));
+    return trackLoans(history, person).filter((l) => l.transaction && l.direction === repaying && (!l.settled || l.transaction.id === repaysId));
+  }, [repaying, person, personHistory, initial?.id, repaysId]);
+  const linkedLoan = openLoans.find((l) => l.transaction!.id === repaysId) ?? null;
+  // New categories are income or expense; for Lend/Borrow, by which way the money went.
+  const newCategoryType = isLending ? (moneyGoesOut(kind) ? "EXPENSE" : "INCOME") : type === "INCOME" ? "INCOME" : "EXPENSE";
 
   const amountValue = Number(amount);
   const canSubmit =
@@ -248,6 +283,7 @@ export default function TransactionForm() {
   function buildPayload(personAccountId: string | null): Record<string, unknown> {
     const trimmedDate = date.trim();
     const parsed = parseDay(trimmedDate)!;
+    const payloadRepaysId = repaying ? repaysId : null;
     // Keep the original time (SMS imports carry the alert's) unless the day itself was changed.
     // A new entry for today keeps the current time, so it sorts after today's earlier ones.
     const unchangedDay = initial && trimmedDate === localDateInput(new Date(initial.date));
@@ -266,6 +302,7 @@ export default function TransactionForm() {
         payee: entryLabel(kind, personName),
         notes: notes.trim() || null,
         dueDate: due,
+        repaysId: payloadRepaysId,
         tags: [...withoutKindTag(initial?.tags ?? []), kindTag(kind)],
       };
     }
@@ -280,7 +317,7 @@ export default function TransactionForm() {
       payee: payee.trim() || null,
       notes: notes.trim() || null,
       // An entry turned from Lend/Borrow into something else stops being a loan.
-      ...(initial ? { tags: withoutKindTag(initial.tags), dueDate: null } : {}),
+      ...(initial ? { tags: withoutKindTag(initial.tags), dueDate: null, repaysId: null } : {}),
     };
   }
 
@@ -337,6 +374,7 @@ export default function TransactionForm() {
         setPayee("");
         setNotes("");
         setDueDate("");
+        setRepaysId(null);
         setRepeat(null);
         setDate(todayIso());
         if (isLending) {
@@ -408,7 +446,15 @@ export default function TransactionForm() {
           <View style={{ gap: 8 }}>
             <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
               {LENDING_KINDS.map((k) => (
-                <Chip key={k.value} label={k.label} selected={kind === k.value} onPress={() => setKind(k.value)} />
+                <Chip
+                  key={k.value}
+                  label={k.label}
+                  selected={kind === k.value}
+                  onPress={() => {
+                    setKind(k.value);
+                    setRepaysId(null);
+                  }}
+                />
               ))}
             </View>
             <Text style={{ color: colors.inkSubtle, fontSize: 12 }}>
@@ -456,6 +502,7 @@ export default function TransactionForm() {
                   selected={!addingPerson && personId === p.id}
                   onPress={() => {
                     setAddingPerson(false);
+                    if (p.id !== personId) setRepaysId(null);
                     setPersonId(p.id);
                   }}
                 />
@@ -465,7 +512,10 @@ export default function TransactionForm() {
                   label="New person"
                   icon={<Plus size={13} color={addingPerson ? colors.white : colors.inkMuted} />}
                   selected={addingPerson}
-                  onPress={() => setAddingPerson(true)}
+                  onPress={() => {
+                    setAddingPerson(true);
+                    setRepaysId(null);
+                  }}
                 />
               )}
             </View>
@@ -481,6 +531,32 @@ export default function TransactionForm() {
                 </View>
               </View>
             )}
+          </Field>
+        )}
+
+        {repaying && openLoans.length > 0 && (
+          <Field
+            label="Pays back"
+            hint={
+              linkedLoan && amountValue > linkedLoan.remaining + 0.005
+                ? `That's more than is left on this loan; the rest settles older ones with ${person!.name} first.`
+                : "Link it to the loan it returns, so you can see exactly what came back."
+            }
+          >
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+              <Chip label="Oldest loans first" selected={!linkedLoan} onPress={() => setRepaysId(null)} />
+              {openLoans.map((loan) => (
+                <Chip
+                  key={loan.transaction!.id}
+                  label={loanLabel(loan, person!.currency)}
+                  selected={linkedLoan === loan}
+                  onPress={() => {
+                    setRepaysId(loan.transaction!.id);
+                    if (!amount.trim() && loan.remaining > 0) setAmount(String(Number(loan.remaining.toFixed(2))));
+                  }}
+                />
+              ))}
+            </View>
           </Field>
         )}
 
@@ -539,16 +615,28 @@ export default function TransactionForm() {
             )}
           </Field>
         ) : (
-          <Field label="Category" hint={isLending ? "Optional — what it was for. Tap again to clear." : undefined}>
-            {categoriesForType.length === 0 ? (
-              <Text style={{ color: colors.inkSubtle, fontSize: 13 }}>No {isLending ? "" : `${type.toLowerCase()} `}categories yet.</Text>
-            ) : (
+          <Field label="Category" hint={isLending ? "Optional — what it was for. Tap again to clear." : "Tap again to clear."}>
+            <View style={{ gap: 12 }}>
               <CategoryPicker
                 categories={categoriesForType}
                 selectedId={categoryId}
-                onSelect={(id) => setCategoryId(isLending && id === categoryId ? null : id)}
+                onSelect={(id) => setCategoryId(id === categoryId ? null : id)}
+                onAddNew={family.role !== "VIEWER" && !addingCategory ? () => setAddingCategory(true) : undefined}
               />
-            )}
+              {addingCategory && (
+                <NewCategoryForm
+                  familyId={family.id}
+                  type={newCategoryType}
+                  taken={categories}
+                  onCreated={(created) => {
+                    setCategories((list) => [...list, created]);
+                    setCategoryId(created.id);
+                    setAddingCategory(false);
+                  }}
+                  onCancel={() => setAddingCategory(false)}
+                />
+              )}
+            </View>
           </Field>
         )}
 

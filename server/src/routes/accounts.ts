@@ -115,6 +115,8 @@ const updateAccountSchema = z.object({
   icon: z.string().trim().optional(),
   openingBalance: z.number().finite().optional(),
   creditLimit: z.number().finite().optional(),
+  // true = shared with the family, false = personal to the requester.
+  isCommon: z.boolean().optional(),
 });
 
 accountsRouter.patch(
@@ -133,6 +135,29 @@ accountsRouter.patch(
 
     const data = updateAccountSchema.parse(req.body);
 
+    const wasCommon = existing.ownerId === null;
+    const becomesCommon = data.isCommon !== undefined && data.isCommon !== wasCommon ? data.isCommon : null;
+    if (becomesCommon === false) {
+      // Other members would lose sight of their own entries on it.
+      const [othersTransactions, othersRepeating, othersGoals] = await Promise.all([
+        prisma.transaction.count({
+          where: { familyId, isDeleted: false, userId: { not: requesterId }, OR: [{ accountId: existing.id }, { transferToAccountId: existing.id }] },
+        }),
+        prisma.recurringTransaction.count({ where: { familyId, accountId: existing.id, userId: { not: requesterId } } }),
+        prisma.goal.count({ where: { familyId, accountId: existing.id, OR: [{ ownerId: null }, { ownerId: { not: requesterId } }] } }),
+      ]);
+      if (othersTransactions > 0 || othersRepeating > 0 || othersGoals > 0) {
+        const uses = [
+          othersTransactions > 0 ? `${othersTransactions} transaction${othersTransactions === 1 ? "" : "s"}` : null,
+          othersRepeating > 0 ? `${othersRepeating} repeating payment${othersRepeating === 1 ? "" : "s"}` : null,
+          othersGoals > 0 ? `${othersGoals} shared goal${othersGoals === 1 ? "" : "s"}` : null,
+        ]
+          .filter(Boolean)
+          .join(" and ");
+        throw new AppError(409, `It can't be made personal: other family members use it in ${uses}.`);
+      }
+    }
+
     const updated = await prisma.account.update({
       where: { id: existing.id },
       data: {
@@ -142,6 +167,7 @@ accountsRouter.patch(
         ...(data.icon !== undefined ? { icon: data.icon } : {}),
         ...(data.openingBalance !== undefined ? { openingBalance: data.openingBalance } : {}),
         ...(data.creditLimit !== undefined ? { creditLimit: data.creditLimit } : {}),
+        ...(becomesCommon !== null ? { ownerId: becomesCommon ? null : requesterId } : {}),
       },
     });
 

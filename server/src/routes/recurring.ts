@@ -6,6 +6,7 @@ import { asyncHandler, AppError } from "../middleware/errorHandler";
 import { requireAuth, requireFamilyRole } from "../middleware/auth";
 import { assertEncryptionPolicy, maybeEncryptedText } from "../lib/encryption";
 import { formatDay, localToday, occurrence, parseDay, postingInstant } from "../lib/recurring";
+import { currentPeriodStart } from "../lib/recurringCategory";
 
 // Repeating payments, nested under /api/families/:familyId/recurring.
 export const recurringRouter = Router({ mergeParams: true });
@@ -210,6 +211,14 @@ recurringRouter.patch(
       },
       include: RULE_INCLUDE,
     });
+    if (categoryId !== existing.categoryId) {
+      // This period's payments move with it, so the budget it now counts in shows them. One given
+      // its own category by hand keeps it.
+      await prisma.transaction.updateMany({
+        where: { recurringId: existing.id, isDeleted: false, date: { gte: currentPeriodStart(frequency) }, categoryId: existing.categoryId },
+        data: { categoryId },
+      });
+    }
     res.json(serializeRule(updated));
   })
 );

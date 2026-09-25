@@ -151,7 +151,7 @@ function GoalForm({
 }) {
   const [name, setName] = useState("");
   const [targetAmount, setTargetAmount] = useState("");
-  const [isCommon, setIsCommon] = useState(true);
+  const [isCommon, setIsCommon] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const { colors } = useTheme();

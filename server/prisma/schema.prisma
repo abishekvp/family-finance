@@ -342,6 +342,9 @@ model Transaction {
   dueDate             DateTime?
   // The repeating payment this was recorded from, if any.
   recurringId         String?
+  // A return of money lent or borrowed: the lend/borrow entry it pays back. Unlinked returns are
+  // matched to the oldest open loans with that person.
+  repaysId            String?
   isDeleted           Boolean           @default(false)
   deletedAt           DateTime?
   createdAt           DateTime          @default(now())
@@ -353,9 +356,12 @@ model Transaction {
   category          Category?             @relation(fields: [categoryId], references: [id])
   user              User                  @relation("TransactionActor", fields: [userId], references: [id])
   recurring         RecurringTransaction? @relation(fields: [recurringId], references: [id], onDelete: SetNull)
+  repays            Transaction?          @relation("LoanRepayments", fields: [repaysId], references: [id], onDelete: SetNull)
+  repayments        Transaction[]         @relation("LoanRepayments")
 
   @@index([familyId, date])
   @@index([recurringId])
+  @@index([repaysId])
   @@index([accountId])
   @@index([categoryId])
 }
