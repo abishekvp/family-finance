@@ -202,6 +202,16 @@ async function resolveUser(provider: OAuthProvider, claims: IdTokenClaims) {
     return existing;
   }
 
+  // Same reasoning as the linking case above, but for account creation: an untrusted address lets
+  // anyone who controls a work/school tenant pre-register someone else's email before they sign up,
+  // then keep a standing sign-in to the account even after the real owner resets their password.
+  if (!emailTrusted) {
+    throw new AppError(
+      409,
+      "This provider didn't confirm your email address, so we can't create an account with it. Register with a password instead."
+    );
+  }
+
   let firstName = claims.given_name?.trim() ?? "";
   let lastName = claims.family_name?.trim() ?? "";
   if (!firstName) {
@@ -217,7 +227,7 @@ async function resolveUser(provider: OAuthProvider, claims: IdTokenClaims) {
       lastName,
       name: displayName(firstName, lastName),
       passwordHash: null,
-      emailVerifiedAt: emailTrusted ? new Date() : null,
+      emailVerifiedAt: new Date(),
       oauthIdentities: { create: { provider, subject, email } },
     },
   });

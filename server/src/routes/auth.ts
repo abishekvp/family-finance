@@ -96,15 +96,30 @@ authRouter.post(
     const tokenHash = hashRefreshToken(token);
     const existing = await prisma.refreshToken.findUnique({ where: { tokenHash } });
 
-    if (!existing || existing.revokedAt || existing.expiresAt < new Date()) {
+    if (!existing || existing.expiresAt < new Date()) {
       res.clearCookie(REFRESH_COOKIE, { path: "/api/auth" });
       throw new AppError(401, "Refresh token is invalid or expired");
     }
 
-    await prisma.refreshToken.update({
-      where: { id: existing.id },
+    if (existing.revokedAt) {
+      // This token was already rotated away. Presenting it again means it leaked (someone else
+      // has it, or it was replayed) — burn every session for the account rather than honoring it.
+      res.clearCookie(REFRESH_COOKIE, { path: "/api/auth" });
+      await revokeAllSessions(existing.userId);
+      throw new AppError(401, "Refresh token is invalid or expired");
+    }
+
+    // Conditioned on still being unrevoked, so two concurrent refreshes of the same token can't
+    // both rotate it — only the first wins, and the second falls into the reuse branch above.
+    const { count } = await prisma.refreshToken.updateMany({
+      where: { id: existing.id, revokedAt: null },
       data: { revokedAt: new Date() },
     });
+    if (count === 0) {
+      res.clearCookie(REFRESH_COOKIE, { path: "/api/auth" });
+      await revokeAllSessions(existing.userId);
+      throw new AppError(401, "Refresh token is invalid or expired");
+    }
 
     const { accessToken, refreshToken } = await issueSession(res, existing.userId);
     res.json({ accessToken, refreshToken });
