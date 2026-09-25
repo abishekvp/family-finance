@@ -152,7 +152,7 @@ authRouter.get(
       where: { id: req.user!.id },
       include: {
         memberships: {
-          include: { family: { select: { id: true, name: true, currency: true, encryptionEnabled: true } } },
+          include: { family: { select: { id: true, name: true, currency: true, encryptionEnabled: true, requireApproval: true } } },
         },
         vault: { select: { userId: true } },
       },
@@ -168,6 +168,7 @@ authRouter.get(
         name: m.family.name,
         currency: m.family.currency,
         encryptionEnabled: m.family.encryptionEnabled,
+        requireApproval: m.family.requireApproval,
         role: m.role,
       })),
     });

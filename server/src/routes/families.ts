@@ -62,6 +62,7 @@ familiesRouter.get(
 const updateFamilySchema = z.object({
   name: z.string().trim().min(1, "Family name is required").max(100).optional(),
   currency: z.string().trim().length(3).optional(),
+  requireApproval: z.boolean().optional(),
 });
 
 familiesRouter.patch(
@@ -75,6 +76,8 @@ familiesRouter.patch(
       data: {
         ...(data.name !== undefined ? { name: data.name } : {}),
         ...(data.currency !== undefined ? { currency: data.currency } : {}),
+        // Turning approvals off leaves anything already waiting in the queue for an admin to review.
+        ...(data.requireApproval !== undefined ? { requireApproval: data.requireApproval } : {}),
       },
     });
 

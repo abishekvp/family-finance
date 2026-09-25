@@ -9,6 +9,8 @@ export interface FamilySummary {
   name: string;
   currency: string;
   encryptionEnabled: boolean;
+  /** Transactions members record wait for an admin's approval before they count. */
+  requireApproval?: boolean;
   role: "ADMIN" | "MEMBER" | "VIEWER";
 }
 

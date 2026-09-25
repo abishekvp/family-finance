@@ -3,6 +3,7 @@ import { NavLink, Outlet, useLocation } from "react-router-dom";
 import {
   ArrowLeftRight,
   ChevronDown,
+  ClipboardCheck,
   LayoutDashboard,
   LogOut,
   Monitor,
@@ -21,6 +22,7 @@ import type { FamilySummary } from "../context/AuthContext";
 import { useTheme, type ThemeChoice } from "../lib/theme";
 import { Avatar, Badge, cn, Popover, Segmented } from "./ui";
 import { Logo } from "./Logo";
+import { APPROVALS_CHANGED } from "../pages/Approvals";
 
 export type Scope = "family" | "personal";
 
@@ -37,6 +39,8 @@ interface NavItem {
   icon: typeof LayoutDashboard;
   /** Shown in the phone tab bar; the rest stay in the sidebar and the "More" sheet. */
   primary?: boolean;
+  /** A count shown beside the label, e.g. transactions waiting for approval. */
+  count?: number;
 }
 
 const NAV_ITEMS: NavItem[] = [
@@ -44,6 +48,7 @@ const NAV_ITEMS: NavItem[] = [
   { to: "/transactions", label: "Transactions", icon: ArrowLeftRight, primary: true },
   { to: "/stats", label: "Insights", icon: PieChart, primary: true },
   { to: "/accounts", label: "Accounts", icon: Wallet, primary: true },
+  { to: "/approvals", label: "Approvals", icon: ClipboardCheck },
   { to: "/account", label: "Account & security", icon: ShieldCheck },
   { to: "/settings", label: "Settings", icon: SettingsIcon },
   { to: "/family", label: "Family", icon: Users },
@@ -57,6 +62,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/accounts": "Accounts",
   "/settings": "Settings",
   "/family": "Family",
+  "/approvals": "Approvals",
   "/get-the-app": "Get the app",
 };
 
@@ -88,10 +94,15 @@ export function Layout() {
   }, [scope]);
 
   const title = PAGE_TITLES[location.pathname] ?? family.name;
+  const pendingApprovals = usePendingApprovals(family.id, location.pathname);
+  // The Approvals entry shows while approvals are on, or while anything recorded under them still waits.
+  const navItems = NAV_ITEMS.flatMap((item) =>
+    item.to !== "/approvals" ? [item] : family.requireApproval || pendingApprovals > 0 ? [{ ...item, count: pendingApprovals }] : []
+  );
 
   return (
     <div className="flex min-h-dvh">
-      <DesktopSidebar family={family} />
+      <DesktopSidebar family={family} items={navItems} />
 
       <div className="flex min-w-0 flex-1 flex-col">
         <TopBar title={title} family={family} scope={scope} onScopeChange={setScope} onLogout={logout} />
@@ -103,14 +114,34 @@ export function Layout() {
         </main>
       </div>
 
-      <MobileTabBar />
+      <MobileTabBar items={navItems} />
     </div>
   );
 }
 
 /* ------------------------------------------------------------------ sidebar */
 
-function DesktopSidebar({ family }: { family: FamilySummary }) {
+/** Transactions waiting for approval: the whole family's for an admin, your own for anyone else. */
+function usePendingApprovals(familyId: string, pathname: string) {
+  const [pending, setPending] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    const load = () =>
+      api
+        .get<{ pending: number }>(`/families/${familyId}/transactions/approvals/summary`)
+        .then((res) => !cancelled && setPending(res.data.pending))
+        .catch(() => undefined);
+    load();
+    window.addEventListener(APPROVALS_CHANGED, load);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(APPROVALS_CHANGED, load);
+    };
+  }, [familyId, pathname]);
+  return pending;
+}
+
+function DesktopSidebar({ family, items }: { family: FamilySummary; items: NavItem[] }) {
   return (
     <aside className="sticky top-0 hidden h-dvh w-[236px] shrink-0 flex-col border-r border-line bg-surface/80 px-3 py-5 backdrop-blur-glass transform-gpu lg:flex">
       <div className="mb-7 flex items-center gap-2.5 px-2">
@@ -122,7 +153,7 @@ function DesktopSidebar({ family }: { family: FamilySummary }) {
       </div>
 
       <nav className="flex flex-1 flex-col gap-0.5">
-        {NAV_ITEMS.map((item) => (
+        {items.map((item) => (
           <SidebarLink key={item.to} item={item} />
         ))}
       </nav>
@@ -159,6 +190,7 @@ function SidebarLink({ item }: { item: NavItem }) {
           />
           <Icon size={18} strokeWidth={isActive ? 2.4 : 1.9} className="shrink-0" />
           <span className="truncate">{item.label}</span>
+          {!!item.count && <CountPill count={item.count} />}
         </>
       )}
     </NavLink>
@@ -292,10 +324,11 @@ function ThemeSwitcher() {
 
 /* -------------------------------------------------------------- mobile tabs */
 
-function MobileTabBar() {
-  const primary = NAV_ITEMS.filter((i) => i.primary);
+function MobileTabBar({ items }: { items: NavItem[] }) {
+  const primary = items.filter((i) => i.primary);
   const [moreOpen, setMoreOpen] = useState(false);
-  const secondary = NAV_ITEMS.filter((i) => !i.primary);
+  const secondary = items.filter((i) => !i.primary);
+  const secondaryCount = secondary.reduce((sum, i) => sum + (i.count ?? 0), 0);
 
   return (
     <>
@@ -309,8 +342,9 @@ function MobileTabBar() {
             onClick={() => setMoreOpen(true)}
             className="flex flex-1 flex-col items-center gap-1 py-2.5 text-2xs font-semibold text-ink-subtle"
           >
-            <span className="grid h-6 w-6 place-items-center">
+            <span className="relative grid h-6 w-6 place-items-center">
               <MoreGlyph />
+              {secondaryCount > 0 && <span aria-hidden className="absolute -right-1 -top-0.5 h-2 w-2 rounded-full bg-warn" />}
             </span>
             More
           </button>
@@ -343,6 +377,7 @@ function MobileTabBar() {
                   >
                     <Icon size={18} />
                     {item.label}
+                    {!!item.count && <CountPill count={item.count} />}
                     {item.to === "/get-the-app" && (
                       <Badge tone="brand" className="ml-auto">
                         Android
@@ -392,6 +427,14 @@ function TabLink({ item }: { item: NavItem }) {
         </>
       )}
     </NavLink>
+  );
+}
+
+function CountPill({ count }: { count: number }) {
+  return (
+    <span className="ml-auto rounded-full bg-warn-soft px-2 py-0.5 text-2xs font-bold text-warn tnum" aria-label={`${count} waiting`}>
+      {count}
+    </span>
   );
 }
 

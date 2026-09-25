@@ -7,6 +7,7 @@ import { requireAuth, requireFamilyRole } from "../middleware/auth";
 import { assertEncryptionPolicy, maybeEncryptedText } from "../lib/encryption";
 import { formatDay, localToday, occurrence, parseDay, postingInstant } from "../lib/recurring";
 import { currentPeriodStart } from "../lib/recurringCategory";
+import { initialApprovalStatus } from "../lib/approval";
 
 // Repeating payments, nested under /api/families/:familyId/recurring.
 export const recurringRouter = Router({ mergeParams: true });
@@ -259,6 +260,8 @@ recurringRouter.post(
     let posted = 0;
     for (const rule of due) {
       if (rule.account.isArchived) continue;
+      // A member can't skip approval by making an entry repeat: each occurrence waits like any other.
+      const approvalStatus = await initialApprovalStatus(familyId, rule.userId, [rule.accountId]);
       let count = rule.postedCount;
       for (let i = 0; i < MAX_CATCH_UP; i++) {
         const day = occurrence(rule.startDate, rule.frequency, count);
@@ -283,6 +286,7 @@ recurringRouter.post(
               notes: rule.notes,
               tags: ["recurring"],
               recurringId: rule.id,
+              approvalStatus,
             },
           });
           return true;

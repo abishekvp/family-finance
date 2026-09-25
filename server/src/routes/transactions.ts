@@ -1,10 +1,11 @@
 import { Router } from "express";
 import { z } from "zod";
-import { AccountType, Prisma, Role, TransactionStatus, TransactionType } from "@prisma/client";
+import { AccountType, ApprovalStatus, Prisma, Role, TransactionStatus, TransactionType } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { asyncHandler, AppError } from "../middleware/errorHandler";
 import { requireAuth, requireFamilyRole } from "../middleware/auth";
 import { assertEncryptionPolicy, maybeEncryptedText } from "../lib/encryption";
+import { initialApprovalStatus } from "../lib/approval";
 
 export const transactionsRouter = Router({ mergeParams: true });
 transactionsRouter.use(requireAuth);
@@ -35,6 +36,9 @@ function serializeTransaction(t: TransactionWithRelations) {
     dueDate: t.dueDate ? t.dueDate.toISOString() : null,
     recurringId: t.recurringId,
     repaysId: t.repaysId,
+    approvalStatus: t.approvalStatus,
+    reviewedById: t.reviewedById,
+    reviewedAt: t.reviewedAt ? t.reviewedAt.toISOString() : null,
     createdAt: t.createdAt.toISOString(),
     updatedAt: t.updatedAt.toISOString(),
     account: t.account,
@@ -163,6 +167,8 @@ async function resolveRepays(
 
 const transactionTypeSchema = z.nativeEnum(TransactionType);
 const transactionStatusSchema = z.nativeEnum(TransactionStatus);
+// "ALL" lists every entry whatever its approval state; the default lists only those that count.
+const approvalFilterSchema = z.union([z.nativeEnum(ApprovalStatus), z.literal("ALL")]);
 
 transactionsRouter.get(
   "/",
@@ -194,6 +200,13 @@ transactionsRouter.get(
       if (Number.isNaN(to.getTime())) throw new AppError(400, "Invalid to date");
     }
 
+    let approval: ApprovalStatus | "ALL" = ApprovalStatus.APPROVED;
+    if (typeof req.query.approval === "string") {
+      const parsedApproval = approvalFilterSchema.safeParse(req.query.approval);
+      if (!parsedApproval.success) throw new AppError(400, "Invalid approval filter");
+      approval = parsedApproval.data;
+    }
+
     let limit = 50;
     if (typeof req.query.limit === "string") {
       const parsedLimit = Number(req.query.limit);
@@ -206,6 +219,8 @@ transactionsRouter.get(
       where: {
         familyId,
         isDeleted: false,
+        // Totals are summed from this list, so by default it holds only what counts.
+        ...(approval === "ALL" ? {} : { approvalStatus: approval }),
         // Both legs: what the account paid out and the transfers that landed on it.
         ...(accountId ? { OR: [{ accountId }, { transferToAccountId: accountId }] } : {}),
         ...(categoryId ? { categoryId } : {}),
@@ -268,6 +283,8 @@ transactionsRouter.post(
     );
 
     const repaysId = await resolveRepays(familyId, null, parsed.type, parsed.accountId, transferToAccountId, parsed.repaysId ?? null);
+    // Saved either way, so nothing is lost; with approvals on, a member's entry waits for an admin.
+    const approvalStatus = await initialApprovalStatus(familyId, requesterId, [parsed.accountId, transferToAccountId], req.familyMembership!.role);
 
     const transaction = await prisma.transaction.create({
       data: {
@@ -285,6 +302,7 @@ transactionsRouter.post(
         tags: parsed.tags ?? [],
         dueDate: parsed.dueDate ? new Date(parsed.dueDate) : null,
         repaysId,
+        approvalStatus,
       },
       include: TRANSACTION_INCLUDE,
     });
@@ -345,6 +363,13 @@ transactionsRouter.patch(
     const mergedStatus = parsed.status ?? existing.status;
     const mergedTags = parsed.tags ?? existing.tags;
     const mergedDueDate = "dueDate" in req.body ? (parsed.dueDate ? new Date(parsed.dueDate) : null) : existing.dueDate;
+    // With approvals on, a member's edit goes back for approval (a rejected entry, once fixed, is
+    // resubmitted this way). An admin's edit, or any edit with approvals off, leaves it as it was.
+    const family = await prisma.family.findUniqueOrThrow({ where: { id: familyId }, select: { requireApproval: true } });
+    const reviewed =
+      family.requireApproval && req.familyMembership!.role !== Role.ADMIN
+        ? await initialApprovalStatus(familyId, requesterId, [mergedAccountId, transferToAccountId], req.familyMembership!.role)
+        : null;
 
     const updated = await prisma.transaction.update({
       where: { id: existing.id },
@@ -361,6 +386,7 @@ transactionsRouter.patch(
         tags: mergedTags,
         dueDate: mergedDueDate,
         repaysId,
+        ...(reviewed ? { approvalStatus: reviewed, reviewedById: null, reviewedAt: null } : {}),
       },
       include: TRANSACTION_INCLUDE,
     });
@@ -389,5 +415,61 @@ transactionsRouter.delete(
     });
 
     res.status(204).send();
+  })
+);
+
+// How many entries wait for an admin. Members see their own count; admins see the whole family's.
+transactionsRouter.get(
+  "/approvals/summary",
+  requireFamilyRole(Role.VIEWER),
+  asyncHandler(async (req, res) => {
+    const familyId = req.params.familyId;
+    const requesterId = req.user!.id;
+    const isAdmin = req.familyMembership!.role === Role.ADMIN;
+    const pending = await prisma.transaction.count({
+      where: {
+        familyId,
+        isDeleted: false,
+        approvalStatus: ApprovalStatus.PENDING,
+        account: { OR: [{ ownerId: null }, { ownerId: requesterId }] },
+        ...(isAdmin ? {} : { userId: requesterId }),
+      },
+    });
+    res.json({ pending });
+  })
+);
+
+const reviewSchema = z.object({
+  ids: z.array(z.string().min(1)).min(1).max(200),
+  decision: z.enum(["APPROVE", "REJECT"]),
+});
+
+// Approve or reject waiting entries. Approved ones count from then on; rejected ones stay visible
+// (and editable by whoever recorded them, which sends them back for approval) but never count.
+transactionsRouter.post(
+  "/approvals/review",
+  requireFamilyRole(Role.ADMIN),
+  asyncHandler(async (req, res) => {
+    const familyId = req.params.familyId;
+    const requesterId = req.user!.id;
+    const { ids, decision } = reviewSchema.parse(req.body);
+
+    const result = await prisma.transaction.updateMany({
+      where: {
+        id: { in: ids },
+        familyId,
+        isDeleted: false,
+        // An admin can't see into another member's private account, so can't review what's in it.
+        account: { OR: [{ ownerId: null }, { ownerId: requesterId }] },
+        approvalStatus: { not: decision === "APPROVE" ? ApprovalStatus.APPROVED : ApprovalStatus.REJECTED },
+      },
+      data: {
+        approvalStatus: decision === "APPROVE" ? ApprovalStatus.APPROVED : ApprovalStatus.REJECTED,
+        reviewedById: requesterId,
+        reviewedAt: new Date(),
+      },
+    });
+
+    res.json({ updated: result.count });
   })
 );
