@@ -22,6 +22,34 @@ export function setOnAuthExpired(handler: (() => void) | null) {
 
 // Transactions and repeating payments both carry payee/notes, which are end-to-end encrypted.
 const TRANSACTIONS_URL = /\/families\/([^/]+)\/(?:transactions|recurring)(?:\/|$|\?)/;
+// The sync feed is kept on the device still sealed, and decrypted only when read (transactionStore).
+const SYNC_URL = /\/families\/[^/]+\/transactions\/sync(?:$|\?)/;
+const TRANSACTION_WRITE_URL = /\/families\/([^/]+)\/transactions(?:\/([^/?]+))?(?:$|\?)/;
+
+/** A transaction as the server saved it (payee/notes still sealed), or the id of one deleted. */
+export type TransactionWrite = { familyId: string } & ({ saved: Record<string, unknown> } | { deletedId: string });
+const transactionWriteListeners = new Set<(write: TransactionWrite) => void>();
+
+/** Lets the local transaction copy pick up this device's own saves without waiting for a sync. */
+export function onTransactionWrite(listener: (write: TransactionWrite) => void) {
+  transactionWriteListeners.add(listener);
+  return () => {
+    transactionWriteListeners.delete(listener);
+  };
+}
+
+function reportTransactionWrite(method: string | undefined, url: string | undefined, data: unknown) {
+  const match = url?.match(TRANSACTION_WRITE_URL);
+  if (!match || match[2] === "sync") return;
+  const m = method?.toLowerCase();
+  let write: TransactionWrite | null = null;
+  if ((m === "post" || m === "patch") && data && typeof data === "object" && "id" in data) {
+    write = { familyId: match[1], saved: { ...(data as Record<string, unknown>) } };
+  } else if (m === "delete" && match[2]) {
+    write = { familyId: match[1], deletedId: match[2] };
+  }
+  if (write) transactionWriteListeners.forEach((l) => l(write));
+}
 
 api.interceptors.request.use((config) => {
   const token = getAccessToken();
@@ -67,7 +95,12 @@ async function refreshAccessToken(): Promise<string | null> {
 
 api.interceptors.response.use(
   (response) => {
-    if (response.config.url?.match(TRANSACTIONS_URL)) decryptIncoming(response.data);
+    const url = response.config.url;
+    if (url?.match(TRANSACTIONS_URL) && !url.match(SYNC_URL)) {
+      // Before decrypting: the local copy keeps what the server holds.
+      reportTransactionWrite(response.config.method, url, response.data);
+      decryptIncoming(response.data);
+    }
     return response;
   },
   async (error: AxiosError) => {

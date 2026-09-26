@@ -1,5 +1,5 @@
 import { Fragment } from "react";
-import { Text, View } from "react-native";
+import { ActivityIndicator, Text, View } from "react-native";
 import { CalendarX } from "lucide-react-native";
 import type { Account, Transaction } from "../../api/types";
 import { useTheme } from "../../context/ThemeContext";
@@ -28,6 +28,7 @@ export function DailyView({
   carryOver,
   accountIds,
   onPressTransaction,
+  limit = Infinity,
 }: {
   transactions: Transaction[];
   accounts: Account[];
@@ -37,6 +38,8 @@ export function DailyView({
   carryOver: boolean;
   accountIds: Set<string>;
   onPressTransaction: (t: Transaction) => void;
+  /** Draw only the newest this many rows (the rest follow as the list is scrolled). Day totals stay whole. */
+  limit?: number;
 }) {
   const { colors } = useTheme();
 
@@ -62,10 +65,22 @@ export function DailyView({
   }
   const orderedKeys = Array.from(groups.keys()).sort((a, b) => (a < b ? 1 : -1));
 
+  // Whole days' totals, but rows only up to the limit.
+  let budget = limit;
+  const shownKeys: string[] = [];
+  for (const key of orderedKeys) {
+    if (budget <= 0) break;
+    shownKeys.push(key);
+    budget -= groups.get(key)!.length;
+  }
+  const hasMore = shownKeys.length < orderedKeys.length || budget < 0;
+
   return (
     <View style={{ gap: 4 }}>
-      {orderedKeys.map((key) => {
+      {shownKeys.map((key, index) => {
         const dayTransactions = groups.get(key)!;
+        const isLastShown = index === shownKeys.length - 1;
+        const shownRows = isLastShown && budget < 0 ? dayTransactions.slice(0, dayTransactions.length + budget) : dayTransactions;
         let income = 0;
         let expense = 0;
         for (const t of dayTransactions) {
@@ -91,12 +106,13 @@ export function DailyView({
                 {expense > 0 && <Money amount={-expense} currency={currency} tone="expense" signed style={{ fontSize: 12, fontWeight: "700" }} />}
               </View>
             </View>
-            {dayTransactions.map((t) => (
+            {shownRows.map((t) => (
               <TransactionRow key={t.id} transaction={t} onPress={() => onPressTransaction(t)} />
             ))}
           </Fragment>
         );
       })}
+      {hasMore && <ActivityIndicator color={colors.brand600} style={{ paddingVertical: 16 }} />}
     </View>
   );
 }

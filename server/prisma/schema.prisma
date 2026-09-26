@@ -360,6 +360,8 @@ model Transaction {
   repayments        Transaction[]         @relation("LoanRepayments")
 
   @@index([familyId, date])
+  // Delta sync reads a family's changes in updatedAt order.
+  @@index([familyId, updatedAt])
   @@index([recurringId])
   @@index([repaysId])
   @@index([accountId])

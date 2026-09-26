@@ -11,6 +11,7 @@ import { Avatar, Badge, Button, Card, ErrorText, Field, Input, ProgressBar, Shee
 import { formatCurrency } from "../../src/lib/format";
 import { href } from "../../src/lib/nav";
 import { describeBalance, describeEntry, isSettled, trackLoans, type LendingKind, type Loan } from "../../src/lib/lending";
+import { useTransactions } from "../../src/lib/transactionStore";
 
 function formatDay(date: Date) {
   return date.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
@@ -26,8 +27,10 @@ export default function LendingPerson() {
   const { id } = useLocalSearchParams<{ id: string }>();
 
   const [person, setPerson] = useState<Account | null>(null);
-  const [history, setHistory] = useState<Transaction[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const historyFilter = useMemo(() => ({ accountId: id }), [id]);
+  const { transactions: history, ready: historyReady, sync } = useTransactions(user!.id, family.id, historyFilter);
+  const [accountsLoaded, setAccountsLoaded] = useState(false);
+  const isLoading = !accountsLoaded || !historyReady;
   const [error, setError] = useState<string | null>(null);
   const [renaming, setRenaming] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
@@ -35,20 +38,16 @@ export default function LendingPerson() {
 
   const load = useCallback(async () => {
     try {
-      const [accountsRes, historyRes] = await Promise.all([
-        api.get<Account[]>(`/families/${family.id}/accounts`),
-        api.get<Transaction[]>(`/families/${family.id}/transactions`, { params: { accountId: id, limit: 1000 } }),
-      ]);
+      const [accountsRes] = await Promise.all([api.get<Account[]>(`/families/${family.id}/accounts`), sync()]);
       const found = accountsRes.data.find((a) => a.id === id) ?? null;
       setPerson(found);
-      setHistory(historyRes.data);
       setError(found ? null : "This person was removed.");
     } catch (err) {
       setError(getErrorMessage(err, "Unable to load"));
     } finally {
-      setIsLoading(false);
+      setAccountsLoaded(true);
     }
-  }, [family.id, id]);
+  }, [family.id, id, sync]);
 
   useFocusEffect(
     useCallback(() => {
