@@ -32,8 +32,10 @@ import {
   type LendingKind,
 } from "../../src/lib/lending";
 import { refreshTodayWidget } from "../../src/lib/todayWidget";
+import { useTransactions } from "../../src/lib/transactionStore";
 import { FREQUENCIES, describeSchedule } from "../../src/lib/recurring";
 import { moveToBackground } from "../../modules/home-widgets";
+import { budgetName } from "../../src/lib/budgets";
 
 /** "LENDING" is saved as a transfer between one of your accounts and a person. */
 type FormType = TransactionType | "LENDING";
@@ -146,7 +148,6 @@ export default function TransactionForm() {
   const [dueDate, setDueDate] = useState(initial?.dueDate ? localDateInput(new Date(initial.dueDate)) : "");
   // A return pays back this lend/borrow entry first; null matches it to the oldest open loans.
   const [repaysId, setRepaysId] = useState<string | null>(initial?.repaysId ?? params.repaysId ?? null);
-  const [personHistory, setPersonHistory] = useState<Transaction[]>([]);
   const [addingCategory, setAddingCategory] = useState(false);
   // A person created by a save whose transaction then failed — reused on retry, never created twice.
   const createdPerson = useRef<Account | null>(null);
@@ -204,19 +205,8 @@ export default function TransactionForm() {
   // loans read as they stood before it.
   const repaying = isLending && person ? repaidDirection(kind) : null;
   const personLoanId = repaying ? person!.id : null;
-  useEffect(() => {
-    if (!personLoanId) return;
-    let cancelled = false;
-    api
-      .get<Transaction[]>(`/families/${family.id}/transactions`, { params: { accountId: personLoanId, limit: 1000 } })
-      .then((res) => {
-        if (!cancelled) setPersonHistory(res.data);
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [family.id, personLoanId]);
+  const personLoanFilter = useMemo(() => (personLoanId ? { accountId: personLoanId } : null), [personLoanId]);
+  const { transactions: personHistory } = useTransactions(user!.id, family.id, personLoanFilter);
   const openLoans = useMemo(() => {
     if (!repaying || !person) return [];
     const history = personHistory.filter((t) => t.id !== initial?.id && (t.accountId === person.id || t.transferToAccountId === person.id));
@@ -290,7 +280,7 @@ export default function TransactionForm() {
     .map((b) => {
       const left = leftAfter(b);
       const when = b.period === "ANNUAL" ? `in ${b.year}` : `in ${MONTH_LABELS[(b.month ?? 1) - 1]}`;
-      return left >= 0 ? `${b.category.name} ${when}: ${formatCurrency(left, family.currency)} left after this` : `Takes ${b.category.name} over by ${formatCurrency(-left, family.currency)} ${when}`;
+      return left >= 0 ? `${budgetName(b)} ${when}: ${formatCurrency(left, family.currency)} left after this` : `Takes ${budgetName(b)} over by ${formatCurrency(-left, family.currency)} ${when}`;
     })
     .join("\n");
   const overBudget = countsIn.some((b) => leftAfter(b) < 0);
@@ -713,7 +703,7 @@ export default function TransactionForm() {
                   {budgetChoices.map((b) => (
                     <Chip
                       key={b.id}
-                      label={`${b.category.name}${b.period === "ANNUAL" ? " · yearly" : ""}${b.ownerId ? "" : " · Family"}`}
+                      label={`${budgetName(b)}${b.period === "ANNUAL" ? " · yearly" : ""}${b.ownerId ? "" : " · Family"}`}
                       color={overBudget && countsIn.includes(b) ? colors.expense : b.category.color}
                       selected={countsIn.includes(b)}
                       onPress={() => {

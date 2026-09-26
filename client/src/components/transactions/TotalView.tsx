@@ -145,7 +145,7 @@ export function TotalView({
                   <div className="mb-1.5 flex items-center justify-between gap-2 text-xs">
                     <span className="flex items-center gap-1.5 font-semibold text-ink">
                       <Dot color={b.category.color} size={8} />
-                      {b.category.name}
+                      {b.name?.trim() || b.category.name}
                     </span>
                     <span className={over ? "tnum text-expense" : "tnum text-ink-subtle"}>
                       <Money amount={b.spent} currency={currency} /> / <Money amount={b.amount} currency={currency} />

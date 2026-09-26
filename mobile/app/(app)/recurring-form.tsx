@@ -14,6 +14,7 @@ import { currencySymbol } from "../../src/lib/format";
 import { localDateInput } from "../../src/lib/dateUtils";
 import { isPerson } from "../../src/lib/lending";
 import { FREQUENCIES, describeSchedule, runRecurring } from "../../src/lib/recurring";
+import { budgetName } from "../../src/lib/budgets";
 
 type RuleType = "EXPENSE" | "INCOME";
 
@@ -265,7 +266,7 @@ export default function RecurringForm() {
             label="Counts in budget"
             hint={
               countsIn
-                ? `Counted in your ${frequency === "YEARLY" ? "yearly" : "monthly"} ${countsIn.category.name} budget.`
+                ? `Counted in your ${frequency === "YEARLY" ? "yearly" : "monthly"} ${budgetName(countsIn)} budget.`
                 : "Pick a budget, or a category below. Choosing a budget puts it in that budget's category."
             }
           >
@@ -273,7 +274,7 @@ export default function RecurringForm() {
               {periodBudgets.map((b) => (
                 <Chip
                   key={b.id}
-                  label={`${b.category.name}${b.ownerId ? "" : " · Family"}`}
+                  label={`${budgetName(b)}${b.ownerId ? "" : " · Family"}`}
                   color={b.category.color}
                   selected={countsIn?.id === b.id}
                   onPress={() => setCategoryId(b.categoryId)}

@@ -373,6 +373,8 @@ model Budget {
   familyId   String
   ownerId    String?
   categoryId String
+  // Shown instead of the category's name when set (e.g. "Groceries & milk").
+  name       String?
   period     BudgetPeriod @default(MONTHLY)
   amount     Decimal      @db.Decimal(14, 2)
   month      Int?

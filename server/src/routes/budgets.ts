@@ -139,6 +139,7 @@ async function carryRepeating(
             familyId,
             ownerId: source.ownerId,
             categoryId: source.categoryId,
+            name: source.name,
             period,
             amount: source.amount,
             year,
@@ -233,9 +234,18 @@ budgetsRouter.get(
   })
 );
 
+// Blank means "no name of its own": the category's name is shown.
+const budgetNameSchema = z
+  .string()
+  .trim()
+  .max(60, "Keep the name under 60 characters")
+  .nullable()
+  .transform((v) => v || null);
+
 const createBudgetSchema = z
   .object({
     categoryId: z.string().min(1),
+    name: budgetNameSchema.optional(),
     amount: z.number().finite().gt(0),
     year: z.number().int(),
     month: z.number().int().min(1).max(12).optional(),
@@ -282,6 +292,7 @@ budgetsRouter.post(
           familyId,
           ownerId: data.isCommon ? null : requesterId,
           categoryId: data.categoryId,
+          name: data.name ?? null,
           amount: data.amount,
           period: data.period,
           year: data.year,
@@ -317,6 +328,7 @@ budgetsRouter.post(
 );
 
 const updateBudgetSchema = z.object({
+  name: budgetNameSchema.optional(),
   amount: z.number().finite().gt(0).optional(),
   rollover: z.boolean().optional(),
   repeats: z.boolean().optional(),
@@ -373,6 +385,7 @@ budgetsRouter.patch(
     const updateBudget = prisma.budget.update({
       where: { id: existing.id },
       data: {
+        ...(data.name !== undefined ? { name: data.name } : {}),
         ...(data.amount !== undefined ? { amount: data.amount } : {}),
         ...(data.rollover !== undefined ? { rollover: data.rollover } : {}),
         ...(data.repeats !== undefined ? { repeats: data.repeats } : {}),

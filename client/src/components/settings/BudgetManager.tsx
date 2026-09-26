@@ -22,6 +22,12 @@ import { Money } from "../figures";
 import type { Budget, Category } from "../../api/types";
 import { MONTH_LABELS } from "../../lib/dateUtils";
 
+
+/** A budget's own name if it has one, else its category's. */
+function budgetLabel(budget: Budget) {
+  return budget.name?.trim() || budget.category.name;
+}
+
 export function BudgetManager({ familyId, currency }: { familyId: string; currency: string }) {
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
@@ -151,10 +157,10 @@ export function BudgetManager({ familyId, currency }: { familyId: string; curren
                   <div className="mb-2 flex items-center justify-between gap-3">
                     <span className="flex min-w-0 items-center gap-2 text-sm font-semibold text-ink">
                       <Dot color={budget.category.color} />
-                      <span className="truncate">{budget.category.name}</span>
+                      <span className="truncate">{budgetLabel(budget)}</span>
                     </span>
                     <span className="flex shrink-0 items-center gap-1">
-                      <IconButton label={`Edit ${budget.category.name} budget`} onClick={() => setEditing(budget)}>
+                      <IconButton label={`Edit ${budgetLabel(budget)} budget`} onClick={() => setEditing(budget)}>
                         <Pencil size={14} />
                       </IconButton>
                       {deletingId === budget.id ? (
@@ -168,7 +174,7 @@ export function BudgetManager({ familyId, currency }: { familyId: string; curren
                         </span>
                       ) : (
                         <IconButton
-                          label={`Delete ${budget.category.name} budget`}
+                          label={`Delete ${budgetLabel(budget)} budget`}
                           tone="danger"
                           onClick={() => setDeletingId(budget.id)}
                         >
@@ -236,6 +242,7 @@ function BudgetFormModal({
 }) {
   const isEdit = Boolean(budget);
   const [categoryId, setCategoryId] = useState(budget?.categoryId ?? categories[0]?.id ?? "");
+  const [name, setName] = useState(budget?.name ?? "");
   const [amount, setAmount] = useState(budget ? String(budget.amount) : "");
   const [rollover, setRollover] = useState(budget?.rollover ?? false);
   const [isCommon, setIsCommon] = useState(budget ? budget.ownerId === null : false);
@@ -249,12 +256,14 @@ function BudgetFormModal({
     try {
       if (isEdit && budget) {
         await api.patch(`/families/${familyId}/budgets/${budget.id}`, {
+          name: name.trim() || null,
           amount: Number(amount) || 0,
           rollover,
         });
       } else {
         await api.post(`/families/${familyId}/budgets`, {
           categoryId,
+          name: name.trim() || null,
           amount: Number(amount) || 0,
           year,
           month,
@@ -310,6 +319,17 @@ function BudgetFormModal({
             }
           </Field>
         )}
+        <Field label="Name" hint="Optional. Leave blank to use the category's name.">
+          {(props) => (
+            <Input
+              {...props}
+              maxLength={60}
+              placeholder={budget?.category.name ?? categories.find((c) => c.id === categoryId)?.name ?? ""}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+            />
+          )}
+        </Field>
         <Field label="Monthly amount">
           {(props) => (
             <Input

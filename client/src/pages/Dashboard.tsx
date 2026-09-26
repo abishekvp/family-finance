@@ -306,7 +306,7 @@ export function Dashboard() {
                 <div key={b.id}>
                   <div className="mb-1.5 flex items-center gap-2 text-sm font-medium text-ink">
                     <Dot color={b.category.color} />
-                    <span className="truncate">{b.category.name}</span>
+                    <span className="truncate">{b.name?.trim() || b.category.name}</span>
                   </div>
                   <ProgressBar value={pct} tone={over ? "expense" : "brand"} className="mb-1.5" />
                   <p className={over ? "text-xs text-expense" : "text-xs text-ink-subtle"}>
