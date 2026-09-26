@@ -16,6 +16,8 @@ export type AccountType = (typeof ACCOUNT_TYPES)[number];
 export type CategoryType = "INCOME" | "EXPENSE";
 export type TransactionType = "INCOME" | "EXPENSE" | "TRANSFER";
 export type TransactionStatus = "PENDING" | "CLEARED";
+/** Only APPROVED transactions count toward balances, budgets and totals. */
+export type ApprovalStatus = "APPROVED" | "PENDING" | "REJECTED";
 export type BudgetPeriod = "MONTHLY" | "WEEKLY" | "ANNUAL";
 export type FamilyRole = "ADMIN" | "MEMBER" | "VIEWER";
 
@@ -76,6 +78,9 @@ export interface Transaction {
   dueDate?: string | null;
   /** The repeating payment this was recorded from, if any. */
   recurringId?: string | null;
+  approvalStatus?: ApprovalStatus;
+  reviewedById?: string | null;
+  reviewedAt?: string | null;
   createdAt: string;
   updatedAt: string;
   account: { id: string; name: string; currency: string };

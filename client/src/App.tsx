@@ -16,6 +16,7 @@ import { Settings } from "./pages/Settings";
 import { GetTheApp } from "./pages/GetTheApp";
 import { ForgotPassword } from "./pages/ForgotPassword";
 import { Account } from "./pages/Account";
+import { Approvals } from "./pages/Approvals";
 
 export default function App() {
   return (
@@ -38,6 +39,7 @@ export default function App() {
             <Route path="/settings" element={<Settings />} />
             <Route path="/account" element={<Account />} />
             <Route path="/family" element={<FamilySettings />} />
+            <Route path="/approvals" element={<Approvals />} />
             <Route path="/get-the-app" element={<GetTheApp />} />
           </Route>
         </Route>

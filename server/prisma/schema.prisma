@@ -44,6 +44,13 @@ enum TransactionStatus {
   CLEARED
 }
 
+// Whether an admin has let a transaction count. Only APPROVED ones move balances, budgets and totals.
+enum ApprovalStatus {
+  APPROVED
+  PENDING
+  REJECTED
+}
+
 enum InviteStatus {
   PENDING
   ACCEPTED
@@ -96,21 +103,22 @@ model User {
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
-  memberships       FamilyMembership[]
-  ownedAccounts     Account[]              @relation("AccountOwner")
-  ownedCategories   Category[]             @relation("CategoryOwner")
-  transactions      Transaction[]          @relation("TransactionActor")
-  ownedBudgets      Budget[]               @relation("BudgetOwner")
-  goalContributions GoalContribution[]
-  auditLogs         AuditLog[]
-  refreshTokens     RefreshToken[]
-  sentInvites       Invite[]               @relation("InviteSender")
-  oauthIdentities   OAuthIdentity[]
-  passkeys          Passkey[]
-  verificationCodes VerificationCode[]
-  vault             UserVault?
-  familyKeys        FamilyKey[]
-  recurring         RecurringTransaction[] @relation("RecurringOwner")
+  memberships          FamilyMembership[]
+  ownedAccounts        Account[]              @relation("AccountOwner")
+  ownedCategories      Category[]             @relation("CategoryOwner")
+  transactions         Transaction[]          @relation("TransactionActor")
+  reviewedTransactions Transaction[]          @relation("TransactionReviewer")
+  ownedBudgets         Budget[]               @relation("BudgetOwner")
+  goalContributions    GoalContribution[]
+  auditLogs            AuditLog[]
+  refreshTokens        RefreshToken[]
+  sentInvites          Invite[]               @relation("InviteSender")
+  oauthIdentities      OAuthIdentity[]
+  passkeys             Passkey[]
+  verificationCodes    VerificationCode[]
+  vault                UserVault?
+  familyKeys           FamilyKey[]
+  recurring            RecurringTransaction[] @relation("RecurringOwner")
 }
 
 model OAuthIdentity {
@@ -223,6 +231,8 @@ model Family {
   currency          String   @default("USD")
   // When on, transaction payee/notes are stored as client-side ciphertext (see FamilyKey).
   encryptionEnabled Boolean  @default(false)
+  // When on, transactions recorded by anyone but an admin wait for an admin's approval before they count.
+  requireApproval   Boolean  @default(false)
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
@@ -345,12 +355,17 @@ model Transaction {
   // A return of money lent or borrowed: the lend/borrow entry it pays back. Unlinked returns are
   // matched to the oldest open loans with that person.
   repaysId            String?
+  // Saved right away either way; only APPROVED entries count (see Family.requireApproval).
+  approvalStatus      ApprovalStatus    @default(APPROVED)
+  reviewedById        String?
+  reviewedAt          DateTime?
   isDeleted           Boolean           @default(false)
   deletedAt           DateTime?
   createdAt           DateTime          @default(now())
   updatedAt           DateTime          @updatedAt
 
   family            Family                @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  reviewedBy        User?                 @relation("TransactionReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
   account           Account               @relation("TransactionAccount", fields: [accountId], references: [id])
   transferToAccount Account?              @relation("TransactionTransferTo", fields: [transferToAccountId], references: [id])
   category          Category?             @relation(fields: [categoryId], references: [id])
@@ -360,6 +375,7 @@ model Transaction {
   repayments        Transaction[]         @relation("LoanRepayments")
 
   @@index([familyId, date])
+  @@index([familyId, approvalStatus])
   // Delta sync reads a family's changes in updatedAt order.
   @@index([familyId, updatedAt])
   @@index([recurringId])

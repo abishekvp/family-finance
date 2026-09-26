@@ -193,7 +193,9 @@ onTransactionWrite((write) => {
   for (const cache of caches.values()) {
     if (cache.familyId !== write.familyId) continue;
     const id = "saved" in write ? String(write.saved.id) : write.deletedId;
-    const row = "saved" in write ? (write.saved as unknown as Transaction) : null;
+    const saved = "saved" in write ? (write.saved as unknown as Transaction & { approvalStatus?: string }) : null;
+    // An entry sent for an admin's approval doesn't count yet, so it isn't kept with the rest.
+    const row = saved && (!saved.approvalStatus || saved.approvalStatus === "APPROVED") ? saved : null;
     if (row) cache.rows.set(id, row);
     else cache.rows.delete(id);
     cache.localWrites?.set(id, row);

@@ -6,6 +6,7 @@ import { occurrencesBetween } from "../lib/recurring";
 import { budgetPeriodStart, categoryWithChildren, moveRuleCategory } from "../lib/recurringCategory";
 import { asyncHandler, AppError } from "../middleware/errorHandler";
 import { requireAuth, requireFamilyRole } from "../middleware/auth";
+import { COUNTED } from "../lib/approval";
 
 export const budgetsRouter = Router({ mergeParams: true });
 budgetsRouter.use(requireAuth);
@@ -61,6 +62,7 @@ async function computeSpent(familyId: string, requesterId: string, categoryIds: 
       categoryId: { in: categoryIds },
       type: TransactionType.EXPENSE,
       isDeleted: false,
+      ...COUNTED,
       date: { gte: start, lt: end },
       account: { OR: [{ ownerId: null }, { ownerId: requesterId }] },
       ...(period === BudgetPeriod.ANNUAL

@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { formatDistanceToNow } from "date-fns";
-import { Check, Copy, Mail, Users } from "lucide-react";
+import { Check, ClipboardCheck, Copy, Mail, Users } from "lucide-react";
 import { api } from "../api/client";
 import { getErrorMessage } from "../api/errors";
 import {
@@ -14,8 +14,10 @@ import {
   Field,
   Input,
   Select,
+  Toggle,
   useToast,
 } from "../components/ui";
+import { useAuth } from "../context/AuthContext";
 import type { LayoutContext } from "../components/Layout";
 import { useOutletContext } from "react-router-dom";
 
@@ -50,6 +52,9 @@ const ROLE_HINTS: Record<string, string> = {
 export function FamilySettings() {
   const { family } = useOutletContext<LayoutContext>();
   const toast = useToast();
+  const { refreshUser } = useAuth();
+  const isAdmin = family.role === "ADMIN";
+  const [isSavingApproval, setIsSavingApproval] = useState(false);
   const [members, setMembers] = useState<Member[]>([]);
   const [pendingInvites, setPendingInvites] = useState<Invite[]>([]);
   const [inviteEmail, setInviteEmail] = useState("");
@@ -93,6 +98,19 @@ export function FamilySettings() {
     }
   }
 
+  async function setRequireApproval(next: boolean) {
+    setIsSavingApproval(true);
+    try {
+      await api.patch(`/families/${family.id}`, { requireApproval: next });
+      await refreshUser();
+      toast(next ? "Approvals turned on" : "Approvals turned off");
+    } catch (err) {
+      toast(getErrorMessage(err, "Unable to change approvals"), "error");
+    } finally {
+      setIsSavingApproval(false);
+    }
+  }
+
   async function copyLink() {
     if (!lastInvite) return;
     try {
@@ -126,6 +144,23 @@ export function FamilySettings() {
             </li>
           ))}
         </ul>
+      </Card>
+
+      <Card>
+        <CardHeader title="Transaction approval" icon={<ClipboardCheck size={17} />} />
+        <Toggle
+          checked={!!family.requireApproval}
+          disabled={!isAdmin || isSavingApproval}
+          onChange={setRequireApproval}
+          label="Require approval for members' transactions"
+          description={
+            <>
+              Transactions members add to shared accounts are saved right away but only count toward balances, budgets and
+              totals once an admin approves them. Admins' own transactions and members' private accounts aren't affected.
+              {!isAdmin && " Only an admin can change this."}
+            </>
+          }
+        />
       </Card>
 
       <Card>

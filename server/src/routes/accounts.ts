@@ -4,6 +4,7 @@ import { AccountType, Role } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { asyncHandler, AppError } from "../middleware/errorHandler";
 import { requireAuth, requireFamilyRole } from "../middleware/auth";
+import { COUNTED } from "../lib/approval";
 
 export const accountsRouter = Router({ mergeParams: true });
 accountsRouter.use(requireAuth);
@@ -23,7 +24,7 @@ accountsRouter.get(
       include: { owner: { select: { id: true, name: true } } },
     });
 
-    // Balance = opening balance + all non-deleted transactions that post to this account,
+    // Balance = opening balance + all non-deleted, approved transactions that post to this account,
     // minus outgoing transfers, plus incoming transfers landing on it.
     // Convention: EXPENSE and outgoing TRANSFER amounts are stored as positive numbers
     // that subtract from the source account; INCOME adds; the incoming leg of a TRANSFER
@@ -32,11 +33,11 @@ accountsRouter.get(
       accounts.map(async (account) => {
         const [outgoingTx, incoming] = await Promise.all([
           prisma.transaction.findMany({
-            where: { accountId: account.id, isDeleted: false },
+            where: { accountId: account.id, isDeleted: false, ...COUNTED },
             select: { type: true, amount: true },
           }),
           prisma.transaction.aggregate({
-            where: { transferToAccountId: account.id, isDeleted: false, type: "TRANSFER" },
+            where: { transferToAccountId: account.id, isDeleted: false, type: "TRANSFER", ...COUNTED },
             _sum: { amount: true },
           }),
         ]);
