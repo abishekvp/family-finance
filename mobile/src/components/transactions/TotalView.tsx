@@ -10,6 +10,7 @@ import { safePercent } from "../../lib/format";
 import { localDateInput } from "../../lib/dateUtils";
 import { getErrorMessage } from "../../api/errors";
 import { CarryOverRow } from "./CarryOverRow";
+import { budgetName } from "../../lib/budgets";
 
 export function TotalView({
   transactions,
@@ -123,7 +124,7 @@ export function TotalView({
                 <View key={b.id}>
                   <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 6 }}>
                     <Dot color={b.category.color} />
-                    <Text style={{ flex: 1, fontSize: 13, fontWeight: "700", color: colors.ink }}>{b.category.name}</Text>
+                    <Text style={{ flex: 1, fontSize: 13, fontWeight: "700", color: colors.ink }}>{budgetName(b)}</Text>
                     <Text style={{ fontSize: 11.5, color: over ? colors.expense : colors.inkSubtle, fontWeight: "600" }}>
                       {safePercent(b.spent, b.amount).toFixed(0)}%
                     </Text>

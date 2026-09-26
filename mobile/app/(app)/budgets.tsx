@@ -1,7 +1,7 @@
 import { useCallback, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { useFocusEffect, useRouter } from "expo-router";
-import { ChevronLeft, ChevronRight, PiggyBank, Plus, Repeat } from "lucide-react-native";
+import { ChevronLeft, ChevronRight, Pencil, PiggyBank, Plus, Repeat } from "lucide-react-native";
 import { api } from "../../src/api/client";
 import type { Budget, Category, RecurringTransaction } from "../../src/api/types";
 import { useAuth } from "../../src/context/AuthContext";
@@ -30,6 +30,7 @@ import { href } from "../../src/lib/nav";
 import { formatDayShort } from "../../src/lib/recurring";
 import { CategoryPicker } from "../../src/components/CategoryPicker";
 import { NewCategoryForm } from "../../src/components/NewCategoryForm";
+import { budgetName } from "../../src/lib/budgets";
 
 type Mode = "monthly" | "yearly";
 
@@ -132,6 +133,10 @@ export default function Budgets() {
     } catch (err) {
       setActionError(getErrorMessage(err, include ? "Unable to add it to the budget" : "Unable to take it out of the budget"));
     }
+  }
+
+  function editRule(rule: RecurringTransaction) {
+    router.push(href("/recurring-form", { rule: JSON.stringify(rule) }));
   }
 
   function shift(delta: number) {
@@ -271,9 +276,16 @@ export default function Budgets() {
                 <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
                   <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flex: 1 }}>
                     <Dot color={b.category.color} />
-                    <Text style={{ fontWeight: "700", fontSize: 14.5, color: colors.ink, flexShrink: 1 }} numberOfLines={1}>
-                      {b.category.name}
-                    </Text>
+                    <View style={{ flexShrink: 1 }}>
+                      <Text style={{ fontWeight: "700", fontSize: 14.5, color: colors.ink }} numberOfLines={1}>
+                        {budgetName(b)}
+                      </Text>
+                      {budgetName(b) !== b.category.name && (
+                        <Text style={{ fontSize: 11.5, color: colors.inkSubtle }} numberOfLines={1}>
+                          {b.category.name}
+                        </Text>
+                      )}
+                    </View>
                     <Badge tone={b.ownerId ? "neutral" : "brand"}>{b.ownerId ? "Personal" : "Family"}</Badge>
                   </View>
                   {b.projected ? (
@@ -321,10 +333,18 @@ export default function Budgets() {
                   <View style={{ gap: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: colors.line }}>
                     {inBudget.map((r) => (
                       <View key={r.id} style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                        <Repeat size={13} color={colors.inkSubtle} />
-                        <Text style={{ flex: 1, fontSize: 12.5, color: colors.ink }} numberOfLines={1}>
-                          {`${ruleName(r)} · ${formatCurrency(r.amount, r.account.currency)} · next ${formatDayShort(r.nextDate)}`}
-                        </Text>
+                        {/* Opens it to change its name, amount, schedule or account. */}
+                        <Pressable
+                          onPress={() => editRule(r)}
+                          hitSlop={6}
+                          style={({ pressed }) => ({ flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 8, opacity: pressed ? 0.6 : 1 })}
+                        >
+                          <Repeat size={13} color={colors.inkSubtle} />
+                          <Text style={{ flex: 1, fontSize: 12.5, color: colors.ink }} numberOfLines={1}>
+                            {`${ruleName(r)} · ${formatCurrency(r.amount, r.account.currency)} · next ${formatDayShort(r.nextDate)}`}
+                          </Text>
+                          {canWrite && <Pencil size={12} color={colors.inkSubtle} />}
+                        </Pressable>
                         {!b.projected && canMoveRule(r) && (
                           <Pressable onPress={() => mapRule(b, r, false)} hitSlop={8}>
                             <Text style={{ color: colors.inkSubtle, fontSize: 12, fontWeight: "700" }}>Remove</Text>
@@ -378,7 +398,7 @@ export default function Budgets() {
             return (
               <View key={r.id} style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
                 <Pressable
-                  onPress={() => router.push(href("/recurring-form", { rule: JSON.stringify(r) }))}
+                  onPress={() => editRule(r)}
                   style={{ flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 10 }}
                 >
                   <Dot color={r.category?.color ?? colors.inkSubtle} />
@@ -389,7 +409,7 @@ export default function Budgets() {
                     <Text style={{ fontSize: 11.5, color: budget || r.type === "INCOME" ? colors.inkSubtle : colors.warn }} numberOfLines={1}>
                       {[
                         `Next ${formatDayShort(r.nextDate)}`,
-                        r.type === "INCOME" ? r.category?.name ?? "Income" : budget ? `In ${budget.category.name} budget` : "Not in a budget",
+                        r.type === "INCOME" ? r.category?.name ?? "Income" : budget ? `In ${budgetName(budget)} budget` : "Not in a budget",
                       ].join(" · ")}
                     </Text>
                   </View>
@@ -414,7 +434,7 @@ export default function Budgets() {
 
       <ChoiceSheet
         visible={!!addingToBudget}
-        title={addingToBudget ? `Add to ${addingToBudget.category.name}` : ""}
+        title={addingToBudget ? `Add to ${budgetName(addingToBudget)}` : ""}
         empty={
           mode === "monthly"
             ? "No other monthly or weekly repeating expenses. Add one under Repeating payments."
@@ -428,7 +448,7 @@ export default function Budgets() {
             return {
               key: r.id,
               label: ruleName(r),
-              detail: [formatCurrency(r.amount, r.account.currency), current ? `now in ${current.category.name}` : r.category?.name ?? "no category"].join(" · "),
+              detail: [formatCurrency(r.amount, r.account.currency), current ? `now in ${budgetName(current)}` : r.category?.name ?? "no category"].join(" · "),
               onPress: () => {
                 const target = addingToBudget!;
                 setAddingToBudget(null);
@@ -446,7 +466,7 @@ export default function Budgets() {
         hint="It moves into that budget's category, along with what it already paid this period."
         options={mappableBudgets.map((b) => ({
           key: b.id,
-          label: b.category.name,
+          label: budgetName(b),
           detail: `${b.ownerId ? "Personal" : "Family"} · ${formatCurrency(b.amount, family.currency)}`,
           color: b.category.color,
           onPress: () => {
@@ -564,6 +584,7 @@ function BudgetForm({
   const [created, setCreated] = useState<Category[]>([]);
   const [categoryId, setCategoryId] = useState<string | null>(null);
   const [addingCategory, setAddingCategory] = useState(false);
+  const [name, setName] = useState("");
   const [amount, setAmount] = useState("");
   const [repeats, setRepeats] = useState(true);
   const [rollover, setRollover] = useState(false);
@@ -594,6 +615,7 @@ function BudgetForm({
     try {
       await api.post(`/families/${familyId}/budgets`, {
         categoryId,
+        name: name.trim() || null,
         amount: amountValue,
         year,
         ...(monthly ? { month, period: "MONTHLY", rollover } : { period: "ANNUAL" }),
@@ -662,7 +684,7 @@ function BudgetForm({
                       {ruleName(r)}
                     </Text>
                     <Text style={{ fontSize: 11.5, color: colors.inkSubtle }} numberOfLines={1}>
-                      {[formatCurrency(r.amount, r.account.currency), current ? `now in ${current.category.name}` : r.category?.name ?? "no category"].join(" · ")}
+                      {[formatCurrency(r.amount, r.account.currency), current ? `now in ${budgetName(current)}` : r.category?.name ?? "no category"].join(" · ")}
                     </Text>
                   </View>
                 </Pressable>
@@ -678,6 +700,10 @@ function BudgetForm({
           </View>
         </Field>
       )}
+
+      <Field label="Name" hint="Optional. Leave blank to use the category's name.">
+        <Input value={name} onChangeText={setName} placeholder={category?.name ?? "e.g. Groceries & milk"} maxLength={60} />
+      </Field>
 
       <Field label={monthly ? "Monthly amount" : "Yearly amount"}>
         <Input keyboardType="decimal-pad" value={amount} onChangeText={setAmount} placeholder="0.00" />
@@ -758,6 +784,7 @@ function BudgetEditForm({
   onCancel: () => void;
 }) {
   const { colors } = useTheme();
+  const [name, setName] = useState(budget.name ?? "");
   const [amount, setAmount] = useState(String(budget.amount));
   const [rollover, setRollover] = useState(budget.rollover);
   const [repeats, setRepeats] = useState(budget.repeats);
@@ -773,7 +800,7 @@ function BudgetEditForm({
     setError(null);
     setIsSubmitting(true);
     try {
-      await api.patch(`/families/${familyId}/budgets/${budget.id}`, { amount: amountValue, rollover, repeats, isCommon });
+      await api.patch(`/families/${familyId}/budgets/${budget.id}`, { name: name.trim() || null, amount: amountValue, rollover, repeats, isCommon });
       onDone();
     } catch (err) {
       setError(getErrorMessage(err, "Unable to update budget"));
@@ -783,7 +810,10 @@ function BudgetEditForm({
 
   return (
     <Card style={{ gap: 14 }}>
-      <Text style={{ fontWeight: "800", color: colors.ink }}>{budget.category.name}</Text>
+      <Text style={{ fontWeight: "800", color: colors.ink }}>Edit budget</Text>
+      <Field label="Name" hint={`Leave blank to use the category's name (${budget.category.name}).${repeats ? ` Later ${monthly ? "months" : "years"} keep it.` : ""}`}>
+        <Input value={name} onChangeText={setName} placeholder={budget.category.name} maxLength={60} />
+      </Field>
       <Field label={monthly ? "Monthly amount" : "Yearly amount"} hint={repeats ? `Later ${monthly ? "months" : "years"} copy this amount.` : undefined}>
         <Input keyboardType="decimal-pad" value={amount} onChangeText={setAmount} />
       </Field>

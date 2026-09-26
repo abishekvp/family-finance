@@ -93,6 +93,8 @@ export interface Budget {
   familyId: string;
   ownerId: string | null;
   categoryId: string;
+  /** Its own name, when given; otherwise it goes by its category's. */
+  name?: string | null;
   period: BudgetPeriod;
   amount: number;
   month: number | null;

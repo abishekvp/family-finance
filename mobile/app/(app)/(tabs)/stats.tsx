@@ -3,7 +3,7 @@ import { ScrollView, Text, View } from "react-native";
 import { useFocusEffect } from "expo-router";
 import { ChevronLeft, ChevronRight, PieChart as PieChartIcon } from "lucide-react-native";
 import { api } from "../../../src/api/client";
-import type { Budget, Transaction } from "../../../src/api/types";
+import type { Budget } from "../../../src/api/types";
 import { useAuth } from "../../../src/context/AuthContext";
 import { useTheme } from "../../../src/context/ThemeContext";
 import { getErrorMessage } from "../../../src/api/errors";
@@ -12,6 +12,7 @@ import { safePercent } from "../../../src/lib/format";
 import { monthRange, yearRange } from "../../../src/lib/dateUtils";
 import { CHART_SWATCHES } from "../../../src/theme";
 import { DonutChart } from "../../../src/components/DonutChart";
+import { useTransactions } from "../../../src/lib/transactionStore";
 
 type TypeFilter = "EXPENSE" | "INCOME";
 type PeriodMode = "monthly" | "yearly";
@@ -31,42 +32,41 @@ export default function Stats() {
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("EXPENSE");
   const [periodMode, setPeriodMode] = useState<PeriodMode>("monthly");
   const [anchor, setAnchor] = useState(() => new Date());
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
   // The period's budgets, for "overall money used" against what was planned.
   const [budgetTotal, setBudgetTotal] = useState(0);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [budgetError, setBudgetError] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
+  // Transactions come from the copy kept on the device; only the budgets are fetched per period.
+  const filter = useMemo(() => {
     const { from, to } = periodMode === "monthly" ? monthRange(anchor) : yearRange(anchor.getFullYear());
+    return { from, to, type: typeFilter, sealed: true };
+  }, [periodMode, anchor, typeFilter]);
+  const { transactions, ready, error: syncError, sync } = useTransactions(user!.id, family.id, filter);
+  const isLoading = !ready;
+  const error = budgetError ?? (ready ? null : syncError);
+
+  const loadBudgets = useCallback(async () => {
     try {
       const budgetParams =
         periodMode === "monthly"
           ? { year: anchor.getFullYear(), month: anchor.getMonth() + 1 }
           : { year: anchor.getFullYear(), period: "ANNUAL" };
-      const [res, budgetsRes] = await Promise.all([
-        api.get<Transaction[]>(`/families/${family.id}/transactions`, {
-          params: { type: typeFilter, from: from.toISOString(), to: to.toISOString(), limit: 1000 },
-        }),
+      const budgetsRes =
         typeFilter === "EXPENSE"
-          ? api.get<Budget[]>(`/families/${family.id}/budgets`, { params: budgetParams })
-          : Promise.resolve({ data: [] as Budget[] }),
-      ]);
-      setTransactions(res.data);
+          ? await api.get<Budget[]>(`/families/${family.id}/budgets`, { params: budgetParams })
+          : { data: [] as Budget[] };
       setBudgetTotal(budgetsRes.data.reduce((sum, b) => sum + b.amount, 0));
-      setError(null);
+      setBudgetError(null);
     } catch (err) {
-      setError(getErrorMessage(err, "Unable to load stats"));
-    } finally {
-      setIsLoading(false);
+      setBudgetError(getErrorMessage(err, "Unable to load stats"));
     }
   }, [family.id, typeFilter, periodMode, anchor]);
 
   useFocusEffect(
     useCallback(() => {
-      setIsLoading(true);
-      load();
-    }, [load])
+      loadBudgets();
+      sync();
+    }, [loadBudgets, sync])
   );
 
   const slices = useMemo<CategorySlice[]>(() => {

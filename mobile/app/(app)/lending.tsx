@@ -3,13 +3,14 @@ import { Pressable, ScrollView, Text, View } from "react-native";
 import { useFocusEffect, useRouter } from "expo-router";
 import { ArrowDownLeft, ArrowUpRight, ChevronRight, HandCoins } from "lucide-react-native";
 import { api } from "../../src/api/client";
-import type { Account, Transaction } from "../../src/api/types";
+import type { Account } from "../../src/api/types";
 import { useAuth } from "../../src/context/AuthContext";
 import { useTheme } from "../../src/context/ThemeContext";
 import { getErrorMessage } from "../../src/api/errors";
 import { Avatar, Badge, Button, Card, EmptyState, ErrorText, Money, SkeletonRows, StatTile } from "../../src/components/ui";
 import { href } from "../../src/lib/nav";
 import { balanceStatus, isPerson, isSettled, lendingTotals, nextDue, trackLoans } from "../../src/lib/lending";
+import { selectTransactions, syncTransactions } from "../../src/lib/transactionStore";
 
 type Due = { dueDate: Date | null; overdue: boolean };
 
@@ -27,21 +28,19 @@ export default function Lending() {
 
   const load = useCallback(async () => {
     try {
-      const res = await api.get<Account[]>(`/families/${family.id}/accounts`);
+      const [res] = await Promise.all([api.get<Account[]>(`/families/${family.id}/accounts`), syncTransactions(user!.id, family.id)]);
       const found = res.data.filter(isPerson);
       setPeople(found);
       setError(null);
+      // Each person's history comes from the copy kept on the device rather than a request apiece.
       const open = found.filter((p) => !isSettled(p.balance));
-      const histories = await Promise.all(
-        open.map((p) => api.get<Transaction[]>(`/families/${family.id}/transactions`, { params: { accountId: p.id, limit: 1000 } }))
-      );
-      setDues(Object.fromEntries(open.map((p, i) => [p.id, nextDue(trackLoans(histories[i].data, p))])));
+      setDues(Object.fromEntries(open.map((p) => [p.id, nextDue(trackLoans(selectTransactions(user!.id, family.id, { accountId: p.id }), p))])));
     } catch (err) {
       setError(getErrorMessage(err, "Unable to load"));
     } finally {
       setIsLoading(false);
     }
-  }, [family.id]);
+  }, [family.id, user]);
 
   useFocusEffect(
     useCallback(() => {

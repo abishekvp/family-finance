@@ -244,6 +244,96 @@ transactionsRouter.get(
   })
 );
 
+// Rows are read back this far behind the client's position, so one saved just before a sync but
+// committed just after it (or stamped by a server whose clock runs slightly behind) isn't skipped.
+// Re-sending a few rows is harmless: the client upserts by id.
+const SYNC_OVERLAP_MS = 2 * 60 * 1000;
+const SYNC_PAGE_SIZE = 1000;
+
+/**
+ * Delta sync for clients that keep a local copy of the family's transactions: everything changed
+ * after `since` (an opaque position this endpoint handed out), oldest change first, a page at a
+ * time. Deleted rows and rows that are no longer visible to the requester (moved onto another
+ * member's private account) come back as `removed` ids. So do rows waiting for or refused approval,
+ * since clients total whatever they hold; an approval bumps updatedAt, so the row arrives then.
+ * `scope` changes whenever an account or category does — a rename, a colour, an account going private — since those are embedded in every
+ * row without touching its updatedAt; a client seeing a new scope starts over from scratch.
+ */
+transactionsRouter.get(
+  "/sync",
+  requireFamilyRole(Role.VIEWER),
+  asyncHandler(async (req, res) => {
+    const familyId = req.params.familyId;
+    const requesterId = req.user!.id;
+
+    // "<updatedAt ISO>_<id>": the last row the client has seen, in (updatedAt, id) order.
+    let after: { updatedAt: Date; id: string } | null = null;
+    if (typeof req.query.since === "string" && req.query.since) {
+      const sep = req.query.since.indexOf("_");
+      const updatedAt = new Date(sep > 0 ? req.query.since.slice(0, sep) : "");
+      if (sep <= 0 || Number.isNaN(updatedAt.getTime())) throw new AppError(400, "Invalid since position");
+      after = { updatedAt, id: req.query.since.slice(sep + 1) };
+    }
+    // A page continuation resumes exactly where the last page stopped; a fresh sync rewinds a little.
+    const isContinuation = req.query.continue === "1";
+
+    const [accounts, categories] = await Promise.all([
+      prisma.account.aggregate({ where: { familyId }, _count: true, _max: { updatedAt: true } }),
+      prisma.category.aggregate({ where: { familyId }, _count: true, _max: { updatedAt: true } }),
+    ]);
+    const scope = [
+      requesterId,
+      accounts._count,
+      accounts._max.updatedAt?.getTime() ?? 0,
+      categories._count,
+      categories._max.updatedAt?.getTime() ?? 0,
+    ].join(":");
+
+    let where: Prisma.TransactionWhereInput = { familyId };
+    if (after && isContinuation) {
+      where = {
+        familyId,
+        OR: [{ updatedAt: { gt: after.updatedAt } }, { updatedAt: after.updatedAt, id: { gt: after.id } }],
+      };
+    } else if (after) {
+      where = { familyId, updatedAt: { gte: new Date(after.updatedAt.getTime() - SYNC_OVERLAP_MS) } };
+    } else {
+      // First sync: there's nothing to remove yet, so deleted rows needn't be sent at all.
+      where = { familyId, isDeleted: false, approvalStatus: ApprovalStatus.APPROVED };
+    }
+
+    const rows = await prisma.transaction.findMany({
+      where,
+      orderBy: [{ updatedAt: "asc" }, { id: "asc" }],
+      take: SYNC_PAGE_SIZE + 1,
+      include: { ...TRANSACTION_INCLUDE, account: { select: { ...TRANSACTION_INCLUDE.account.select, ownerId: true } } },
+    });
+    const hasMore = rows.length > SYNC_PAGE_SIZE;
+    const page = hasMore ? rows.slice(0, SYNC_PAGE_SIZE) : rows;
+
+    const transactions: ReturnType<typeof serializeTransaction>[] = [];
+    const removed: string[] = [];
+    for (const row of page) {
+      if (row.isDeleted || row.approvalStatus !== ApprovalStatus.APPROVED || !isVisible(row.account.ownerId, requesterId)) {
+        removed.push(row.id);
+      } else {
+        const { ownerId: _ownerId, ...account } = row.account;
+        transactions.push(serializeTransaction({ ...row, account }));
+      }
+    }
+
+    const last = page[page.length - 1];
+    res.json({
+      transactions,
+      removed,
+      scope,
+      // Where the next request picks up. With nothing new, the client keeps the position it had.
+      since: last ? `${last.updatedAt.toISOString()}_${last.id}` : after ? `${after.updatedAt.toISOString()}_${after.id}` : null,
+      hasMore,
+    });
+  })
+);
+
 const createTransactionSchema = z.object({
   accountId: z.string().min(1, "accountId is required"),
   type: transactionTypeSchema,
