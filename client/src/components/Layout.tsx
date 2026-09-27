@@ -19,6 +19,7 @@ import {
 import { useAuth } from "../context/AuthContext";
 import { api } from "../api/client";
 import type { FamilySummary } from "../context/AuthContext";
+import { FamilyDataProvider } from "../context/FamilyDataContext";
 import { useTheme, type ThemeChoice } from "../lib/theme";
 import { Avatar, Badge, cn, Popover, Segmented } from "./ui";
 import { Logo } from "./Logo";
@@ -101,21 +102,23 @@ export function Layout() {
   );
 
   return (
-    <div className="flex min-h-dvh">
-      <DesktopSidebar family={family} items={navItems} />
+    <FamilyDataProvider familyId={family.id}>
+      <div className="flex min-h-dvh">
+        <DesktopSidebar family={family} items={navItems} />
 
-      <div className="flex min-w-0 flex-1 flex-col">
-        <TopBar title={title} family={family} scope={scope} onScopeChange={setScope} onLogout={logout} />
+        <div className="flex min-w-0 flex-1 flex-col">
+          <TopBar title={title} family={family} scope={scope} onScopeChange={setScope} onLogout={logout} />
 
-        <main className="mx-auto w-full max-w-6xl flex-1 px-4 pb-28 pt-5 sm:px-6 sm:pb-10 lg:px-8">
-          <div key={location.pathname} className="animate-rise-in">
-            <Outlet context={{ family, scope } satisfies LayoutContext} />
-          </div>
-        </main>
+          <main className="mx-auto w-full max-w-6xl flex-1 px-4 pb-28 pt-5 sm:px-6 sm:pb-10 lg:px-8">
+            <div key={location.pathname} className="animate-rise-in">
+              <Outlet context={{ family, scope } satisfies LayoutContext} />
+            </div>
+          </main>
+        </div>
+
+        <MobileTabBar items={navItems} />
       </div>
-
-      <MobileTabBar items={navItems} />
-    </div>
+    </FamilyDataProvider>
   );
 }
 

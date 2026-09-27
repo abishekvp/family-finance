@@ -37,7 +37,19 @@ export function TransactionRow({
           )}
         </span>
         <div className="min-w-0">
-          <p className="truncate text-sm font-semibold text-ink">{description}</p>
+          <p className="flex items-center gap-1.5 truncate text-sm font-semibold text-ink">
+            {description}
+            {transaction.isRefunded && (
+              <span className="shrink-0 rounded-full bg-surface-sunken px-1.5 py-0.5 text-2xs font-semibold text-ink-subtle">
+                Refunded
+              </span>
+            )}
+            {transaction.refundsId && (
+              <span className="shrink-0 rounded-full bg-surface-sunken px-1.5 py-0.5 text-2xs font-semibold text-ink-subtle">
+                Refund
+              </span>
+            )}
+          </p>
           <p className="truncate text-xs text-ink-subtle">
             {isTransfer && transaction.transferToAccount
               ? `${transaction.account.name} → ${transaction.transferToAccount.name}`

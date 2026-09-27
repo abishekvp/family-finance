@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useMemo, useState, type FormEvent } from "react";
 import { useOutletContext } from "react-router-dom";
 import {
   Banknote,
@@ -37,6 +37,7 @@ import type { LayoutContext } from "../components/Layout";
 import { ACCOUNT_TYPES } from "../api/types";
 import type { Account, AccountType } from "../api/types";
 import { humanizeEnum, safePercent } from "../lib/format";
+import { useFamilyData } from "../context/FamilyDataContext";
 
 const GROUPS: { title: string; types: AccountType[] }[] = [
   { title: "Cash", types: ["CASH"] },
@@ -67,30 +68,12 @@ function personStatus(balance: number) {
 export function Accounts() {
   const { family, scope } = useOutletContext<LayoutContext>();
   const { user } = useAuth();
-  const [accounts, setAccounts] = useState<Account[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  // Shared with Dashboard and Transactions (see FamilyDataContext) so switching to this tab doesn't
+  // re-fetch accounts that were just loaded there.
+  const { accounts, isLoadingStatic: isLoading, staticError: error, refreshAccounts } = useFamilyData();
   const [editingAccount, setEditingAccount] = useState<Account | "new" | null>(null);
   const [archivingId, setArchivingId] = useState<string | null>(null);
   const [archiveError, setArchiveError] = useState<string | null>(null);
-
-  async function load() {
-    setIsLoading(true);
-    setError(null);
-    try {
-      const res = await api.get<Account[]>(`/families/${family.id}/accounts`);
-      setAccounts(res.data);
-    } catch (err) {
-      setError(getErrorMessage(err, "Unable to load accounts"));
-    } finally {
-      setIsLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    load().catch(() => undefined);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [family.id]);
 
   const scopedAccounts = useMemo(
     () => (scope === "family" ? accounts : accounts.filter((a) => a.owner?.id === user!.id)),
@@ -116,7 +99,7 @@ export function Accounts() {
     try {
       await api.delete(`/families/${family.id}/accounts/${accountId}`);
       setArchivingId(null);
-      await load();
+      await refreshAccounts();
     } catch (err) {
       setArchiveError(getErrorMessage(err, "Unable to archive account"));
     }
@@ -254,7 +237,7 @@ export function Accounts() {
           familyId={family.id}
           account={editingAccount === "new" ? null : editingAccount}
           onClose={() => setEditingAccount(null)}
-          onSaved={load}
+          onSaved={refreshAccounts}
         />
       )}
     </div>

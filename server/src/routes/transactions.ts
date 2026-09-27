@@ -14,6 +14,8 @@ const TRANSACTION_INCLUDE = {
   account: { select: { id: true, name: true, currency: true } },
   transferToAccount: { select: { id: true, name: true } },
   category: { select: { id: true, name: true, color: true, icon: true, type: true } },
+  // Only entries whose refund still counts mark this one as refunded (see COUNTED in lib/approval).
+  refundedBy: { where: { isDeleted: false, approvalStatus: ApprovalStatus.APPROVED }, select: { id: true } },
 } satisfies Prisma.TransactionInclude;
 
 type TransactionWithRelations = Prisma.TransactionGetPayload<{ include: typeof TRANSACTION_INCLUDE }>;
@@ -36,6 +38,11 @@ function serializeTransaction(t: TransactionWithRelations) {
     dueDate: t.dueDate ? t.dueDate.toISOString() : null,
     recurringId: t.recurringId,
     repaysId: t.repaysId,
+    // Non-null when this entry is the refund of an expense — it and that expense are both left out
+    // of spending/income totals. Present only when the refund itself still counts (see resolveRefunds).
+    refundsId: t.refundsId,
+    // True once a live refund points back at this entry, so clients can grey it out of totals too.
+    isRefunded: t.refundedBy.length > 0,
     approvalStatus: t.approvalStatus,
     reviewedById: t.reviewedById,
     reviewedAt: t.reviewedAt ? t.reviewedAt.toISOString() : null,
@@ -165,6 +172,36 @@ async function resolveRepays(
   return loan.id;
 }
 
+/**
+ * Checks that a refund reverses an expense with the same family, and returns the link to persist.
+ * Only an INCOME entry can carry the link — money coming back is a credit, whatever the transaction
+ * being refunded looked like.
+ */
+async function resolveRefunds(
+  familyId: string,
+  transactionId: string | null,
+  type: TransactionType,
+  refundsIdInput: string | null,
+  // False when the link is the one already saved: an expense deleted since just drops it.
+  requested = true
+): Promise<string | null> {
+  if (!refundsIdInput) return null;
+  if (refundsIdInput === transactionId) throw new AppError(400, "An entry can't refund itself");
+  if (type !== TransactionType.INCOME) {
+    if (!requested) return null;
+    throw new AppError(400, "Only an income entry can be marked as a refund");
+  }
+
+  const original = await prisma.transaction.findFirst({
+    where: { id: refundsIdInput, familyId, isDeleted: false, type: TransactionType.EXPENSE },
+  });
+  if (!original) {
+    if (!requested) return null;
+    throw new AppError(404, "The transaction being refunded was not found");
+  }
+  return original.id;
+}
+
 const transactionTypeSchema = z.nativeEnum(TransactionType);
 const transactionStatusSchema = z.nativeEnum(TransactionStatus);
 // "ALL" lists every entry whatever its approval state; the default lists only those that count.
@@ -211,7 +248,9 @@ transactionsRouter.get(
     if (typeof req.query.limit === "string") {
       const parsedLimit = Number(req.query.limit);
       if (Number.isFinite(parsedLimit) && parsedLimit > 0) {
-        limit = Math.floor(Math.min(parsedLimit, 1000));
+        // High enough that a client caching a whole year at once (see FamilyDataContext) doesn't
+        // silently truncate for an active family.
+        limit = Math.floor(Math.min(parsedLimit, 5000));
       }
     }
 
@@ -347,6 +386,7 @@ const createTransactionSchema = z.object({
   tags: z.array(z.string()).optional(),
   dueDate: z.string().datetime().nullable().optional(),
   repaysId: z.string().min(1).nullable().optional(),
+  refundsId: z.string().min(1).nullable().optional(),
 });
 
 const updateTransactionSchema = createTransactionSchema.partial();
@@ -373,6 +413,7 @@ transactionsRouter.post(
     );
 
     const repaysId = await resolveRepays(familyId, null, parsed.type, parsed.accountId, transferToAccountId, parsed.repaysId ?? null);
+    const refundsId = await resolveRefunds(familyId, null, parsed.type, parsed.refundsId ?? null);
     // Saved either way, so nothing is lost; with approvals on, a member's entry waits for an admin.
     const approvalStatus = await initialApprovalStatus(familyId, requesterId, [parsed.accountId, transferToAccountId], req.familyMembership!.role);
 
@@ -392,6 +433,7 @@ transactionsRouter.post(
         tags: parsed.tags ?? [],
         dueDate: parsed.dueDate ? new Date(parsed.dueDate) : null,
         repaysId,
+        refundsId,
         approvalStatus,
       },
       include: TRANSACTION_INCLUDE,
@@ -446,6 +488,14 @@ transactionsRouter.patch(
       "repaysId" in req.body
     );
 
+    const refundsId = await resolveRefunds(
+      familyId,
+      existing.id,
+      mergedType,
+      "refundsId" in req.body ? parsed.refundsId ?? null : existing.refundsId,
+      "refundsId" in req.body
+    );
+
     const mergedAmount = parsed.amount ?? Number(existing.amount);
     const mergedDate = parsed.date ? new Date(parsed.date) : existing.date;
     const mergedPayee = "payee" in req.body ? parsed.payee ?? null : existing.payee;
@@ -476,6 +526,7 @@ transactionsRouter.patch(
         tags: mergedTags,
         dueDate: mergedDueDate,
         repaysId,
+        refundsId,
         ...(reviewed ? { approvalStatus: reviewed, reviewedById: null, reviewedAt: null } : {}),
       },
       include: TRANSACTION_INCLUDE,

@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { ArrowRightLeft, HandCoins, Landmark, MinusCircle, PlusCircle } from "lucide-react";
 import { api } from "../../api/client";
 import { getErrorMessage } from "../../api/errors";
-import { Button, Chip, ErrorText, Field, Input, Label, Modal, Segmented, Select, useToast } from "../ui";
+import { Button, Checkbox, Chip, ErrorText, Field, Input, Label, Modal, Segmented, Select, useToast } from "../ui";
 import type { Account, Category, Transaction, TransactionType } from "../../api/types";
 import { currencySymbol } from "../../lib/format";
 
@@ -56,6 +56,7 @@ interface FormState {
   date: string;
   payee: string;
   notes: string;
+  refundsId: string;
 }
 
 /** A new transaction starts on the first real account — never on a friend's lend & borrow tab. */
@@ -73,6 +74,7 @@ function emptyForm(accounts: Account[]): FormState {
     date: toDateInputValue(undefined),
     payee: "",
     notes: "",
+    refundsId: "",
   };
 }
 
@@ -86,6 +88,7 @@ function formFromTransaction(t: Transaction): FormState {
     date: toDateInputValue(t.date),
     payee: t.payee ?? "",
     notes: t.notes ?? "",
+    refundsId: t.refundsId ?? "",
   };
 }
 
@@ -104,7 +107,7 @@ export function TransactionFormModal({
   categories: Category[];
   transaction?: Transaction | null;
   onClose: () => void;
-  onSaved: () => void;
+  onSaved: (saved: Transaction) => void;
 }) {
   const isEdit = Boolean(transaction);
   const [form, setForm] = useState<FormState>(() =>
@@ -112,6 +115,9 @@ export function TransactionFormModal({
   );
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isRefund, setIsRefund] = useState(Boolean(transaction?.refundsId));
+  const [refundableExpenses, setRefundableExpenses] = useState<Transaction[] | null>(null);
+  const [isLoadingRefundables, setIsLoadingRefundables] = useState(false);
   const toast = useToast();
 
   useEffect(() => {
@@ -120,6 +126,16 @@ export function TransactionFormModal({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accounts]);
+
+  useEffect(() => {
+    if (!isRefund || refundableExpenses !== null) return;
+    setIsLoadingRefundables(true);
+    api
+      .get<Transaction[]>(`/families/${familyId}/transactions`, { params: { type: "EXPENSE", limit: 100 } })
+      .then((res) => setRefundableExpenses(res.data))
+      .catch(() => setRefundableExpenses([]))
+      .finally(() => setIsLoadingRefundables(false));
+  }, [isRefund, refundableExpenses, familyId]);
 
   const categoriesForType = categories.filter((c) => c.type === (form.type === "INCOME" ? "INCOME" : "EXPENSE"));
   const topLevelCategories = categoriesForType.filter((c) => !c.parentId);
@@ -158,6 +174,7 @@ export function TransactionFormModal({
         transferToAccountId: form.type === "TRANSFER" ? form.transferToAccountId : null,
         payee: form.payee.trim() || null,
         notes: form.notes.trim() || null,
+        refundsId: form.type === "INCOME" && isRefund ? form.refundsId || null : null,
       };
 
       const saved =
@@ -167,7 +184,7 @@ export function TransactionFormModal({
       // Saved, but it won't show in totals until an admin approves it.
       if (saved.data.approvalStatus === "PENDING") toast("Saved and sent to an admin for approval");
 
-      onSaved();
+      onSaved(saved.data);
       if (andAddAnother && !isEdit) {
         setForm({ ...emptyForm(accounts), date: form.date });
       } else {
@@ -188,7 +205,8 @@ export function TransactionFormModal({
   const canSubmit =
     Boolean(form.accountId) &&
     Number(form.amount) > 0 &&
-    (form.type !== "TRANSFER" || Boolean(form.transferToAccountId));
+    (form.type !== "TRANSFER" || Boolean(form.transferToAccountId)) &&
+    (form.type !== "INCOME" || !isRefund || Boolean(form.refundsId));
 
   return (
     <Modal
@@ -218,14 +236,16 @@ export function TransactionFormModal({
       <form id="transaction-form" onSubmit={handleSubmit} className="space-y-5">
         <Segmented
           value={form.type}
-          onChange={(value) =>
+          onChange={(value) => {
+            if (value !== "INCOME") setIsRefund(false);
             setForm((f) => ({
               ...f,
               type: value,
               categoryId: "",
               transferToAccountId: value === "TRANSFER" ? f.transferToAccountId : "",
-            }))
-          }
+              refundsId: value === "INCOME" ? f.refundsId : "",
+            }));
+          }}
           options={TRANSACTION_TYPES}
           className="w-full [&>button]:flex-1"
         />
@@ -358,6 +378,43 @@ export function TransactionFormModal({
               </Select>
             )}
           </Field>
+        )}
+
+        {form.type === "INCOME" && (
+          <div>
+            <Checkbox
+              label="This is a refund"
+              description="Money back for an expense you already recorded — it and the original are left out of income and spending totals."
+              checked={isRefund}
+              onChange={(e) => {
+                setIsRefund(e.target.checked);
+                if (!e.target.checked) update("refundsId", "");
+              }}
+            />
+            {isRefund && (
+              <div className="mt-3">
+                <Field label="Refund of">
+                  {(props) =>
+                    isLoadingRefundables ? (
+                      <p className="text-xs text-ink-subtle">Loading expenses…</p>
+                    ) : (
+                      <Select {...props} value={form.refundsId} onChange={(e) => update("refundsId", e.target.value)}>
+                        <option value="">Select the expense being refunded</option>
+                        {(refundableExpenses ?? []).map((t) => (
+                          <option key={t.id} value={t.id}>
+                            {toDateInputValue(t.date)} · {t.payee || t.category?.name || "Expense"} ·{" "}
+                            {currencySymbol(t.account.currency)}
+                            {t.amount.toFixed(2)}
+                            {t.isRefunded ? " (already refunded)" : ""}
+                          </option>
+                        ))}
+                      </Select>
+                    )
+                  }
+                </Field>
+              </div>
+            )}
+          </div>
         )}
 
         <Field label="Notes" hint="Optional">

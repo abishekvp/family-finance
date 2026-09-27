@@ -19,11 +19,13 @@ import { getErrorMessage } from "../api/errors";
 import { Button, Card, CardHeader, Dot, EmptyState, ErrorText, ProgressBar, SkeletonRows } from "../components/ui";
 import { Money, StatTile } from "../components/figures";
 import type { LayoutContext } from "../components/Layout";
-import type { Account, Budget, Category, Goal, Transaction } from "../api/types";
+import type { Budget, Goal, Transaction } from "../api/types";
 import { formatPercent, safePercent } from "../lib/format";
 import { monthRange } from "../lib/dateUtils";
 import { TransactionRow } from "../components/transactions/TransactionRow";
 import { TransactionFormModal } from "../components/transactions/TransactionFormModal";
+import { countsTowardTotals } from "../lib/transactionTotals";
+import { useFamilyData, useYearTransactions } from "../context/FamilyDataContext";
 
 // A genuine at-a-glance overview. Full account management lives on Accounts.tsx and the full
 // transaction list/filters/period views live on Transactions.tsx.
@@ -31,14 +33,13 @@ export function Dashboard() {
   const { family, scope } = useOutletContext<LayoutContext>();
   const { user } = useAuth();
 
-  const [accounts, setAccounts] = useState<Account[]>([]);
-  const [categories, setCategories] = useState<Category[]>([]);
+  // Accounts, categories and full-year transactions come from the shared cache (see
+  // FamilyDataContext) so opening Dashboard after Transactions or Insights doesn't re-fetch them.
+  const { accounts, categories, isLoadingStatic, staticError, invalidateYear } = useFamilyData();
   const [recentTransactions, setRecentTransactions] = useState<Transaction[]>([]);
-  const [monthTransactions, setMonthTransactions] = useState<Transaction[]>([]);
-  const [lastMonthTransactions, setLastMonthTransactions] = useState<Transaction[]>([]);
   const [budgets, setBudgets] = useState<Budget[]>([]);
   const [goals, setGoals] = useState<Goal[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingExtras, setIsLoadingExtras] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showAddTransaction, setShowAddTransaction] = useState(false);
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
@@ -47,20 +48,25 @@ export function Dashboard() {
   const thisMonth = useMemo(() => monthRange(now), [now]);
   const lastMonth = useMemo(() => monthRange(subMonths(now, 1)), [now]);
 
-  async function load() {
-    setIsLoading(true);
+  const { data: thisYearTransactions, isLoading: isLoadingThisYear } = useYearTransactions(now.getFullYear());
+  const lastMonthYear = lastMonth.from.getFullYear();
+  const { data: lastMonthYearTransactions, isLoading: isLoadingLastMonthYear } = useYearTransactions(lastMonthYear);
+
+  const monthTransactions = useMemo(
+    () => thisYearTransactions.filter((t) => new Date(t.date) >= thisMonth.from && new Date(t.date) < thisMonth.to),
+    [thisYearTransactions, thisMonth]
+  );
+  const lastMonthTransactions = useMemo(() => {
+    const source = lastMonthYear === now.getFullYear() ? thisYearTransactions : lastMonthYearTransactions;
+    return source.filter((t) => new Date(t.date) >= lastMonth.from && new Date(t.date) < lastMonth.to);
+  }, [thisYearTransactions, lastMonthYearTransactions, lastMonthYear, now, lastMonth]);
+
+  async function loadExtras() {
+    setIsLoadingExtras(true);
     setError(null);
     try {
-      const [accountsRes, categoriesRes, recentRes, monthRes, lastMonthRes, budgetsRes, goalsRes] = await Promise.all([
-        api.get<Account[]>(`/families/${family.id}/accounts`),
-        api.get<Category[]>(`/families/${family.id}/categories`),
+      const [recentRes, budgetsRes, goalsRes] = await Promise.all([
         api.get<Transaction[]>(`/families/${family.id}/transactions`, { params: { limit: 6 } }),
-        api.get<Transaction[]>(`/families/${family.id}/transactions`, {
-          params: { from: thisMonth.from.toISOString(), to: thisMonth.to.toISOString(), limit: 1000 },
-        }),
-        api.get<Transaction[]>(`/families/${family.id}/transactions`, {
-          params: { from: lastMonth.from.toISOString(), to: lastMonth.to.toISOString(), limit: 1000 },
-        }),
         api
           .get<Budget[]>(`/families/${family.id}/budgets`, {
             params: { year: now.getFullYear(), month: now.getMonth() + 1 },
@@ -68,24 +74,29 @@ export function Dashboard() {
           .catch(() => ({ data: [] as Budget[] })),
         api.get<Goal[]>(`/families/${family.id}/goals`).catch(() => ({ data: [] as Goal[] })),
       ]);
-      setAccounts(accountsRes.data);
-      setCategories(categoriesRes.data);
       setRecentTransactions(recentRes.data);
-      setMonthTransactions(monthRes.data);
-      setLastMonthTransactions(lastMonthRes.data);
       setBudgets(budgetsRes.data);
       setGoals(goalsRes.data);
     } catch (err) {
       setError(getErrorMessage(err, "Unable to load your dashboard"));
     } finally {
-      setIsLoading(false);
+      setIsLoadingExtras(false);
     }
   }
 
   useEffect(() => {
-    load().catch(() => undefined);
+    loadExtras().catch(() => undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [family.id]);
+
+  const isLoading = isLoadingStatic || isLoadingExtras || isLoadingThisYear || isLoadingLastMonthYear;
+
+  function refresh(saved?: Transaction) {
+    invalidateYear(now.getFullYear());
+    if (lastMonthYear !== now.getFullYear()) invalidateYear(lastMonthYear);
+    if (saved) invalidateYear(new Date(saved.date).getFullYear());
+    loadExtras();
+  }
 
   const visibleAccounts = useMemo(
     () => (scope === "family" ? accounts : accounts.filter((a) => a.owner?.id === user!.id)),
@@ -98,7 +109,7 @@ export function Dashboard() {
     let income = 0;
     let expense = 0;
     for (const t of transactions) {
-      if (!visibleAccountIds.has(t.accountId)) continue;
+      if (!visibleAccountIds.has(t.accountId) || !countsTowardTotals(t)) continue;
       if (t.type === "INCOME") income += t.amount;
       else if (t.type === "EXPENSE") expense += t.amount;
     }
@@ -111,7 +122,7 @@ export function Dashboard() {
   const topCategories = useMemo(() => {
     const totals = new Map<string, { name: string; color: string; amount: number }>();
     for (const t of monthTransactions) {
-      if (t.type !== "EXPENSE" || !visibleAccountIds.has(t.accountId)) continue;
+      if (t.type !== "EXPENSE" || !visibleAccountIds.has(t.accountId) || !countsTowardTotals(t)) continue;
       const key = t.categoryId ?? "uncategorized";
       const entry = totals.get(key) ?? {
         name: t.category?.name ?? "Uncategorized",
@@ -176,7 +187,7 @@ export function Dashboard() {
         </p>
       </div>
 
-      <ErrorText>{error}</ErrorText>
+      <ErrorText>{error || staticError}</ErrorText>
 
       <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
         <StatTile
@@ -366,7 +377,7 @@ export function Dashboard() {
             setShowAddTransaction(false);
             setEditingTransaction(null);
           }}
-          onSaved={load}
+          onSaved={refresh}
         />
       )}
     </div>

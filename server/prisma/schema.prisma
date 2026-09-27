@@ -355,6 +355,10 @@ model Transaction {
   // A return of money lent or borrowed: the lend/borrow entry it pays back. Unlinked returns are
   // matched to the oldest open loans with that person.
   repaysId            String?
+  // The expense a refund reverses (e.g. a subscription charge that came back). Both this entry and
+  // the expense it refunds are left out of spending and income totals — the payment they cancel out
+  // counts as never having happened — while the account balance (both legs really happened) isn't.
+  refundsId           String?
   // Saved right away either way; only APPROVED entries count (see Family.requireApproval).
   approvalStatus      ApprovalStatus    @default(APPROVED)
   reviewedById        String?
@@ -373,6 +377,8 @@ model Transaction {
   recurring         RecurringTransaction? @relation(fields: [recurringId], references: [id], onDelete: SetNull)
   repays            Transaction?          @relation("LoanRepayments", fields: [repaysId], references: [id], onDelete: SetNull)
   repayments        Transaction[]         @relation("LoanRepayments")
+  refunds           Transaction?          @relation("TransactionRefund", fields: [refundsId], references: [id], onDelete: SetNull)
+  refundedBy        Transaction[]         @relation("TransactionRefund")
 
   @@index([familyId, date])
   @@index([familyId, approvalStatus])
@@ -380,6 +386,7 @@ model Transaction {
   @@index([familyId, updatedAt])
   @@index([recurringId])
   @@index([repaysId])
+  @@index([refundsId])
   @@index([accountId])
   @@index([categoryId])
 }

@@ -1,14 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { useOutletContext, useSearchParams } from "react-router-dom";
 import { addMonths, addYears, format, subMonths, subYears } from "date-fns";
-import { CalendarDays, ChevronLeft, ChevronRight, Filter as FilterIcon, Plus } from "lucide-react";
+import { CalendarDays, ChevronLeft, ChevronRight, Filter as FilterIcon, Plus, Search, X } from "lucide-react";
 import { api } from "../api/client";
 import { useAuth } from "../context/AuthContext";
-import { getErrorMessage } from "../api/errors";
 import { Button, Card, Chip, ErrorText, Segmented } from "../components/ui";
 import { Money } from "../components/figures";
 import type { LayoutContext } from "../components/Layout";
-import type { Account, Category, Transaction } from "../api/types";
+import type { Transaction } from "../api/types";
 import { loadPrefs } from "../lib/prefs";
 import { monthRange, yearRange } from "../lib/dateUtils";
 import { DailyView } from "../components/transactions/DailyView";
@@ -17,6 +16,8 @@ import { MonthlyView } from "../components/transactions/MonthlyView";
 import { TotalView } from "../components/transactions/TotalView";
 import { FilterPanel } from "../components/transactions/FilterPanel";
 import { TransactionFormModal } from "../components/transactions/TransactionFormModal";
+import { countsTowardTotals } from "../lib/transactionTotals";
+import { useFamilyData, useYearTransactions } from "../context/FamilyDataContext";
 
 type SubView = "Daily" | "Calendar" | "Monthly" | "Total";
 
@@ -34,14 +35,17 @@ export function Transactions() {
   const [prefs] = useState(loadPrefs);
   const [view, setView] = useState<SubView>(prefs.defaultView);
   const [anchor, setAnchor] = useState(() => new Date());
+  const [search, setSearch] = useState("");
 
-  const [accounts, setAccounts] = useState<Account[]>([]);
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  // Accounts, categories and this year's transactions are cached once (in FamilyDataContext, up in
+  // Layout) and shared with Dashboard and Insights too — switching sub-view here, or tabbing away
+  // and back, never re-fetches; only crossing into a year not seen yet does.
+  const { accounts, categories, isLoadingStatic, staticError, invalidateYear } = useFamilyData();
+  const year = anchor.getFullYear();
+  const { data: yearTransactions, isLoading: isLoadingYear } = useYearTransactions(year);
+
   const [priorTransactions, setPriorTransactions] = useState<Transaction[]>([]);
-
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [priorError, setPriorError] = useState<string | null>(null);
 
   const [selectedAccountIds, setSelectedAccountIds] = useState<Set<string> | null>(null);
   const [showFilter, setShowFilter] = useState(false);
@@ -67,58 +71,24 @@ export function Transactions() {
       ? anchor.getFullYear() === new Date().getFullYear()
       : anchor.getFullYear() === new Date().getFullYear() && anchor.getMonth() === new Date().getMonth();
 
-  async function loadStatic() {
-    try {
-      const [accRes, catRes] = await Promise.all([
-        api.get<Account[]>(`/families/${family.id}/accounts`),
-        api.get<Category[]>(`/families/${family.id}/categories`),
-      ]);
-      setAccounts(accRes.data);
-      setCategories(catRes.data);
-    } catch (err) {
-      setError(getErrorMessage(err, "Unable to load accounts or categories"));
-    }
-  }
-
-  async function loadTransactions() {
-    setIsLoading(true);
-    setError(null);
-    try {
-      const res = await api.get<Transaction[]>(`/families/${family.id}/transactions`, {
-        params: { from: range.from.toISOString(), to: range.to.toISOString(), limit: 1000 },
-      });
-      setTransactions(res.data);
-    } catch (err) {
-      setError(getErrorMessage(err, "Unable to load transactions"));
-    } finally {
-      setIsLoading(false);
-    }
-  }
-
+  // Carry-over needs everything before the period, which can span years the cache above doesn't
+  // hold — kept as its own lighter fetch rather than pulled into the year cache.
   async function loadPriorTransactions() {
     if (!prefs.carryOver) {
       setPriorTransactions([]);
       return;
     }
+    setPriorError(null);
     try {
       const res = await api.get<Transaction[]>(`/families/${family.id}/transactions`, {
-        params: { to: range.from.toISOString(), limit: 1000 },
+        params: { to: range.from.toISOString(), limit: 5000 },
       });
       setPriorTransactions(res.data);
-    } catch {
+    } catch (err) {
       setPriorTransactions([]);
+      setPriorError(err instanceof Error ? err.message : "Unable to load prior transactions");
     }
   }
-
-  useEffect(() => {
-    loadStatic().catch(() => undefined);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [family.id]);
-
-  useEffect(() => {
-    loadTransactions().catch(() => undefined);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [family.id, range.from.getTime(), range.to.getTime()]);
 
   useEffect(() => {
     loadPriorTransactions().catch(() => undefined);
@@ -137,20 +107,39 @@ export function Transactions() {
     [selectedAccountIds, scopedAccounts]
   );
 
+  // Monthly needs the whole year; the other sub-views slice it down to the current month —
+  // switching between them is just a client-side filter over the same cached year.
+  const periodTransactions = useMemo(() => {
+    if (view === "Monthly") return yearTransactions;
+    return yearTransactions.filter((t) => {
+      const d = new Date(t.date);
+      return d >= range.from && d < range.to;
+    });
+  }, [yearTransactions, view, range.from, range.to]);
+
+  const searchedTransactions = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return periodTransactions;
+    return periodTransactions.filter((t) =>
+      [t.payee, t.notes, t.category?.name, t.account.name].some((field) => field?.toLowerCase().includes(q))
+    );
+  }, [periodTransactions, search]);
+
   const visibleTransactions = useMemo(
-    () => transactions.filter((t) => accountIds.has(t.accountId)),
-    [transactions, accountIds]
+    () => searchedTransactions.filter((t) => accountIds.has(t.accountId)),
+    [searchedTransactions, accountIds]
   );
 
   const historyForCarryOver = useMemo(
-    () => [...priorTransactions, ...transactions],
-    [priorTransactions, transactions]
+    () => [...priorTransactions, ...yearTransactions],
+    [priorTransactions, yearTransactions]
   );
 
   const periodTotals = useMemo(() => {
     let income = 0;
     let expense = 0;
     for (const t of visibleTransactions) {
+      if (!countsTowardTotals(t)) continue;
       if (t.type === "INCOME") income += t.amount;
       else if (t.type === "EXPENSE") expense += t.amount;
     }
@@ -167,22 +156,49 @@ export function Transactions() {
     setAnchor(new Date());
   }
 
-  function refresh() {
-    loadTransactions();
+  function refresh(saved?: Transaction) {
+    invalidateYear(year);
+    if (saved) invalidateYear(new Date(saved.date).getFullYear());
     loadPriorTransactions();
   }
+
+  const isLoading = isLoadingStatic || isLoadingYear;
+  const error = staticError || priorError;
 
   return (
     <div className="relative space-y-4 pb-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <Segmented value={view} onChange={setView} options={SUB_VIEW_OPTIONS} />
 
-        <div className="relative flex items-center gap-2">
+        <div className="relative flex flex-1 flex-wrap items-center justify-end gap-2">
+          <div className="relative min-w-[160px] flex-1 sm:max-w-[240px] sm:flex-none">
+            <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-subtle" />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search payee, notes, category…"
+              className="w-full rounded-xl border border-line bg-surface py-1.5 pl-8 pr-7 text-sm text-ink outline-none transition placeholder:text-ink-subtle focus:border-brand-500"
+            />
+            {search && (
+              <button
+                type="button"
+                onClick={() => setSearch("")}
+                aria-label="Clear search"
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-ink-subtle hover:text-ink"
+              >
+                <X size={14} />
+              </button>
+            )}
+          </div>
           {selectedAccountIds !== null && (
             <Chip selected onClick={() => setSelectedAccountIds(null)}>
               {selectedAccountIds.size} account{selectedAccountIds.size === 1 ? "" : "s"} ✕
             </Chip>
           )}
+          <Button variant="secondary" size="sm" icon={<Plus size={15} />} onClick={() => setShowAddForm(true)}>
+            Add
+          </Button>
           <div className="relative">
             <Button variant="ghost" size="sm" icon={<FilterIcon size={15} />} onClick={() => setShowFilter((v) => !v)}>
               Filter
@@ -190,7 +206,7 @@ export function Transactions() {
             {showFilter && (
               <FilterPanel
                 accounts={scopedAccounts}
-                transactions={transactions}
+                transactions={periodTransactions}
                 selectedAccountIds={selectedAccountIds}
                 onChange={setSelectedAccountIds}
                 currency={family.currency}
@@ -315,15 +331,6 @@ export function Transactions() {
           />
         )}
       </Card>
-
-      <button
-        type="button"
-        onClick={() => setShowAddForm(true)}
-        aria-label="Add transaction"
-        className="brand-gradient safe-bottom fixed bottom-24 right-5 z-30 flex h-14 w-14 items-center justify-center rounded-full text-white shadow-glow transition duration-200 ease-swift hover:scale-105 active:scale-95 sm:bottom-6 sm:right-6"
-      >
-        <Plus size={24} />
-      </button>
 
       {(showAddForm || formTransaction) && (
         <TransactionFormModal

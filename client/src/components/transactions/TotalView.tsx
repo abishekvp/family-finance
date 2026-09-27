@@ -7,6 +7,7 @@ import { Button, Card, Dot, ErrorText, ProgressBar, SkeletonRows } from "../ui";
 import { EmptyOrCarryOver } from "./EmptyOrCarryOver";
 import { api } from "../../api/client";
 import { getErrorMessage } from "../../api/errors";
+import { countsTowardTotals } from "../../lib/transactionTotals";
 
 export function TotalView({
   familyId,
@@ -59,13 +60,14 @@ export function TotalView({
     };
   }, [familyId, periodYear, periodMonth, transactions]);
 
-  const income = transactions.filter((t) => t.type === "INCOME").reduce((s, t) => s + t.amount, 0);
-  const expense = transactions.filter((t) => t.type === "EXPENSE").reduce((s, t) => s + t.amount, 0);
+  const countedTransactions = transactions.filter(countsTowardTotals);
+  const income = countedTransactions.filter((t) => t.type === "INCOME").reduce((s, t) => s + t.amount, 0);
+  const expense = countedTransactions.filter((t) => t.type === "EXPENSE").reduce((s, t) => s + t.amount, 0);
 
   const accountTotals = accounts
     .filter((a) => accountIds.has(a.id))
     .map((account) => {
-      const accTx = transactions.filter((t) => t.accountId === account.id);
+      const accTx = countedTransactions.filter((t) => t.accountId === account.id);
       return {
         account,
         income: accTx.filter((t) => t.type === "INCOME").reduce((s, t) => s + t.amount, 0),

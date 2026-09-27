@@ -7,6 +7,7 @@ import { getStoredRefreshToken, setAccessToken, setStoredRefreshToken } from "..
 import { clearVaultSession } from "../api/vaultSession";
 import { clearTodayWidget } from "../lib/todayWidget";
 import { clearTransactionCache } from "../lib/transactionStore";
+import { unregisterBackgroundSync } from "../lib/backgroundSync";
 
 /** Preferences shared with the web app (see server /auth/me/preferences). */
 export interface ServerPrefs {
@@ -71,6 +72,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setOnAuthExpired(() => {
       clearTodayWidget();
       clearTransactionCache();
+      unregisterBackgroundSync();
       setUser(null);
     });
 
@@ -150,6 +152,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     clearVaultSession();
     clearTodayWidget();
     clearTransactionCache();
+    await unregisterBackgroundSync();
     setUser(null);
   }, []);
 

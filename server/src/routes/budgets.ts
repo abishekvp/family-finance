@@ -63,6 +63,9 @@ async function computeSpent(familyId: string, requesterId: string, categoryIds: 
       type: TransactionType.EXPENSE,
       isDeleted: false,
       ...COUNTED,
+      // A refunded expense counts as never spent — the entry that reverses it is kept out of income
+      // totals the same way (see resolveRefunds in routes/transactions.ts).
+      refundedBy: { none: { isDeleted: false, ...COUNTED } },
       date: { gte: start, lt: end },
       account: { OR: [{ ownerId: null }, { ownerId: requesterId }] },
       ...(period === BudgetPeriod.ANNUAL

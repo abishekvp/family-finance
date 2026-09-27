@@ -25,6 +25,9 @@ export function isSmsReaderAvailable() {
 
 export async function hasSmsPermission() {
   if (!native) return false;
+  // READ_SMS lets us scan the inbox; RECEIVE_SMS is what lets the OS deliver the SMS_RECEIVED
+  // broadcast to this app at all, which SmsReceivedReceiver needs to wake a scan the instant a
+  // message arrives. Both are separate dangerous permissions even though they're offered together.
   return PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.READ_SMS);
 }
 
@@ -36,7 +39,11 @@ export async function requestSmsPermission() {
     buttonPositive: "Allow",
     buttonNegative: "Not now",
   });
-  return result === PermissionsAndroid.RESULTS.GRANTED;
+  if (result !== PermissionsAndroid.RESULTS.GRANTED) return false;
+  // Same permission group, so this shows no extra dialog on most OEMs — but request it explicitly
+  // since Android tracks it separately, and it's what lets SmsReceivedReceiver see new messages.
+  await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.RECEIVE_SMS).catch(() => undefined);
+  return true;
 }
 
 /** Messages received after `sinceMs`, oldest first. */

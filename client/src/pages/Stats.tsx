@@ -1,25 +1,34 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useOutletContext } from "react-router-dom";
 import { addMonths, addYears, format, subMonths, subYears } from "date-fns";
 import { ArrowDownRight, ArrowUpRight, ChevronLeft, ChevronRight, PieChart as PieChartIcon } from "lucide-react";
-import { api } from "../api/client";
 import { useAuth } from "../context/AuthContext";
-import { getErrorMessage } from "../api/errors";
 import { Button, Card, Dot, EmptyState, ErrorText, ProgressBar, Segmented, SkeletonRows } from "../components/ui";
 import { Money } from "../components/figures";
 import type { LayoutContext } from "../components/Layout";
-import type { Account, Transaction } from "../api/types";
+import type { Transaction } from "../api/types";
 import { monthRange, yearRange } from "../lib/dateUtils";
 import { formatPercent } from "../lib/format";
 import { CategoryPie, type CategorySlice } from "../components/stats/CategoryPie";
+import { countsTowardTotals } from "../lib/transactionTotals";
+import { useFamilyData, useYearTransactions } from "../context/FamilyDataContext";
 
 type Metric = "Income" | "Expenses";
 type Period = "Monthly" | "Yearly";
 
 const UNCATEGORIZED_COLOR = "#94A3B8";
 
-function totalFor(transactions: Transaction[], accountIds: Set<string>) {
-  return transactions.filter((t) => accountIds.has(t.accountId)).reduce((s, t) => s + t.amount, 0);
+function totalFor(transactions: Transaction[], accountIds: Set<string>, type: Transaction["type"]) {
+  return transactions
+    .filter((t) => t.type === type && accountIds.has(t.accountId) && countsTowardTotals(t))
+    .reduce((s, t) => s + t.amount, 0);
+}
+
+function inRange(transactions: Transaction[], from: Date, to: Date) {
+  return transactions.filter((t) => {
+    const d = new Date(t.date);
+    return d >= from && d < to;
+  });
 }
 
 export function Stats() {
@@ -28,11 +37,10 @@ export function Stats() {
   const [metric, setMetric] = useState<Metric>("Expenses");
   const [period, setPeriod] = useState<Period>("Monthly");
   const [anchor, setAnchor] = useState(() => new Date());
-  const [accounts, setAccounts] = useState<Account[]>([]);
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [previousTransactions, setPreviousTransactions] = useState<Transaction[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+
+  // Accounts and transactions come from the shared per-year cache (see FamilyDataContext) — Stats
+  // doesn't re-fetch what Transactions or Dashboard already pulled in for the same year.
+  const { accounts, isLoadingStatic, staticError } = useFamilyData();
 
   const range = period === "Yearly" ? yearRange(anchor.getFullYear()) : monthRange(anchor);
   const previousAnchor = period === "Yearly" ? subYears(anchor, 1) : subMonths(anchor, 1);
@@ -40,43 +48,21 @@ export function Stats() {
   const periodLabel = period === "Yearly" ? String(anchor.getFullYear()) : format(anchor, "MMMM yyyy");
   const type = metric === "Income" ? "INCOME" : "EXPENSE";
 
-  useEffect(() => {
-    api
-      .get<Account[]>(`/families/${family.id}/accounts`)
-      .then((res) => setAccounts(res.data))
-      .catch(() => undefined);
-  }, [family.id]);
+  const year = anchor.getFullYear();
+  const previousYear = previousAnchor.getFullYear();
+  const { data: yearTransactions, isLoading: isLoadingYear } = useYearTransactions(year);
+  const { data: previousYearTransactions, isLoading: isLoadingPreviousYear } = useYearTransactions(previousYear);
 
-  useEffect(() => {
-    let cancelled = false;
-    setIsLoading(true);
-    setError(null);
-    Promise.all([
-      api.get<Transaction[]>(`/families/${family.id}/transactions`, {
-        params: { type, from: range.from.toISOString(), to: range.to.toISOString(), limit: 1000 },
-      }),
-      api
-        .get<Transaction[]>(`/families/${family.id}/transactions`, {
-          params: { type, from: previousRange.from.toISOString(), to: previousRange.to.toISOString(), limit: 1000 },
-        })
-        .catch(() => ({ data: [] as Transaction[] })),
-    ])
-      .then(([current, previous]) => {
-        if (cancelled) return;
-        setTransactions(current.data);
-        setPreviousTransactions(previous.data);
-      })
-      .catch((err) => {
-        if (!cancelled) setError(getErrorMessage(err, "Unable to load stats"));
-      })
-      .finally(() => {
-        if (!cancelled) setIsLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [family.id, type, range.from.getTime(), range.to.getTime()]);
+  const isLoading = isLoadingStatic || isLoadingYear || isLoadingPreviousYear;
+
+  const transactions = useMemo(
+    () => inRange(yearTransactions, range.from, range.to).filter((t) => t.type === type),
+    [yearTransactions, range, type]
+  );
+  const previousTransactions = useMemo(() => {
+    const source = previousYear === year ? yearTransactions : previousYearTransactions;
+    return inRange(source, previousRange.from, previousRange.to).filter((t) => t.type === type);
+  }, [yearTransactions, previousYearTransactions, previousYear, year, previousRange, type]);
 
   const scopedAccountIds = useMemo(() => {
     const scoped = scope === "family" ? accounts : accounts.filter((a) => a.owner?.id === user!.id);
@@ -86,7 +72,7 @@ export function Stats() {
   const slices = useMemo<CategorySlice[]>(() => {
     const totals = new Map<string, { name: string; color: string; amount: number }>();
     for (const t of transactions) {
-      if (!scopedAccountIds.has(t.accountId)) continue;
+      if (!scopedAccountIds.has(t.accountId) || !countsTowardTotals(t)) continue;
       const key = t.categoryId ?? "uncategorized";
       const entry = totals.get(key) ?? {
         name: t.category?.name ?? "Uncategorized",
@@ -110,8 +96,8 @@ export function Stats() {
 
   const total = slices.reduce((s, v) => s + v.amount, 0);
   const previousTotal = useMemo(
-    () => totalFor(previousTransactions, scopedAccountIds),
-    [previousTransactions, scopedAccountIds]
+    () => totalFor(previousTransactions, scopedAccountIds, type),
+    [previousTransactions, scopedAccountIds, type]
   );
 
   const delta = total - previousTotal;
@@ -157,7 +143,7 @@ export function Stats() {
           </Button>
         </div>
 
-        <ErrorText>{error}</ErrorText>
+        <ErrorText>{staticError}</ErrorText>
 
         {isLoading ? (
           <SkeletonRows rows={5} />

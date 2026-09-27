@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { Stack } from "expo-router";
 import { useAuth } from "../../src/context/AuthContext";
 import { PrefsProvider } from "../../src/context/PrefsContext";
@@ -6,6 +7,7 @@ import { useTheme } from "../../src/context/ThemeContext";
 import { SecurityGate } from "../../src/components/SecurityGate";
 import { TodayWidgetSync } from "../../src/components/TodayWidgetSync";
 import { RecurringSync } from "../../src/components/RecurringSync";
+import { registerBackgroundSync } from "../../src/lib/backgroundSync";
 
 // A screen opened straight from a deep link (a home-screen widget's quick add) still gets the
 // tabs underneath it, so going back lands on the transactions list instead of leaving the app.
@@ -15,6 +17,10 @@ export default function AppLayout() {
   const { user } = useAuth();
   const { colors } = useTheme();
   const hasFamily = (user?.families.length ?? 0) > 0;
+
+  useEffect(() => {
+    if (hasFamily) registerBackgroundSync().catch(() => undefined);
+  }, [hasFamily]);
 
   return (
     <SecurityGate>

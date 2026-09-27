@@ -1,4 +1,22 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
   <!-- Merged into the app manifest. Only requested at runtime once the user turns on SMS import. -->
   <uses-permission android:name="android.permission.READ_SMS" />
+  <!-- Lets SmsReceivedReceiver wake the app to re-scan the inbox as soon as a message arrives. -->
+  <uses-permission android:name="android.permission.RECEIVE_SMS" />
+
+  <application>
+    <!-- android:permission restricts the broadcast to the system, so no other app can spoof it.
+         Receiving it puts the app on Android's temporary background-start allowlist (see
+         developer.android.com/about/versions/oreo/background#services), so onReceive can start
+         SmsHeadlessTaskService as a plain (non-foreground) service — no notification required. -->
+    <receiver
+      android:name="expo.modules.smsreader.SmsReceivedReceiver"
+      android:exported="true"
+      android:permission="android.permission.BROADCAST_SMS">
+      <intent-filter>
+        <action android:name="android.provider.Telephony.SMS_RECEIVED" />
+      </intent-filter>
+    </receiver>
+    <service android:name="expo.modules.smsreader.SmsHeadlessTaskService" android:exported="false" />
+  </application>
 </manifest>
