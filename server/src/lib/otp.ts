@@ -44,9 +44,19 @@ export async function consumeCode(email: string, purpose: VerificationPurpose, c
   const expected = Buffer.from(record.codeHash, "hex");
   const actual = Buffer.from(hashCode(code.trim(), email, purpose), "hex");
   if (!crypto.timingSafeEqual(expected, actual)) {
-    await prisma.verificationCode.update({ where: { id: record.id }, data: { attempts: { increment: 1 } } });
+    // Conditioned on the attempts we just read, so concurrent guesses each consume one of the
+    // MAX_ATTEMPTS tries instead of all racing past the same stale count.
+    await prisma.verificationCode.updateMany({
+      where: { id: record.id, attempts: record.attempts },
+      data: { attempts: { increment: 1 } },
+    });
     throw invalid;
   }
-  await prisma.verificationCode.update({ where: { id: record.id }, data: { consumedAt: new Date() } });
+  // Conditioned on still being unconsumed, so two concurrent correct guesses can't both succeed.
+  const { count } = await prisma.verificationCode.updateMany({
+    where: { id: record.id, consumedAt: null },
+    data: { consumedAt: new Date() },
+  });
+  if (count === 0) throw invalid;
   return record;
 }

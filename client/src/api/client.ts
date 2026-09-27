@@ -28,8 +28,11 @@ let refreshPromise: Promise<string | null> | null = null;
 
 async function refreshAccessToken(): Promise<string | null> {
   if (!refreshPromise) {
-    refreshPromise = axios
-      .post("/api/auth/refresh", null, { withCredentials: true })
+    // Held across tabs, so tabs sharing the refresh cookie rotate it one at a time instead of racing
+    // and presenting a token another tab just rotated away.
+    const post = () => axios.post("/api/auth/refresh", null, { withCredentials: true });
+    refreshPromise = (async () =>
+      typeof navigator !== "undefined" && navigator.locks ? await navigator.locks.request("auth-refresh", post) : await post())()
       .then((res) => {
         const token = res.data.accessToken as string;
         setAccessToken(token);
