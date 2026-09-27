@@ -87,6 +87,10 @@ authRouter.post(
   })
 );
 
+// A rotated refresh token presented again within this window is treated as a concurrent-request race
+// (two tabs, a retried request) rather than theft.
+const REUSE_GRACE_MS = 10_000;
+
 authRouter.post(
   "/refresh",
   asyncHandler(async (req, res) => {
@@ -102,6 +106,11 @@ authRouter.post(
     }
 
     if (existing.revokedAt) {
+      // Rotated moments ago: most likely a second tab or request that raced the rotation. Refuse it,
+      // but leave the cookie (it may already hold the new token) and the other sessions alone.
+      if (Date.now() - existing.revokedAt.getTime() < REUSE_GRACE_MS) {
+        throw new AppError(401, "Refresh token is invalid or expired");
+      }
       // This token was already rotated away. Presenting it again means it leaked (someone else
       // has it, or it was replayed) — burn every session for the account rather than honoring it.
       res.clearCookie(REFRESH_COOKIE, { path: "/api/auth" });
@@ -110,14 +119,13 @@ authRouter.post(
     }
 
     // Conditioned on still being unrevoked, so two concurrent refreshes of the same token can't
-    // both rotate it — only the first wins, and the second falls into the reuse branch above.
+    // both rotate it — only the first wins. The loser raced it within the same instant, which is
+    // the benign case the grace window above covers, so it is refused without revoking anything.
     const { count } = await prisma.refreshToken.updateMany({
       where: { id: existing.id, revokedAt: null },
       data: { revokedAt: new Date() },
     });
     if (count === 0) {
-      res.clearCookie(REFRESH_COOKIE, { path: "/api/auth" });
-      await revokeAllSessions(existing.userId);
       throw new AppError(401, "Refresh token is invalid or expired");
     }
 
