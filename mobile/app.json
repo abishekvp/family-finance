@@ -3,7 +3,7 @@
     "name": "Family Finance",
     "slug": "family-finance",
     "scheme": "familyfinance",
-    "version": "1.8.1",
+    "version": "1.8.2",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
@@ -22,7 +22,7 @@
       },
       "predictiveBackGestureEnabled": false,
       "package": "com.anonymous.familyfinance",
-      "versionCode": 11,
+      "versionCode": 12,
       "permissions": [
         "android.permission.REQUEST_INSTALL_PACKAGES"
       ]
