@@ -64,6 +64,8 @@ export interface Transaction {
   dueDate: string | null;
   /** The repeating payment this was recorded from, if any. */
   recurringId?: string | null;
+  /** A return of money lent or borrowed: the lend/borrow entry it pays back. */
+  repaysId?: string | null;
   createdAt: string;
   updatedAt: string;
   account: { id: string; name: string; currency: string };
@@ -76,6 +78,8 @@ export interface Budget {
   familyId: string;
   ownerId: string | null;
   categoryId: string;
+  /** Its own name, when given; otherwise it goes by its category's (see budgetName). */
+  name?: string | null;
   period: BudgetPeriod;
   amount: number;
   month: number | null;
@@ -90,6 +94,8 @@ export interface Budget {
   /** Repeating payments in this category still to come in the period. */
   upcoming: number;
   remaining: number;
+  /** Repeating payments counted in it (in its category or a subcategory). */
+  recurringIds?: string[];
   /** A future period's copy of a repeating budget, not saved yet (read-only). */
   projected?: boolean;
   sourceId?: string;

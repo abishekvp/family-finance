@@ -157,7 +157,7 @@ function GoalFormModal({
   const [name, setName] = useState("");
   const [targetAmount, setTargetAmount] = useState("");
   const [targetDate, setTargetDate] = useState("");
-  const [isCommon, setIsCommon] = useState(true);
+  const [isCommon, setIsCommon] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 

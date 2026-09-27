@@ -129,9 +129,24 @@ export function describeEntry(t: Transaction, personId: string): { effect: numbe
   return { effect: t.amount, label: t.payee || "Received for you", detail: t.category?.name ?? "Received for you" };
 }
 
+/** The loans a return of this kind pays back: "got back" returns what you lent, "paid back" what you borrowed. */
+export function repaidDirection(kind: LendingKind): Loan["direction"] | null {
+  if (kind === "got-back") return "lent";
+  if (kind === "paid-back") return "borrowed";
+  return null;
+}
+
+export interface Repayment {
+  transaction: Transaction;
+  /** The part of the entry that went to this loan. */
+  amount: number;
+}
+
 export interface Loan {
   /** The entry that started it; null for an opening balance. */
   transaction: Transaction | null;
+  /** What came back, oldest first. */
+  repayments: Repayment[];
   /** "lent": they owe you. "borrowed": you owe them. */
   direction: "lent" | "borrowed";
   date: Date;
@@ -150,8 +165,9 @@ function chronological(a: Transaction, b: Transaction) {
 
 /**
  * Splits a person's history into loans and how much of each has come back. Walking the entries in
- * date order, money moving one way first repays the oldest open loans in the other direction and
- * only the rest starts a new loan, so the loans always add up to the person's balance.
+ * date order, money moving one way first repays the loan it was linked to (see Transaction.repaysId),
+ * then the oldest open loans in the other direction, and only the rest starts a new loan, so the
+ * loans always add up to the person's balance.
  */
 export function trackLoans(history: Transaction[], person: Pick<Account, "id" | "openingBalance" | "createdAt">, now = new Date()): Loan[] {
   const loans: Loan[] = [];
@@ -161,17 +177,21 @@ export function trackLoans(history: Transaction[], person: Pick<Account, "id" | 
     let rest = Math.abs(effect);
     // Positive effect (money to them) first returns what you borrowed; negative returns what they borrowed.
     const repaying = effect > 0 ? "borrowed" : "lent";
-    for (const loan of loans) {
+    const linked = transaction?.repaysId ? loans.find((l) => l.transaction?.id === transaction.repaysId) : undefined;
+    const order = linked ? [linked, ...loans.filter((l) => l !== linked)] : loans;
+    for (const loan of order) {
       if (rest < EPSILON) break;
       if (loan.direction !== repaying || loan.remaining < EPSILON) continue;
       const part = Math.min(rest, loan.remaining);
       loan.returned += part;
       loan.remaining -= part;
       rest -= part;
+      if (transaction) loan.repayments.push({ transaction, amount: part });
     }
     if (rest >= EPSILON) {
       loans.push({
         transaction,
+        repayments: [],
         direction: effect > 0 ? "lent" : "borrowed",
         date,
         amount: rest,
@@ -196,6 +216,17 @@ export function trackLoans(history: Transaction[], person: Pick<Account, "id" | 
     loan.overdue = !loan.settled && !!loan.dueDate && loan.dueDate < today;
   }
   return loans;
+}
+
+function shortDay(date: Date) {
+  const sameYear = date.getFullYear() === new Date().getFullYear();
+  return date.toLocaleDateString(undefined, { day: "numeric", month: "short", ...(sameYear ? {} : { year: "numeric" }) });
+}
+
+/** "Lent ₹2,000 on 12 Sep · ₹1,500 left", for choosing which loan a return pays back. */
+export function loanLabel(loan: Loan, currency: string) {
+  const what = `${loan.direction === "lent" ? "Lent" : "Borrowed"} ${formatCurrency(loan.amount, currency)} on ${shortDay(loan.date)}`;
+  return loan.returned > EPSILON ? `${what} · ${formatCurrency(loan.remaining, currency)} left` : what;
 }
 
 /** The earliest return-by date among a person's open loans, and whether anything is overdue. */

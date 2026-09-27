@@ -100,7 +100,7 @@ export default function Categories() {
         <Text style={{ flex: 1, fontSize: 14, fontWeight: indent ? "600" : "700", color: colors.ink }} numberOfLines={1}>
           {category.name}
         </Text>
-        {category.ownerId && <Badge>Personal</Badge>}
+        <Badge tone={category.ownerId ? "neutral" : "brand"}>{category.ownerId ? "Personal" : "Family"}</Badge>
         <ChevronRight size={16} color={colors.inkSubtle} />
       </Pressable>
     );
@@ -341,7 +341,7 @@ function CategoryForm({
   const [name, setName] = useState(initial?.name ?? "");
   const [color, setColor] = useState(initial?.color ?? CHART_SWATCHES[0]);
   const [parentId, setParentId] = useState<string | null>(initial?.parentId ?? null);
-  const [isCommon, setIsCommon] = useState(initial ? initial.ownerId === null : true);
+  const [isCommon, setIsCommon] = useState(initial ? initial.ownerId === null : false);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -395,7 +395,7 @@ function CategoryForm({
 
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
         <View style={{ flex: 1 }}>
-          <Text style={{ fontSize: 13, fontWeight: "600", color: colors.ink }}>Shared family category</Text>
+          <Text style={{ fontSize: 13, fontWeight: "600", color: colors.ink }}>Share with family</Text>
           <Text style={{ fontSize: 12, color: colors.inkSubtle, marginTop: 2 }}>
             {isCommon ? "Everyone in the family can see and use it." : "Personal — only you can see and use it."}
           </Text>

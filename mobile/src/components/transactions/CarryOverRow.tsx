@@ -1,16 +1,18 @@
-import { useEffect, useState } from "react";
+import { useMemo } from "react";
 import { ActivityIndicator, Text, View } from "react-native";
 import { ArrowLeftRight } from "lucide-react-native";
-import { api } from "../../api/client";
-import type { Account, Transaction } from "../../api/types";
+import type { Account } from "../../api/types";
+import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../context/ThemeContext";
 import { Money } from "../ui";
 import { computeCumulativeBalance } from "../../lib/balance";
+import { useTransactions } from "../../lib/transactionStore";
 
 /**
  * Shown instead of a bare empty state when Settings' carry-over pref is ON and the viewed
- * period has zero transactions: fetches every transaction dated before `periodStart` and
- * folds it (plus opening balances) into the accounts' cumulative balance as of that instant.
+ * period has zero transactions: takes every transaction dated before `periodStart` (from the copy
+ * kept on the device) and folds it (plus opening balances) into the accounts' cumulative balance
+ * as of that instant.
  */
 export function CarryOverRow({
   familyId,
@@ -25,36 +27,15 @@ export function CarryOverRow({
   accountIds: Set<string>;
   currency: string;
 }) {
+  const { user } = useAuth();
   const { colors } = useTheme();
-  const [isLoading, setIsLoading] = useState(true);
-  const [balance, setBalance] = useState(0);
-  const [error, setError] = useState(false);
+  const periodMs = periodStart.getTime();
+  const filter = useMemo(() => ({ to: new Date(periodMs), sealed: true }), [periodMs]);
+  const { transactions: prior, ready: isReady, error } = useTransactions(user!.id, familyId, filter);
+  const isLoading = !isReady;
+  const balance = useMemo(() => computeCumulativeBalance(accounts, prior, accountIds), [accounts, prior, accountIds]);
 
-  useEffect(() => {
-    let cancelled = false;
-    setIsLoading(true);
-    setError(false);
-    api
-      .get<Transaction[]>(`/families/${familyId}/transactions`, {
-        params: { to: periodStart.toISOString(), limit: 1000 },
-      })
-      .then((res) => {
-        if (cancelled) return;
-        setBalance(computeCumulativeBalance(accounts, res.data, accountIds));
-      })
-      .catch(() => {
-        if (!cancelled) setError(true);
-      })
-      .finally(() => {
-        if (!cancelled) setIsLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [familyId, periodStart.getTime(), accounts, accountIds]);
-
-  if (error) return null;
+  if (error && !isReady) return null;
 
   return (
     <View

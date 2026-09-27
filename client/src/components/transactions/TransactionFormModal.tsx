@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { ArrowRightLeft, HandCoins, Landmark, MinusCircle, PlusCircle } from "lucide-react";
 import { api } from "../../api/client";
 import { getErrorMessage } from "../../api/errors";
-import { Button, Chip, ErrorText, Field, Input, Label, Modal, Segmented, Select } from "../ui";
+import { Button, Chip, ErrorText, Field, Input, Label, Modal, Segmented, Select, useToast } from "../ui";
 import type { Account, Category, Transaction, TransactionType } from "../../api/types";
 import { currencySymbol } from "../../lib/format";
 
@@ -112,6 +112,7 @@ export function TransactionFormModal({
   );
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const toast = useToast();
 
   useEffect(() => {
     if (!form.accountId && accounts.length > 0) {
@@ -159,11 +160,12 @@ export function TransactionFormModal({
         notes: form.notes.trim() || null,
       };
 
-      if (isEdit && transaction) {
-        await api.patch(`/families/${familyId}/transactions/${transaction.id}`, payload);
-      } else {
-        await api.post(`/families/${familyId}/transactions`, payload);
-      }
+      const saved =
+        isEdit && transaction
+          ? await api.patch<Transaction>(`/families/${familyId}/transactions/${transaction.id}`, payload)
+          : await api.post<Transaction>(`/families/${familyId}/transactions`, payload);
+      // Saved, but it won't show in totals until an admin approves it.
+      if (saved.data.approvalStatus === "PENDING") toast("Saved and sent to an admin for approval");
 
       onSaved();
       if (andAddAnother && !isEdit) {

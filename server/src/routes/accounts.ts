@@ -4,6 +4,7 @@ import { AccountType, Role } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { asyncHandler, AppError } from "../middleware/errorHandler";
 import { requireAuth, requireFamilyRole } from "../middleware/auth";
+import { COUNTED } from "../lib/approval";
 
 export const accountsRouter = Router({ mergeParams: true });
 accountsRouter.use(requireAuth);
@@ -23,7 +24,7 @@ accountsRouter.get(
       include: { owner: { select: { id: true, name: true } } },
     });
 
-    // Balance = opening balance + all non-deleted transactions that post to this account,
+    // Balance = opening balance + all non-deleted, approved transactions that post to this account,
     // minus outgoing transfers, plus incoming transfers landing on it.
     // Convention: EXPENSE and outgoing TRANSFER amounts are stored as positive numbers
     // that subtract from the source account; INCOME adds; the incoming leg of a TRANSFER
@@ -32,11 +33,11 @@ accountsRouter.get(
       accounts.map(async (account) => {
         const [outgoingTx, incoming] = await Promise.all([
           prisma.transaction.findMany({
-            where: { accountId: account.id, isDeleted: false },
+            where: { accountId: account.id, isDeleted: false, ...COUNTED },
             select: { type: true, amount: true },
           }),
           prisma.transaction.aggregate({
-            where: { transferToAccountId: account.id, isDeleted: false, type: "TRANSFER" },
+            where: { transferToAccountId: account.id, isDeleted: false, type: "TRANSFER", ...COUNTED },
             _sum: { amount: true },
           }),
         ]);
@@ -115,6 +116,8 @@ const updateAccountSchema = z.object({
   icon: z.string().trim().optional(),
   openingBalance: z.number().finite().optional(),
   creditLimit: z.number().finite().optional(),
+  // true = shared with the family, false = personal to the requester.
+  isCommon: z.boolean().optional(),
 });
 
 accountsRouter.patch(
@@ -133,6 +136,29 @@ accountsRouter.patch(
 
     const data = updateAccountSchema.parse(req.body);
 
+    const wasCommon = existing.ownerId === null;
+    const becomesCommon = data.isCommon !== undefined && data.isCommon !== wasCommon ? data.isCommon : null;
+    if (becomesCommon === false) {
+      // Other members would lose sight of their own entries on it.
+      const [othersTransactions, othersRepeating, othersGoals] = await Promise.all([
+        prisma.transaction.count({
+          where: { familyId, isDeleted: false, userId: { not: requesterId }, OR: [{ accountId: existing.id }, { transferToAccountId: existing.id }] },
+        }),
+        prisma.recurringTransaction.count({ where: { familyId, accountId: existing.id, userId: { not: requesterId } } }),
+        prisma.goal.count({ where: { familyId, accountId: existing.id, OR: [{ ownerId: null }, { ownerId: { not: requesterId } }] } }),
+      ]);
+      if (othersTransactions > 0 || othersRepeating > 0 || othersGoals > 0) {
+        const uses = [
+          othersTransactions > 0 ? `${othersTransactions} transaction${othersTransactions === 1 ? "" : "s"}` : null,
+          othersRepeating > 0 ? `${othersRepeating} repeating payment${othersRepeating === 1 ? "" : "s"}` : null,
+          othersGoals > 0 ? `${othersGoals} shared goal${othersGoals === 1 ? "" : "s"}` : null,
+        ]
+          .filter(Boolean)
+          .join(" and ");
+        throw new AppError(409, `It can't be made personal: other family members use it in ${uses}.`);
+      }
+    }
+
     const updated = await prisma.account.update({
       where: { id: existing.id },
       data: {
@@ -142,6 +168,7 @@ accountsRouter.patch(
         ...(data.icon !== undefined ? { icon: data.icon } : {}),
         ...(data.openingBalance !== undefined ? { openingBalance: data.openingBalance } : {}),
         ...(data.creditLimit !== undefined ? { creditLimit: data.creditLimit } : {}),
+        ...(becomesCommon !== null ? { ownerId: becomesCommon ? null : requesterId } : {}),
       },
     });
 

@@ -230,7 +230,7 @@ function CategoryFormModal({
   const [name, setName] = useState(category?.name ?? "");
   const [color, setColor] = useState(category?.color ?? SWATCHES[0]);
   const [parentId, setParentId] = useState(category?.parentId ?? "");
-  const [isCommon, setIsCommon] = useState(category ? category.ownerId === null : true);
+  const [isCommon, setIsCommon] = useState(category ? category.ownerId === null : false);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 

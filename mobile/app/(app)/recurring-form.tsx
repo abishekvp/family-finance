@@ -3,16 +3,18 @@ import { KeyboardAvoidingView, Platform, ScrollView, Text, View } from "react-na
 import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
 import { Trash2 } from "lucide-react-native";
 import { api } from "../../src/api/client";
-import type { Account, Category, RecurringFrequency, RecurringTransaction } from "../../src/api/types";
+import type { Account, Budget, Category, RecurringFrequency, RecurringTransaction } from "../../src/api/types";
 import { useAuth } from "../../src/context/AuthContext";
 import { useTheme } from "../../src/context/ThemeContext";
 import { getErrorMessage } from "../../src/api/errors";
 import { Button, Chip, ErrorText, Field, Input, Segmented, SkeletonRows, Toggle } from "../../src/components/ui";
 import { CategoryPicker } from "../../src/components/CategoryPicker";
+import { NewCategoryForm } from "../../src/components/NewCategoryForm";
 import { currencySymbol } from "../../src/lib/format";
 import { localDateInput } from "../../src/lib/dateUtils";
 import { isPerson } from "../../src/lib/lending";
 import { FREQUENCIES, describeSchedule, runRecurring } from "../../src/lib/recurring";
+import { budgetName } from "../../src/lib/budgets";
 
 type RuleType = "EXPENSE" | "INCOME";
 
@@ -46,16 +48,26 @@ export default function RecurringForm() {
 
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  // This month's and this year's budgets, to pick the one a payment counts in.
+  const [budgets, setBudgets] = useState<Budget[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([api.get<Account[]>(`/families/${family.id}/accounts`), api.get<Category[]>(`/families/${family.id}/categories`)])
-      .then(([accountsRes, categoriesRes]) => {
+    const now = new Date();
+    const budgetsUrl = `/families/${family.id}/budgets`;
+    Promise.all([
+      api.get<Account[]>(`/families/${family.id}/accounts`),
+      api.get<Category[]>(`/families/${family.id}/categories`),
+      api.get<Budget[]>(budgetsUrl, { params: { year: now.getFullYear(), month: now.getMonth() + 1 } }).catch(() => ({ data: [] as Budget[] })),
+      api.get<Budget[]>(budgetsUrl, { params: { year: now.getFullYear(), period: "ANNUAL" } }).catch(() => ({ data: [] as Budget[] })),
+    ])
+      .then(([accountsRes, categoriesRes, monthRes, yearRes]) => {
         if (cancelled) return;
         setAccounts(accountsRes.data.filter((a) => !isPerson(a)));
         setCategories(categoriesRes.data);
+        setBudgets([...monthRes.data, ...yearRes.data]);
       })
       .catch((err) => !cancelled && setLoadError(getErrorMessage(err, "Unable to load form data")))
       .finally(() => !cancelled && setIsLoading(false));
@@ -75,6 +87,7 @@ export default function RecurringForm() {
   const [categoryId, setCategoryId] = useState<string | null>(initial?.categoryId ?? null);
   const [notes, setNotes] = useState(initial?.notes ?? "");
   const [isActive, setIsActive] = useState(initial?.isActive ?? true);
+  const [addingCategory, setAddingCategory] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -85,6 +98,12 @@ export default function RecurringForm() {
   }, [accounts, accountId]);
 
   const categoriesForType = categories.filter((c) => c.type === type);
+  // Yearly payments count in yearly budgets; weekly and monthly ones in monthly budgets.
+  const periodBudgets = type === "EXPENSE" ? budgets.filter((b) => (frequency === "YEARLY") === (b.period === "ANNUAL")) : [];
+  const selectedCategory = categories.find((c) => c.id === categoryId);
+  // Its budget: the one on its category, else on its parent category.
+  const countsIn =
+    periodBudgets.find((b) => b.categoryId === categoryId) ?? periodBudgets.find((b) => !!selectedCategory?.parentId && b.categoryId === selectedCategory.parentId) ?? null;
   const selectedAccount = accounts.find((a) => a.id === accountId);
   const symbol = currencySymbol(selectedAccount?.currency ?? family.currency);
   const amountValue = Number(amount);
@@ -242,12 +261,51 @@ export default function RecurringForm() {
           )}
         </Field>
 
-        <Field label="Category" hint={type === "EXPENSE" ? "Its budget is where this counts." : undefined}>
-          {categoriesForType.length === 0 ? (
-            <Text style={{ color: colors.inkSubtle, fontSize: 13 }}>No {type.toLowerCase()} categories yet.</Text>
-          ) : (
-            <CategoryPicker categories={categoriesForType} selectedId={categoryId} onSelect={(id) => setCategoryId(id === categoryId ? null : id)} />
-          )}
+        {periodBudgets.length > 0 && (
+          <Field
+            label="Counts in budget"
+            hint={
+              countsIn
+                ? `Counted in your ${frequency === "YEARLY" ? "yearly" : "monthly"} ${budgetName(countsIn)} budget.`
+                : "Pick a budget, or a category below. Choosing a budget puts it in that budget's category."
+            }
+          >
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+              {periodBudgets.map((b) => (
+                <Chip
+                  key={b.id}
+                  label={`${budgetName(b)}${b.ownerId ? "" : " · Family"}`}
+                  color={b.category.color}
+                  selected={countsIn?.id === b.id}
+                  onPress={() => setCategoryId(b.categoryId)}
+                />
+              ))}
+            </View>
+          </Field>
+        )}
+
+        <Field label="Category" hint={type === "EXPENSE" ? "Its budget is where this counts. Tap again to clear." : "Tap again to clear."}>
+          <View style={{ gap: 12 }}>
+            <CategoryPicker
+              categories={categoriesForType}
+              selectedId={categoryId}
+              onSelect={(id) => setCategoryId(id === categoryId ? null : id)}
+              onAddNew={canEdit && !addingCategory ? () => setAddingCategory(true) : undefined}
+            />
+            {addingCategory && (
+              <NewCategoryForm
+                familyId={family.id}
+                type={type}
+                taken={categories}
+                onCreated={(created) => {
+                  setCategories((list) => [...list, created]);
+                  setCategoryId(created.id);
+                  setAddingCategory(false);
+                }}
+                onCancel={() => setAddingCategory(false)}
+              />
+            )}
+          </View>
         </Field>
 
         <Field label="Notes" hint="Optional">

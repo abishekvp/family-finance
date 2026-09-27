@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { Pressable, ScrollView, Text, View, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
 import { useFocusEffect, useNavigation, useRouter } from "expo-router";
 import { ChevronLeft, ChevronRight, Filter as FilterIcon, Plus } from "lucide-react-native";
 import { api } from "../../../src/api/client";
@@ -13,6 +13,7 @@ import { ErrorText, IconButton, Money, Segmented, SkeletonRows, tap } from "../.
 import { monthRange, yearRange } from "../../../src/lib/dateUtils";
 import { href } from "../../../src/lib/nav";
 import { useRecurringVersion } from "../../../src/lib/recurring";
+import { useTransactions } from "../../../src/lib/transactionStore";
 import { DailyView } from "../../../src/components/transactions/DailyView";
 import { CalendarView } from "../../../src/components/transactions/CalendarView";
 import { MonthlyView } from "../../../src/components/transactions/MonthlyView";
@@ -21,6 +22,9 @@ import { FilterModal } from "../../../src/components/transactions/FilterModal";
 import * as Haptics from "expo-haptics";
 
 type SubView = "daily" | "calendar" | "monthly" | "total";
+
+// The daily list draws this many rows at first and this many more each time it nears the bottom.
+const DAILY_PAGE = 40;
 
 const SUB_VIEW_OPTIONS: { value: SubView; label: string }[] = [
   { value: "daily", label: "Daily" },
@@ -53,40 +57,43 @@ export default function TransactionsHub() {
   const [selectedYear, setSelectedYear] = useState(() => new Date().getFullYear());
 
   const [accounts, setAccounts] = useState<Account[]>([]);
-  const [periodTransactions, setPeriodTransactions] = useState<Transaction[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [accountsError, setAccountsError] = useState<string | null>(null);
   const [selectedAccountIds, setSelectedAccountIds] = useState<Set<string> | null>(null);
   const [filterVisible, setFilterVisible] = useState(false);
 
+  // Read from the copy kept on the device, so switching months or views never waits on the network.
+  const period = useMemo(
+    () => (subView === "monthly" ? yearRange(selectedYear) : monthRange(anchorMonth)),
+    [subView, selectedYear, anchorMonth]
+  );
+  const { transactions: periodTransactions, ready, error: syncError, sync } = useTransactions(user!.id, family.id, period);
+  const isLoading = !ready;
+  // A failed sync over a copy already on screen isn't worth an alarm; it's retried on the next visit.
+  const error = accountsError ?? (ready ? null : syncError);
+
   const loadAccounts = useCallback(async () => {
-    const res = await api.get<Account[]>(`/families/${family.id}/accounts`);
-    setAccounts(res.data);
+    try {
+      const res = await api.get<Account[]>(`/families/${family.id}/accounts`);
+      setAccounts(res.data);
+      setAccountsError(null);
+    } catch (err) {
+      setAccountsError(getErrorMessage(err, "Unable to load accounts"));
+    }
   }, [family.id]);
 
-  const loadPeriod = useCallback(async () => {
-    const { from, to } = subView === "monthly" ? yearRange(selectedYear) : monthRange(anchorMonth);
-    const res = await api.get<Transaction[]>(`/families/${family.id}/transactions`, {
-      params: { from: from.toISOString(), to: to.toISOString(), limit: 1000 },
-    });
-    setPeriodTransactions(res.data);
-  }, [family.id, subView, anchorMonth, selectedYear]);
-
-  const loadAll = useCallback(async () => {
-    try {
-      await Promise.all([loadAccounts(), loadPeriod()]);
-      setError(null);
-    } catch (err) {
-      setError(getErrorMessage(err, "Unable to load transactions"));
-    } finally {
-      setIsLoading(false);
-    }
-  }, [loadAccounts, loadPeriod]);
+  const loadAll = useCallback(
+    (force = true) => {
+      loadAccounts();
+      sync({ force });
+    },
+    [loadAccounts, sync]
+  );
 
   useFocusEffect(
     useCallback(() => {
-      setIsLoading(true);
-      loadAll();
+      // Back from adding or editing one: the save is already in the local copy, so this only picks
+      // up what others changed.
+      loadAll(false);
     }, [loadAll])
   );
 
@@ -126,6 +133,23 @@ export default function TransactionsHub() {
     return periodTransactions.filter((t) => selectedAccountIds.has(t.accountId));
   }, [periodTransactions, selectedAccountIds]);
 
+  // Load on scroll: a busy month draws its first rows at once and the rest as they come into view.
+  const [dailyLimit, setDailyLimit] = useState(DAILY_PAGE);
+  useEffect(() => {
+    setDailyLimit(DAILY_PAGE);
+  }, [anchorMonth, selectedAccountIds, subView]);
+  const hasMoreDaily = subView === "daily" && filteredTransactions.length > dailyLimit;
+  const handleScroll = useCallback(
+    (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+      if (!hasMoreDaily) return;
+      const { layoutMeasurement, contentOffset, contentSize } = e.nativeEvent;
+      if (layoutMeasurement.height + contentOffset.y >= contentSize.height - 600) {
+        setDailyLimit((n) => n + DAILY_PAGE);
+      }
+    },
+    [hasMoreDaily]
+  );
+
   const scopedAccountIds = useMemo(() => selectedAccountIds ?? new Set(accounts.map((a) => a.id)), [selectedAccountIds, accounts]);
 
   const periodTotals = useMemo(() => {
@@ -151,7 +175,7 @@ export default function TransactionsHub() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.canvas }}>
-      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 100, gap: 14 }}>
+      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 100, gap: 14 }} onScroll={handleScroll} scrollEventThrottle={100}>
         <Segmented options={SUB_VIEW_OPTIONS} value={subView} onChange={setSubView} fullWidth />
 
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 }}>
@@ -205,6 +229,7 @@ export default function TransactionsHub() {
             carryOver={prefs.carryOver}
             accountIds={scopedAccountIds}
             onPressTransaction={openTransaction}
+            limit={dailyLimit}
           />
         ) : subView === "calendar" ? (
           <CalendarView

@@ -15,9 +15,30 @@ const ENCRYPTED_FIELDS = ["payee", "notes"] as const;
 const familyKeys = new Map<string, Uint8Array>();
 const encryptedFamilies = new Set<string>();
 
+// Bumped whenever a key comes or goes, so anything holding decrypted copies knows to redo them.
+let keyVersion = 0;
+const keyListeners = new Set<() => void>();
+
+function keysChanged() {
+  keyVersion++;
+  keyListeners.forEach((l) => l());
+}
+
+export function getKeyVersion() {
+  return keyVersion;
+}
+
+export function subscribeKeys(listener: () => void) {
+  keyListeners.add(listener);
+  return () => {
+    keyListeners.delete(listener);
+  };
+}
+
 export function setFamilyKey(familyId: string, key: Uint8Array | null) {
   if (key) familyKeys.set(familyId, key);
   else familyKeys.delete(familyId);
+  keysChanged();
 }
 
 export function hasFamilyKey(familyId: string) {
@@ -32,6 +53,7 @@ export function setFamilyEncrypted(familyId: string, enabled: boolean) {
 export function clearVaultSession() {
   familyKeys.clear();
   encryptedFamilies.clear();
+  keysChanged();
 }
 
 /** Encrypts payee/notes in an outgoing transaction payload (returns a new object). */
@@ -67,6 +89,13 @@ function decryptRecord(record: unknown) {
       obj[field] = LOCKED_PLACEHOLDER;
     }
   }
+}
+
+/** A copy of a record with payee/notes decrypted, leaving the (still sealed) original as it was. */
+export function decryptedCopy<T extends object>(record: T): T {
+  const copy = { ...record };
+  decryptRecord(copy);
+  return copy;
 }
 
 /** Decrypts payee/notes in place on a transaction or list of transactions. */

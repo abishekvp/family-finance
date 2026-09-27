@@ -46,7 +46,7 @@ const createCategorySchema = z.object({
   color: z.string().trim().optional(),
   icon: z.string().trim().optional(),
   parentId: z.string().min(1).nullable().optional(),
-  isCommon: z.boolean().default(true),
+  isCommon: z.boolean().default(false),
 });
 
 categoriesRouter.post(

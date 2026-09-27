@@ -78,7 +78,7 @@ const createGoalSchema = z.object({
   targetAmount: z.number().finite().gt(0),
   targetDate: z.coerce.date().optional(),
   accountId: z.string().min(1).optional(),
-  isCommon: z.boolean().default(true),
+  isCommon: z.boolean().default(false),
 });
 
 goalsRouter.post(
@@ -123,6 +123,8 @@ const updateGoalSchema = z.object({
   targetAmount: z.number().finite().gt(0).optional(),
   targetDate: z.coerce.date().nullable().optional(),
   isCompleted: z.boolean().optional(),
+  // true = shared with the family, false = personal to the requester.
+  isCommon: z.boolean().optional(),
 });
 
 goalsRouter.patch(
@@ -138,6 +140,15 @@ goalsRouter.patch(
 
     const data = updateGoalSchema.parse(req.body);
 
+    const wasCommon = existing.ownerId === null;
+    const becomesCommon = data.isCommon !== undefined && data.isCommon !== wasCommon ? data.isCommon : null;
+    if (becomesCommon === false) {
+      const othersContributions = await prisma.goalContribution.count({ where: { goalId: existing.id, userId: { not: requesterId } } });
+      if (othersContributions > 0) {
+        throw new AppError(409, "It can't be made personal: other family members have saved toward it.");
+      }
+    }
+
     const updated = await prisma.goal.update({
       where: { id: existing.id },
       data: {
@@ -145,6 +156,7 @@ goalsRouter.patch(
         ...(data.targetAmount !== undefined ? { targetAmount: data.targetAmount } : {}),
         ...(data.targetDate !== undefined ? { targetDate: data.targetDate } : {}),
         ...(data.isCompleted !== undefined ? { isCompleted: data.isCompleted } : {}),
+        ...(becomesCommon !== null ? { ownerId: becomesCommon ? null : requesterId } : {}),
       },
       include: {
         account: { select: GOAL_ACCOUNT_SELECT },

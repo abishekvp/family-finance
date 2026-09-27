@@ -1,16 +1,17 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { KeyboardAvoidingView, Platform, ScrollView, Text, View } from "react-native";
+import { KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, View } from "react-native";
 import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
-import { Plus, Repeat, Trash2 } from "lucide-react-native";
+import { ArrowRight, Plus, Repeat, Trash2 } from "lucide-react-native";
 import { api } from "../../src/api/client";
-import type { Account, Category, RecurringFrequency, Transaction, TransactionType } from "../../src/api/types";
+import type { Account, Budget, Category, RecurringFrequency, Transaction, TransactionType } from "../../src/api/types";
 import { useAuth } from "../../src/context/AuthContext";
 import { useTheme } from "../../src/context/ThemeContext";
 import { ClientError, getErrorMessage } from "../../src/api/errors";
 import { Button, Chip, ErrorText, Field, Input, Segmented, SkeletonRows, Toggle } from "../../src/components/ui";
 import { CategoryPicker } from "../../src/components/CategoryPicker";
-import { currencySymbol } from "../../src/lib/format";
-import { localDateInput } from "../../src/lib/dateUtils";
+import { NewCategoryForm } from "../../src/components/NewCategoryForm";
+import { currencySymbol, formatCurrency } from "../../src/lib/format";
+import { MONTH_LABELS, localDateInput } from "../../src/lib/dateUtils";
 import { href } from "../../src/lib/nav";
 import {
   LENDING_KINDS,
@@ -21,15 +22,20 @@ import {
   isPerson,
   kindOf,
   kindTag,
+  loanLabel,
   moneyGoesOut,
   parseKind,
+  repaidDirection,
   startsLoan,
+  trackLoans,
   withoutKindTag,
   type LendingKind,
 } from "../../src/lib/lending";
 import { refreshTodayWidget } from "../../src/lib/todayWidget";
+import { useTransactions } from "../../src/lib/transactionStore";
 import { FREQUENCIES, describeSchedule } from "../../src/lib/recurring";
 import { moveToBackground } from "../../modules/home-widgets";
+import { budgetName } from "../../src/lib/budgets";
 
 /** "LENDING" is saved as a transfer between one of your accounts and a person. */
 type FormType = TransactionType | "LENDING";
@@ -62,8 +68,8 @@ export default function TransactionForm() {
   const family = user!.families[0];
   const router = useRouter();
   const navigation = useNavigation();
-  // `type`, `accountId`, `personId`, `kind` and `amount` preset a new entry; `source=widget` marks a
-  // home-screen quick add.
+  // `type`, `accountId`, `personId`, `kind`, `amount` and `repaysId` preset a new entry;
+  // `source=widget` marks a home-screen quick add.
   const params = useLocalSearchParams<{
     id?: string;
     transaction?: string;
@@ -72,6 +78,7 @@ export default function TransactionForm() {
     personId?: string;
     kind?: string;
     amount?: string;
+    repaysId?: string;
     source?: string;
   }>();
 
@@ -139,6 +146,9 @@ export default function TransactionForm() {
   const [newPersonName, setNewPersonName] = useState("");
   const [sharePerson, setSharePerson] = useState(false);
   const [dueDate, setDueDate] = useState(initial?.dueDate ? localDateInput(new Date(initial.dueDate)) : "");
+  // A return pays back this lend/borrow entry first; null matches it to the oldest open loans.
+  const [repaysId, setRepaysId] = useState<string | null>(initial?.repaysId ?? params.repaysId ?? null);
+  const [addingCategory, setAddingCategory] = useState(false);
   // A person created by a save whose transaction then failed — reused on retry, never created twice.
   const createdPerson = useRef<Account | null>(null);
   // "Repeat" on a new income or expense: this transaction becomes the first of a repeating payment.
@@ -191,6 +201,21 @@ export default function TransactionForm() {
   const personName = addingPerson ? newPersonName.trim() : person?.name ?? "";
   const hasPerson = addingPerson ? personName.length > 0 : !!person;
 
+  // A return can say which loan it pays back. This entry's own earlier save is left out, so the
+  // loans read as they stood before it.
+  const repaying = isLending && person ? repaidDirection(kind) : null;
+  const personLoanId = repaying ? person!.id : null;
+  const personLoanFilter = useMemo(() => (personLoanId ? { accountId: personLoanId } : null), [personLoanId]);
+  const { transactions: personHistory } = useTransactions(user!.id, family.id, personLoanFilter);
+  const openLoans = useMemo(() => {
+    if (!repaying || !person) return [];
+    const history = personHistory.filter((t) => t.id !== initial?.id && (t.accountId === person.id || t.transferToAccountId === person.id));
+    return trackLoans(history, person).filter((l) => l.transaction && l.direction === repaying && (!l.settled || l.transaction.id === repaysId));
+  }, [repaying, person, personHistory, initial?.id, repaysId]);
+  const linkedLoan = openLoans.find((l) => l.transaction!.id === repaysId) ?? null;
+  // New categories are income or expense; for Lend/Borrow, by which way the money went.
+  const newCategoryType = isLending ? (moneyGoesOut(kind) ? "EXPENSE" : "INCOME") : type === "INCOME" ? "INCOME" : "EXPENSE";
+
   const amountValue = Number(amount);
   const canSubmit =
     !!accountId &&
@@ -210,6 +235,73 @@ export default function TransactionForm() {
     }
     return describeBalance(personName, before + balanceEffect(kind, amountValue), person?.currency ?? family.currency);
   })();
+
+  // The budgets an expense counts in: those for its date's month, and the yearly ones.
+  const [budgets, setBudgets] = useState<Budget[]>([]);
+  const dateDay = parseDay(date);
+  const budgetYear = dateDay?.getFullYear();
+  const budgetMonth = dateDay ? dateDay.getMonth() + 1 : undefined;
+  const wantsBudgets = type === "EXPENSE";
+  useEffect(() => {
+    if (!wantsBudgets || !budgetYear || !budgetMonth) return;
+    let cancelled = false;
+    const url = `/families/${family.id}/budgets`;
+    Promise.all([
+      api.get<Budget[]>(url, { params: { year: budgetYear, month: budgetMonth } }),
+      api.get<Budget[]>(url, { params: { year: budgetYear, period: "ANNUAL" } }),
+    ])
+      .then(([monthRes, yearRes]) => {
+        if (!cancelled) setBudgets([...monthRes.data, ...yearRes.data]);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [family.id, wantsBudgets, budgetYear, budgetMonth]);
+
+  /** A budget's category and its subcategories: what it counts. */
+  function budgetCategoryIds(b: Budget) {
+    return [b.categoryId, ...categories.filter((c) => c.parentId === b.categoryId).map((c) => c.id)];
+  }
+  // Only budgets whose category can still be picked (a deleted category's budget can't take new entries).
+  const budgetChoices = budgets.filter((b) => categories.some((c) => c.id === b.categoryId));
+  const countsIn = wantsBudgets && categoryId ? budgetChoices.filter((b) => budgetCategoryIds(b).includes(categoryId)) : [];
+  /** What a budget has left once this expense is in it. An edited expense is already in its spent. */
+  function leftAfter(b: Budget) {
+    let left = b.remaining;
+    if (initial?.type === "EXPENSE" && initial.categoryId && budgetCategoryIds(b).includes(initial.categoryId)) {
+      const at = new Date(initial.date);
+      const samePeriod = at.getFullYear() === b.year && (b.period === "ANNUAL" || at.getMonth() + 1 === b.month);
+      if (samePeriod) left += initial.amount;
+    }
+    return left - (amountValue > 0 ? amountValue : 0);
+  }
+  const budgetHint = countsIn
+    .map((b) => {
+      const left = leftAfter(b);
+      const when = b.period === "ANNUAL" ? `in ${b.year}` : `in ${MONTH_LABELS[(b.month ?? 1) - 1]}`;
+      return left >= 0 ? `${budgetName(b)} ${when}: ${formatCurrency(left, family.currency)} left after this` : `Takes ${budgetName(b)} over by ${formatCurrency(-left, family.currency)} ${when}`;
+    })
+    .join("\n");
+  const overBudget = countsIn.some((b) => leftAfter(b) < 0);
+
+  /**
+   * Money someone returned, or money you're returning, recorded as plain income or an expense: turn it
+   * into a Lend/Borrow return so it settles the loan instead of counting as income or spending.
+   */
+  const canBeLoanReturn = (type === "INCOME" || type === "EXPENSE") && !paidByPerson && !initial?.recurringId;
+  function recordAsLoanReturn() {
+    const nextKind: LendingKind = type === "INCOME" ? "got-back" : "paid-back";
+    const typedName = payee.trim().toLowerCase();
+    const match = typedName ? people.find((p) => p.name.trim().toLowerCase() === typedName) : undefined;
+    handleSelectType("LENDING");
+    setKind(nextKind);
+    setRepaysId(null);
+    if (match) {
+      setAddingPerson(false);
+      setPersonId(match.id);
+    }
+  }
 
   function handleSelectType(next: FormType) {
     setType(next);
@@ -248,6 +340,7 @@ export default function TransactionForm() {
   function buildPayload(personAccountId: string | null): Record<string, unknown> {
     const trimmedDate = date.trim();
     const parsed = parseDay(trimmedDate)!;
+    const payloadRepaysId = repaying ? repaysId : null;
     // Keep the original time (SMS imports carry the alert's) unless the day itself was changed.
     // A new entry for today keeps the current time, so it sorts after today's earlier ones.
     const unchangedDay = initial && trimmedDate === localDateInput(new Date(initial.date));
@@ -266,6 +359,7 @@ export default function TransactionForm() {
         payee: entryLabel(kind, personName),
         notes: notes.trim() || null,
         dueDate: due,
+        repaysId: payloadRepaysId,
         tags: [...withoutKindTag(initial?.tags ?? []), kindTag(kind)],
       };
     }
@@ -280,7 +374,7 @@ export default function TransactionForm() {
       payee: payee.trim() || null,
       notes: notes.trim() || null,
       // An entry turned from Lend/Borrow into something else stops being a loan.
-      ...(initial ? { tags: withoutKindTag(initial.tags), dueDate: null } : {}),
+      ...(initial ? { tags: withoutKindTag(initial.tags), dueDate: null, repaysId: null } : {}),
     };
   }
 
@@ -337,6 +431,7 @@ export default function TransactionForm() {
         setPayee("");
         setNotes("");
         setDueDate("");
+        setRepaysId(null);
         setRepeat(null);
         setDate(todayIso());
         if (isLending) {
@@ -404,11 +499,40 @@ export default function TransactionForm() {
 
         <Segmented fullWidth value={type} onChange={handleSelectType} options={TYPE_OPTIONS} />
 
+        {canBeLoanReturn && (
+          <Pressable
+            onPress={recordAsLoanReturn}
+            style={({ pressed }) => ({
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 10,
+              padding: 12,
+              borderRadius: 14,
+              backgroundColor: colors.surfaceSunken,
+              opacity: pressed ? 0.7 : 1,
+            })}
+          >
+            <Text style={{ flex: 1, fontSize: 12.5, color: colors.inkMuted }}>
+              {type === "INCOME" ? "Money someone returned? " : "Paying back money you borrowed? "}
+              <Text style={{ fontWeight: "700", color: colors.brand600 }}>{type === "INCOME" ? "Record it as a loan return" : "Record it as a loan payback"}</Text>
+            </Text>
+            <ArrowRight size={15} color={colors.brand600} />
+          </Pressable>
+        )}
+
         {isLending && (
           <View style={{ gap: 8 }}>
             <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
               {LENDING_KINDS.map((k) => (
-                <Chip key={k.value} label={k.label} selected={kind === k.value} onPress={() => setKind(k.value)} />
+                <Chip
+                  key={k.value}
+                  label={k.label}
+                  selected={kind === k.value}
+                  onPress={() => {
+                    setKind(k.value);
+                    setRepaysId(null);
+                  }}
+                />
               ))}
             </View>
             <Text style={{ color: colors.inkSubtle, fontSize: 12 }}>
@@ -456,6 +580,7 @@ export default function TransactionForm() {
                   selected={!addingPerson && personId === p.id}
                   onPress={() => {
                     setAddingPerson(false);
+                    if (p.id !== personId) setRepaysId(null);
                     setPersonId(p.id);
                   }}
                 />
@@ -465,7 +590,10 @@ export default function TransactionForm() {
                   label="New person"
                   icon={<Plus size={13} color={addingPerson ? colors.white : colors.inkMuted} />}
                   selected={addingPerson}
-                  onPress={() => setAddingPerson(true)}
+                  onPress={() => {
+                    setAddingPerson(true);
+                    setRepaysId(null);
+                  }}
                 />
               )}
             </View>
@@ -481,6 +609,32 @@ export default function TransactionForm() {
                 </View>
               </View>
             )}
+          </Field>
+        )}
+
+        {repaying && openLoans.length > 0 && (
+          <Field
+            label="Pays back"
+            hint={
+              linkedLoan && amountValue > linkedLoan.remaining + 0.005
+                ? `That's more than is left on this loan; the rest settles older ones with ${person!.name} first.`
+                : "Link it to the loan it returns, so you can see exactly what came back."
+            }
+          >
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+              <Chip label="Oldest loans first" selected={!linkedLoan} onPress={() => setRepaysId(null)} />
+              {openLoans.map((loan) => (
+                <Chip
+                  key={loan.transaction!.id}
+                  label={loanLabel(loan, person!.currency)}
+                  selected={linkedLoan === loan}
+                  onPress={() => {
+                    setRepaysId(loan.transaction!.id);
+                    if (!amount.trim() && loan.remaining > 0) setAmount(String(Number(loan.remaining.toFixed(2))));
+                  }}
+                />
+              ))}
+            </View>
           </Field>
         )}
 
@@ -539,17 +693,52 @@ export default function TransactionForm() {
             )}
           </Field>
         ) : (
-          <Field label="Category" hint={isLending ? "Optional — what it was for. Tap again to clear." : undefined}>
-            {categoriesForType.length === 0 ? (
-              <Text style={{ color: colors.inkSubtle, fontSize: 13 }}>No {isLending ? "" : `${type.toLowerCase()} `}categories yet.</Text>
-            ) : (
-              <CategoryPicker
-                categories={categoriesForType}
-                selectedId={categoryId}
-                onSelect={(id) => setCategoryId(isLending && id === categoryId ? null : id)}
-              />
+          <>
+            {wantsBudgets && budgetChoices.length > 0 && (
+              <Field
+                label="Counts in budget"
+                hint={countsIn.length > 0 ? budgetHint : "Pick the budget this comes out of, or a category below."}
+              >
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                  {budgetChoices.map((b) => (
+                    <Chip
+                      key={b.id}
+                      label={`${budgetName(b)}${b.period === "ANNUAL" ? " · yearly" : ""}${b.ownerId ? "" : " · Family"}`}
+                      color={overBudget && countsIn.includes(b) ? colors.expense : b.category.color}
+                      selected={countsIn.includes(b)}
+                      onPress={() => {
+                        setAddingCategory(false);
+                        setCategoryId(countsIn.includes(b) ? null : b.categoryId);
+                      }}
+                    />
+                  ))}
+                </View>
+              </Field>
             )}
-          </Field>
+            <Field label="Category" hint={isLending ? "Optional — what it was for. Tap again to clear." : "Tap again to clear."}>
+              <View style={{ gap: 12 }}>
+                <CategoryPicker
+                  categories={categoriesForType}
+                  selectedId={categoryId}
+                  onSelect={(id) => setCategoryId(id === categoryId ? null : id)}
+                  onAddNew={family.role !== "VIEWER" && !addingCategory ? () => setAddingCategory(true) : undefined}
+                />
+                {addingCategory && (
+                  <NewCategoryForm
+                    familyId={family.id}
+                    type={newCategoryType}
+                    taken={categories}
+                    onCreated={(created) => {
+                      setCategories((list) => [...list, created]);
+                      setCategoryId(created.id);
+                      setAddingCategory(false);
+                    }}
+                    onCancel={() => setAddingCategory(false)}
+                  />
+                )}
+              </View>
+            </Field>
+          </>
         )}
 
         {canRepeat && (
