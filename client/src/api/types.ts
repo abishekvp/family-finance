@@ -78,6 +78,8 @@ export interface Transaction {
   dueDate?: string | null;
   /** The repeating payment this was recorded from, if any. */
   recurringId?: string | null;
+  /** A return of money lent or borrowed: the lend/borrow entry it pays back. */
+  repaysId?: string | null;
   /** The expense entry this INCOME entry refunds, if it's a refund. */
   refundsId?: string | null;
   /** True once a refund has been recorded against this entry. */

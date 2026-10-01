@@ -19,6 +19,8 @@ interface FamilyDataValue {
   /** Drops a year's cache so the next ensureYear re-fetches it — call after a transaction is added,
    * edited or deleted. */
   invalidateYear: (year: number) => void;
+  /** Drops every cached year — call after something changes transactions wholesale (e.g. a reset). */
+  invalidateAll: () => void;
 }
 
 const FamilyDataContext = createContext<FamilyDataValue | null>(null);
@@ -80,6 +82,11 @@ export function FamilyDataProvider({ familyId, children }: { familyId: string; c
     });
   }, []);
 
+  const invalidateAll = useCallback(() => {
+    inFlight.current.clear();
+    setYears({});
+  }, []);
+
   const ensureYear = useCallback(
     (year: number) => {
       const cached = years[year];
@@ -125,6 +132,7 @@ export function FamilyDataProvider({ familyId, children }: { familyId: string; c
     isYearLoading,
     ensureYear,
     invalidateYear,
+    invalidateAll,
   };
 
   return <FamilyDataContext.Provider value={value}>{children}</FamilyDataContext.Provider>;

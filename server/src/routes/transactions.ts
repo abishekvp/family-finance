@@ -559,6 +559,33 @@ transactionsRouter.delete(
   })
 );
 
+const resetSchema = z.object({ confirm: z.literal(true) });
+
+/**
+ * Wipes the money history: every transaction (soft-deleted, so synced devices drop them) and every
+ * account's opening balance, leaving all balances at zero. Accounts, categories, budgets, goals and
+ * repeating payments stay. Only reaches accounts the admin can see, never another member's private ones.
+ */
+transactionsRouter.post(
+  "/reset",
+  requireFamilyRole(Role.ADMIN),
+  asyncHandler(async (req, res) => {
+    const familyId = req.params.familyId;
+    const visible = { OR: [{ ownerId: null }, { ownerId: req.user!.id }] };
+    resetSchema.parse(req.body);
+
+    const [transactions, accounts] = await prisma.$transaction([
+      prisma.transaction.updateMany({
+        where: { familyId, isDeleted: false, account: visible },
+        data: { isDeleted: true, deletedAt: new Date() },
+      }),
+      prisma.account.updateMany({ where: { familyId, ...visible }, data: { openingBalance: 0 } }),
+    ]);
+
+    res.json({ transactionsCleared: transactions.count, accountsReset: accounts.count });
+  })
+);
+
 // How many entries wait for an admin. Members see their own count; admins see the whole family's.
 transactionsRouter.get(
   "/approvals/summary",

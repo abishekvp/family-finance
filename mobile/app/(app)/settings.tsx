@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { ScrollView, Text, View } from "react-native";
-import { CalendarCog, Coins, RefreshCw, Smartphone } from "lucide-react-native";
+import { Alert, ScrollView, Text, View } from "react-native";
+import { CalendarCog, Coins, RefreshCw, Smartphone, Trash2 } from "lucide-react-native";
 import { api } from "../../src/api/client";
 import { useAuth } from "../../src/context/AuthContext";
 import { usePrefs, type LandingView, type WeekStart } from "../../src/context/PrefsContext";
@@ -8,6 +8,7 @@ import { useTheme } from "../../src/context/ThemeContext";
 import { useAppUpdate } from "../../src/context/UpdateContext";
 import { currentAppVersion } from "../../src/lib/appUpdate";
 import { getErrorMessage } from "../../src/api/errors";
+import { syncTransactions } from "../../src/lib/transactionStore";
 import { Button, Card, CardHeader, Chip, ErrorText, Field, Input, SuccessText, Toggle } from "../../src/components/ui";
 
 const CURRENCIES = ["USD", "EUR", "GBP", "INR", "CAD", "AUD"];
@@ -102,8 +103,58 @@ export default function Settings() {
         </View>
       </Card>
 
+      {isAdmin && <ResetDataCard />}
+
       <AppUpdateCard />
     </ScrollView>
+  );
+}
+
+/** Admin-only: clears every transaction and zeroes all balances, keeping accounts and categories. */
+function ResetDataCard() {
+  const { user } = useAuth();
+  const { colors } = useTheme();
+  const family = user!.families[0];
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  async function reset() {
+    setError(null);
+    setNotice(null);
+    setBusy(true);
+    try {
+      const res = await api.post<{ transactionsCleared: number }>(`/families/${family.id}/transactions/reset`, { confirm: true });
+      await syncTransactions(user!.id, family.id, { force: true });
+      setNotice(`Cleared ${res.data.transactionsCleared} transactions and reset balances.`);
+    } catch (err) {
+      setError(getErrorMessage(err, "Unable to clear transactions"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function confirmReset() {
+    Alert.alert(
+      "Clear all transactions?",
+      "Every transaction is deleted and every account balance goes back to zero. Accounts, categories, budgets, goals and your SMS account mapping are kept. This can't be undone.",
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Clear everything", style: "destructive", onPress: reset },
+      ]
+    );
+  }
+
+  return (
+    <Card>
+      <CardHeader title="Clear transactions & balances" icon={<Trash2 size={16} color={colors.expense} />} />
+      <View style={{ gap: 12 }}>
+        <Text style={{ color: colors.inkSubtle, fontSize: 12 }}>Start fresh: deletes every transaction and zeroes all balances. Accounts and categories stay.</Text>
+        {notice && <SuccessText>{notice}</SuccessText>}
+        <ErrorText>{error}</ErrorText>
+        <Button title="Clear transactions & balances" variant="danger" loading={busy} onPress={confirmReset} />
+      </View>
+    </Card>
   );
 }
 

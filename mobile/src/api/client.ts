@@ -66,31 +66,59 @@ api.interceptors.request.use((config) => {
 });
 
 let refreshPromise: Promise<string | null> | null = null;
+// True only when the server definitively rejected the session (or none is stored) — as opposed to
+// the refresh failing for a transient reason (offline, timeout, 5xx) where the user is still signed in.
+let sessionRejected = false;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function refreshAccessToken(): Promise<string | null> {
   if (!refreshPromise) {
     refreshPromise = (async () => {
-      const storedRefreshToken = await getStoredRefreshToken();
-      if (!storedRefreshToken) return null;
+      sessionRejected = false;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const storedRefreshToken = await getStoredRefreshToken();
+        if (!storedRefreshToken) {
+          sessionRejected = true;
+          return null;
+        }
 
-      try {
-        const res = await axios.post(`${API_BASE_URL}/auth/refresh`, {
-          refreshToken: storedRefreshToken,
-        });
-        const { accessToken, refreshToken } = res.data as { accessToken: string; refreshToken: string };
-        setAccessToken(accessToken);
-        await setStoredRefreshToken(refreshToken);
-        return accessToken;
-      } catch {
-        setAccessToken(null);
-        await setStoredRefreshToken(null);
-        return null;
+        try {
+          const res = await axios.post(
+            `${API_BASE_URL}/auth/refresh`,
+            { refreshToken: storedRefreshToken },
+            { timeout: 15_000 }
+          );
+          const { accessToken, refreshToken } = res.data as { accessToken: string; refreshToken: string };
+          setAccessToken(accessToken);
+          await setStoredRefreshToken(refreshToken);
+          return accessToken;
+        } catch (err) {
+          const status = axios.isAxiosError(err) ? err.response?.status : undefined;
+          if (status === 401 || status === 403) {
+            // The background sync / SMS task run in their own JS context and may have rotated the
+            // token under us. If the stored token changed, that's not a rejection — retry with it.
+            if ((await getStoredRefreshToken()) !== storedRefreshToken) continue;
+            sessionRejected = true;
+            setAccessToken(null);
+            await setStoredRefreshToken(null);
+            return null;
+          }
+          // Network error, timeout or 5xx: keep the stored token and back off before retrying.
+          if (attempt < 2) await sleep(1000 * (attempt + 1));
+        }
       }
+      return null;
     })().finally(() => {
       refreshPromise = null;
     });
   }
   return refreshPromise;
+}
+
+/** Whether the last failed refresh was the server rejecting the session, not a connectivity blip. */
+export function wasSessionRejected() {
+  return sessionRejected;
 }
 
 api.interceptors.response.use(
@@ -114,7 +142,7 @@ api.interceptors.response.use(
         originalRequest.headers.set("Authorization", `Bearer ${newToken}`);
         return api(originalRequest);
       }
-      onAuthExpired?.();
+      if (sessionRejected) onAuthExpired?.();
     }
 
     return Promise.reject(error);

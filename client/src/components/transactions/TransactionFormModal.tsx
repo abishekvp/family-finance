@@ -1,10 +1,22 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { ArrowRightLeft, HandCoins, Landmark, MinusCircle, PlusCircle } from "lucide-react";
 import { api } from "../../api/client";
 import { getErrorMessage } from "../../api/errors";
 import { Button, Checkbox, Chip, ErrorText, Field, Input, Label, Modal, Segmented, Select, useToast } from "../ui";
 import type { Account, Category, Transaction, TransactionType } from "../../api/types";
 import { currencySymbol } from "../../lib/format";
+import {
+  LENDING_KIND_LABELS,
+  entryLabel,
+  isPerson,
+  kindOf,
+  kindTag,
+  loanLabel,
+  repaidDirection,
+  trackLoans,
+  withoutKindTag,
+  type LendingKind,
+} from "../../lib/lending";
 
 const TRANSACTION_TYPES: { value: TransactionType; label: ReactNode }[] = [
   {
@@ -57,6 +69,7 @@ interface FormState {
   payee: string;
   notes: string;
   refundsId: string;
+  repaysId: string;
 }
 
 /** A new transaction starts on the first real account — never on a friend's lend & borrow tab. */
@@ -75,6 +88,7 @@ function emptyForm(accounts: Account[]): FormState {
     payee: "",
     notes: "",
     refundsId: "",
+    repaysId: "",
   };
 }
 
@@ -89,6 +103,7 @@ function formFromTransaction(t: Transaction): FormState {
     payee: t.payee ?? "",
     notes: t.notes ?? "",
     refundsId: t.refundsId ?? "",
+    repaysId: t.repaysId ?? "",
   };
 }
 
@@ -119,6 +134,13 @@ export function TransactionFormModal({
   const [refundableExpenses, setRefundableExpenses] = useState<Transaction[] | null>(null);
   const [isLoadingRefundables, setIsLoadingRefundables] = useState(false);
   const toast = useToast();
+  // Which way a transfer with a person runs decides its options; "kind" says if it starts or returns a loan.
+  const [kindChoice, setKindChoice] = useState<LendingKind | null>(() => {
+    if (!transaction || transaction.type !== "TRANSFER") return null;
+    const personId = [transaction.accountId, transaction.transferToAccountId].find((id) => accounts.find((a) => a.id === id && isPerson(a)));
+    return personId ? kindOf(transaction, personId) : null;
+  });
+  const [personHistory, setPersonHistory] = useState<Transaction[]>([]);
 
   useEffect(() => {
     if (!form.accountId && accounts.length > 0) {
@@ -156,6 +178,43 @@ export function TransactionFormModal({
   const selectedAccount = accounts.find((a) => a.id === form.accountId);
   const symbol = currencySymbol(selectedAccount?.currency ?? "USD");
 
+  // A transfer between one of your accounts and a person is a loan entry.
+  const fromAccount = accounts.find((a) => a.id === form.accountId);
+  const toAccount = accounts.find((a) => a.id === form.transferToAccountId);
+  const person =
+    form.type === "TRANSFER" && fromAccount && toAccount && isPerson(fromAccount) !== isPerson(toAccount)
+      ? isPerson(fromAccount)
+        ? fromAccount
+        : toAccount
+      : null;
+  const moneyToPerson = !!person && person.id === toAccount?.id;
+  const kindOptions: LendingKind[] = moneyToPerson ? ["lent", "paid-back"] : ["borrowed", "got-back"];
+  const kind: LendingKind | null = person ? (kindChoice && kindOptions.includes(kindChoice) ? kindChoice : kindOptions[0]) : null;
+  const repaying = kind ? repaidDirection(kind) : null;
+  const personId = person?.id ?? null;
+
+  useEffect(() => {
+    if (!repaying || !personId) {
+      setPersonHistory([]);
+      return;
+    }
+    let cancelled = false;
+    api
+      .get<Transaction[]>(`/families/${familyId}/transactions`, { params: { accountId: personId, limit: 5000 } })
+      .then((res) => !cancelled && setPersonHistory(res.data))
+      .catch(() => !cancelled && setPersonHistory([]));
+    return () => {
+      cancelled = true;
+    };
+  }, [repaying, personId, familyId]);
+
+  // The loans this return can pay back, as they stood before this entry (its own earlier save is left out).
+  const openLoans = useMemo(() => {
+    if (!repaying || !person) return [];
+    const history = personHistory.filter((t) => t.id !== transaction?.id);
+    return trackLoans(history, person).filter((l) => l.transaction && l.direction === repaying && (!l.settled || l.transaction.id === form.repaysId));
+  }, [repaying, person, personHistory, transaction?.id, form.repaysId]);
+
   function update<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((f) => ({ ...f, [key]: value }));
   }
@@ -172,9 +231,13 @@ export function TransactionFormModal({
         // A transfer only keeps a category when it lends to or borrows from a person (the server drops it otherwise).
         categoryId: form.categoryId || null,
         transferToAccountId: form.type === "TRANSFER" ? form.transferToAccountId : null,
-        payee: form.payee.trim() || null,
+        payee: form.payee.trim() || (person && kind ? entryLabel(kind, person.name) : null),
         notes: form.notes.trim() || null,
         refundsId: form.type === "INCOME" && isRefund ? form.refundsId || null : null,
+        // A return names the loan it pays back; empty means the oldest open loans with that person.
+        repaysId: repaying ? form.repaysId || null : null,
+        // The kind rides along as a tag (as on mobile); other tags are left as they were.
+        tags: [...withoutKindTag(transaction?.tags ?? []), ...(kind ? [kindTag(kind)] : [])],
       };
 
       const saved =
@@ -378,6 +441,43 @@ export function TransactionFormModal({
               </Select>
             )}
           </Field>
+        )}
+
+        {person && kind && (
+          <div className="space-y-3">
+            <div>
+              <Label>This is</Label>
+              <div className="flex flex-wrap gap-2">
+                {kindOptions.map((k) => (
+                  <Chip
+                    key={k}
+                    type="button"
+                    selected={kind === k}
+                    onClick={() => {
+                      setKindChoice(k);
+                      update("repaysId", "");
+                    }}
+                  >
+                    {LENDING_KIND_LABELS[k]}
+                  </Chip>
+                ))}
+              </div>
+            </div>
+            {repaying && openLoans.length > 0 && (
+              <Field label="Pays back" hint="Link it to the loan it returns, so that loan is marked as returned.">
+                {(props) => (
+                  <Select {...props} value={form.repaysId} onChange={(e) => update("repaysId", e.target.value)}>
+                    <option value="">Oldest loans first</option>
+                    {openLoans.map((loan) => (
+                      <option key={loan.transaction!.id} value={loan.transaction!.id}>
+                        {loanLabel(loan, person.currency)}
+                      </option>
+                    ))}
+                  </Select>
+                )}
+              </Field>
+            )}
+          </div>
         )}
 
         {form.type === "INCOME" && (

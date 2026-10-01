@@ -1,9 +1,10 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useOutletContext } from "react-router-dom";
-import { CalendarCog, Coins, Smartphone } from "lucide-react";
+import { CalendarCog, Coins, Smartphone, Trash2 } from "lucide-react";
 import { api } from "../api/client";
 import { getErrorMessage } from "../api/errors";
-import { Button, Card, CardHeader, ErrorText, Field, Input, Radio, Toggle, useToast } from "../components/ui";
+import { Button, Card, CardHeader, ErrorText, Field, Input, Modal, Radio, Toggle, useToast } from "../components/ui";
+import { useFamilyData } from "../context/FamilyDataContext";
 import type { LayoutContext } from "../components/Layout";
 import { loadPrefs, savePrefs, type LandingView, type Prefs, type WeekStart } from "../lib/prefs";
 import { CategoryManager } from "../components/settings/CategoryManager";
@@ -12,6 +13,75 @@ import { GoalManager } from "../components/settings/GoalManager";
 
 const LANDING_VIEW_OPTIONS: LandingView[] = ["Daily", "Calendar"];
 const WEEK_START_OPTIONS: WeekStart[] = ["Sunday", "Monday"];
+
+/** Admin-only: clears every transaction and zeroes all balances, keeping accounts and categories. */
+function ResetDataCard({ familyId }: { familyId: string }) {
+  const toast = useToast();
+  const { invalidateAll, refreshAccounts } = useFamilyData();
+  const [open, setOpen] = useState(false);
+  const [typed, setTyped] = useState("");
+  const [isResetting, setIsResetting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  function close() {
+    setOpen(false);
+    setTyped("");
+    setError(null);
+  }
+
+  async function reset() {
+    setError(null);
+    setIsResetting(true);
+    try {
+      const res = await api.post<{ transactionsCleared: number }>(`/families/${familyId}/transactions/reset`, { confirm: true });
+      invalidateAll();
+      await refreshAccounts();
+      toast(`Cleared ${res.data.transactionsCleared} transactions and reset balances`);
+      close();
+    } catch (err) {
+      setError(getErrorMessage(err, "Unable to clear transactions"));
+    } finally {
+      setIsResetting(false);
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader
+        title="Clear transactions & balances"
+        subtitle="Start fresh. Accounts and categories stay."
+        icon={<Trash2 size={17} />}
+        actions={
+          <Button variant="danger" size="sm" onClick={() => setOpen(true)}>
+            Clear…
+          </Button>
+        }
+      />
+      {open && (
+        <Modal
+          title="Clear all transactions?"
+          description="Every transaction is deleted and every account balance goes back to zero. Accounts, categories, budgets and goals are kept. This can't be undone."
+          onClose={close}
+          footer={
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" onClick={close}>
+                Cancel
+              </Button>
+              <Button variant="danger" loading={isResetting} disabled={typed.trim().toUpperCase() !== "CLEAR"} onClick={reset}>
+                Clear everything
+              </Button>
+            </div>
+          }
+        >
+          <Field label="Type CLEAR to confirm">
+            {(props) => <Input {...props} value={typed} onChange={(e) => setTyped(e.target.value)} autoComplete="off" />}
+          </Field>
+          <ErrorText>{error}</ErrorText>
+        </Modal>
+      )}
+    </Card>
+  );
+}
 
 export function Settings() {
   const { family } = useOutletContext<LayoutContext>();
@@ -127,6 +197,8 @@ export function Settings() {
       <CategoryManager familyId={family.id} />
       <BudgetManager familyId={family.id} currency={family.currency} />
       <GoalManager familyId={family.id} currency={family.currency} />
+
+      {isAdmin && <ResetDataCard familyId={family.id} />}
 
       <Card>
         <CardHeader
