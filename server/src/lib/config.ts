@@ -1,6 +1,6 @@
 // Public-facing URLs and identifiers used by OAuth redirects, WebAuthn and emails.
 
-/** Origin the web app is served from, e.g. https://finance-family-manager.vercel.app. */
+/** Origin the web app is served from, e.g. https://finance.abishek.in. */
 export function publicAppUrl(): string {
   const fromEnv = process.env.PUBLIC_APP_URL?.trim().replace(/\/+$/, "");
   if (fromEnv) return fromEnv;

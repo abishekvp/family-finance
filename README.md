@@ -71,7 +71,7 @@ npm install
 npm start        # Expo dev server — press a for Android, i for iOS, w for web
 ```
 
-The built app talks to `https://finance-family-manager.vercel.app/api` by default (see
+The built app talks to `https://finance.abishek.in/api` by default (see
 `mobile/src/api/client.ts`). For local development against your own server, override it:
 
 ```bash
@@ -247,7 +247,7 @@ static `client/dist` build. To deploy:
 3. Run `npm run prisma:migrate` (or `prisma migrate deploy`) against that database once, from a
    machine that can reach it — Vercel's build step does not run migrations automatically.
 4. Deploy. The mobile app's default `EXPO_PUBLIC_API_URL` expects
-   `https://finance-family-manager.vercel.app` — update `mobile/src/api/client.ts` if the
+   `https://finance.abishek.in` — update `mobile/src/api/client.ts` if the
    project's domain ever changes.
 
 ### Sign-in, email and security configuration
@@ -257,7 +257,7 @@ See `.env.example` for the full list.
 
 | Feature | Variables | Notes |
 | --- | --- | --- |
-| Public URL | `PUBLIC_APP_URL` | e.g. `https://finance-family-manager.vercel.app`. Used for OAuth redirect URIs and the WebAuthn RP ID. |
+| Public URL | `PUBLIC_APP_URL` | e.g. `https://finance.abishek.in`. Used for OAuth redirect URIs and the WebAuthn RP ID. |
 | Email (forgot password, email change) | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM` | Any SMTP provider (Gmail app password, Resend, SES…). In development without SMTP, codes are printed to the server log. |
 | Sign in with Google | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Google Cloud → OAuth client of type **Web application**, authorized redirect URI `${PUBLIC_APP_URL}/api/auth/oauth/google/callback`. Serves web and the Android app. |
 | Sign in with Microsoft | `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET`, `MICROSOFT_TENANT` (default `common`) | Entra ID app registration, **Web** platform redirect URI `${PUBLIC_APP_URL}/api/auth/oauth/microsoft/callback`. |
