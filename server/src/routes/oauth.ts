@@ -286,7 +286,9 @@ oauthRouter.get(
       }
 
       await issueSession(res, user.id);
-      res.redirect(`${publicAppUrl()}/login`);
+      // Straight into the app: it shows its loading screen while it opens the session, rather than
+      // the sign-in form (which /login would flash before noticing the user is signed in).
+      res.redirect(`${publicAppUrl()}/dashboard`);
     } catch (err) {
       const message = err instanceof AppError ? err.message : "Sign-in failed. Please try again.";
       if (!(err instanceof AppError)) console.error("[oauth] callback failed:", err);

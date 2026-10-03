@@ -6,9 +6,10 @@ import { getErrorMessage } from "../api/errors";
 import { AuthShell } from "../components/AuthShell";
 import { Button, ErrorText, Field, Input } from "../components/ui";
 import { SocialSignIn } from "../components/SocialSignIn";
+import { FullPageLoader } from "../components/FullPageLoader";
 
 export function Login() {
-  const { user, login } = useAuth();
+  const { user, isLoading, login } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams] = useSearchParams();
@@ -19,8 +20,10 @@ export function Login() {
   const [error, setError] = useState<string | null>(searchParams.get("oauth_error"));
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // Checking for a stored session: don't flash the sign-in form at someone who is signed in.
+  if (isLoading) return <FullPageLoader />;
   if (user) {
-    const from = (location.state as { from?: { pathname?: string } } | null)?.from?.pathname ?? "/";
+    const from = (location.state as { from?: { pathname?: string } } | null)?.from?.pathname ?? "/dashboard";
     return <Navigate to={from} replace />;
   }
 
@@ -30,7 +33,7 @@ export function Login() {
     setIsSubmitting(true);
     try {
       await login(email, password);
-      navigate("/", { replace: true });
+      navigate("/dashboard", { replace: true });
     } catch (err) {
       setError(getErrorMessage(err, "Unable to sign in"));
     } finally {
@@ -106,7 +109,7 @@ export function Login() {
       </form>
 
       <div className="mt-6">
-        <SocialSignIn onSignedIn={() => navigate("/", { replace: true })} />
+        <SocialSignIn onSignedIn={() => navigate("/dashboard", { replace: true })} />
       </div>
     </AuthShell>
   );

@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, type Request } from "express";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { Prisma, VerificationPurpose } from "@prisma/client";
@@ -89,6 +89,34 @@ authRouter.post(
   })
 );
 
+/** The signed-in user as the apps see it: GET /me, and POST /refresh?include=user. */
+async function currentUser(userId: string) {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    include: {
+      memberships: {
+        include: { family: { select: { id: true, name: true, currency: true, encryptionEnabled: true, requireApproval: true } } },
+      },
+      vault: { select: { userId: true } },
+    },
+  });
+  if (!user) throw new AppError(404, "User not found");
+
+  return {
+    ...sanitizeUser(user),
+    preferences: readPreferences(user.preferences),
+    hasVault: user.vault !== null,
+    families: user.memberships.map((m) => ({
+      id: m.family.id,
+      name: m.family.name,
+      currency: m.family.currency,
+      encryptionEnabled: m.family.encryptionEnabled,
+      requireApproval: m.family.requireApproval,
+      role: m.role,
+    })),
+  };
+}
+
 // A rotated refresh token presented again within this window is treated as a concurrent-request race
 // (two tabs, a retried request) rather than theft.
 const REUSE_GRACE_MS = 10_000;
@@ -97,6 +125,12 @@ const REUSE_GRACE_MS = 10_000;
 // timeout, the app killed) and is retrying. It gets the same successor back. Beyond this, or once
 // the successor has itself been used, a replay is treated as theft.
 const REPLAY_WINDOW_MS = 15 * 60_000;
+
+// An app opening with a stored session needs a token and then the user. `?include=user` returns
+// both at once, saving a sequential round trip on every page load.
+async function withUser<T extends object>(req: Request, session: T, userId: string) {
+  return req.query.include === "user" ? { ...session, user: await currentUser(userId) } : session;
+}
 
 authRouter.post(
   "/refresh",
@@ -117,7 +151,7 @@ authRouter.post(
       if (revokedAgo < REPLAY_WINDOW_MS) {
         const replayed = await replaySession(res, token);
         if (replayed) {
-          res.json(replayed);
+          res.json(await withUser(req, replayed, existing.userId));
           return;
         }
       }
@@ -140,7 +174,7 @@ authRouter.post(
     if (!session) {
       throw new AppError(401, "Refresh token is invalid or expired");
     }
-    res.json(session);
+    res.json(await withUser(req, session, existing.userId));
   })
 );
 
@@ -181,30 +215,7 @@ authRouter.get(
   "/me",
   requireAuth,
   asyncHandler(async (req, res) => {
-    const user = await prisma.user.findUnique({
-      where: { id: req.user!.id },
-      include: {
-        memberships: {
-          include: { family: { select: { id: true, name: true, currency: true, encryptionEnabled: true, requireApproval: true } } },
-        },
-        vault: { select: { userId: true } },
-      },
-    });
-    if (!user) throw new AppError(404, "User not found");
-
-    res.json({
-      ...sanitizeUser(user),
-      preferences: readPreferences(user.preferences),
-      hasVault: user.vault !== null,
-      families: user.memberships.map((m) => ({
-        id: m.family.id,
-        name: m.family.name,
-        currency: m.family.currency,
-        encryptionEnabled: m.family.encryptionEnabled,
-        requireApproval: m.family.requireApproval,
-        role: m.role,
-      })),
-    });
+    res.json(await currentUser(req.user!.id));
   })
 );
 

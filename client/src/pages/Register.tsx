@@ -6,6 +6,7 @@ import { getErrorMessage } from "../api/errors";
 import { AuthShell } from "../components/AuthShell";
 import { Button, ErrorText, Field, Input, ProgressBar } from "../components/ui";
 import { SocialSignIn } from "../components/SocialSignIn";
+import { FullPageLoader } from "../components/FullPageLoader";
 
 function scorePassword(password: string) {
   let score = 0;
@@ -26,7 +27,7 @@ const STRENGTH = [
 ];
 
 export function Register() {
-  const { user, register } = useAuth();
+  const { user, isLoading, register } = useAuth();
   const navigate = useNavigate();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -37,7 +38,8 @@ export function Register() {
 
   const strength = useMemo(() => scorePassword(password), [password]);
 
-  if (user) return <Navigate to="/" replace />;
+  if (isLoading) return <FullPageLoader />;
+  if (user) return <Navigate to="/dashboard" replace />;
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -45,7 +47,7 @@ export function Register() {
     setIsSubmitting(true);
     try {
       await register(name, email, password);
-      navigate("/", { replace: true });
+      navigate("/dashboard", { replace: true });
     } catch (err) {
       setError(getErrorMessage(err, "Unable to create account"));
     } finally {
@@ -130,7 +132,7 @@ export function Register() {
       </form>
 
       <div className="mt-6">
-        <SocialSignIn onSignedIn={() => navigate("/", { replace: true })} />
+        <SocialSignIn onSignedIn={() => navigate("/dashboard", { replace: true })} />
       </div>
     </AuthShell>
   );

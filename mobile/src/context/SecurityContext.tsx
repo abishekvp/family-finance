@@ -93,6 +93,7 @@ export function SecurityProvider({ children }: { children: ReactNode }) {
   const isAdmin = family?.role === "ADMIN";
   const userId = user?.id;
   const familyEncrypted = family?.encryptionEnabled ?? false;
+  const hasVault = user?.hasVault ?? false;
 
   const [status, setStatus] = useState<VaultStatus>("loading");
   const [vault, setVault] = useState<VaultRecord | null>(null);
@@ -131,6 +132,13 @@ export function SecurityProvider({ children }: { children: ReactNode }) {
       setAppLockEnabled(lockFlag === "1");
       setAppLocked(lockFlag === "1");
       setEasyUnlockEnabled(easyFlag === "1");
+      // Most people have no vault, and /auth/me already says so: skip the round trip for them.
+      if (!hasVault) {
+        vaultCheckFailed.current = false;
+        setVault(null);
+        setStatus(familyEncrypted ? "setup" : "none");
+        return;
+      }
       try {
         const { data } = await api.get<{ vault: VaultRecord | null }>("/auth/vault");
         if (cancelled) return;

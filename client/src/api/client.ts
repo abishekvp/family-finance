@@ -24,19 +24,30 @@ api.interceptors.request.use((config) => {
 // Transactions and repeating payments both carry end-to-end encrypted payee/notes.
 const TRANSACTIONS_URL = /\/families\/([^/]+)\/(?:transactions|recurring)(?:\/|$|\?)/;
 
-let refreshPromise: Promise<string | null> | null = null;
+/** A refreshed session; `user` is the /auth/me payload when it was asked for (and the server sent it). */
+export interface RefreshedSession {
+  accessToken: string;
+  user?: unknown;
+}
 
-async function refreshAccessToken(): Promise<string | null> {
+let refreshPromise: Promise<RefreshedSession | null> | null = null;
+
+/**
+ * Exchanges the refresh cookie for an access token. `includeUser` also returns the signed-in user
+ * in the same response — what opening the app needs — instead of a second, sequential /auth/me.
+ */
+function refreshSession(includeUser = false): Promise<RefreshedSession | null> {
   if (!refreshPromise) {
     // Held across tabs, so tabs sharing the refresh cookie rotate it one at a time instead of racing
     // and presenting a token another tab just rotated away.
-    const post = () => axios.post("/api/auth/refresh", null, { withCredentials: true });
+    const url = includeUser ? "/api/auth/refresh?include=user" : "/api/auth/refresh";
+    const post = () => axios.post(url, null, { withCredentials: true });
     refreshPromise = (async () =>
       typeof navigator !== "undefined" && navigator.locks ? await navigator.locks.request("auth-refresh", post) : await post())()
       .then((res) => {
-        const token = res.data.accessToken as string;
-        setAccessToken(token);
-        return token;
+        const session = res.data as RefreshedSession;
+        setAccessToken(session.accessToken);
+        return session;
       })
       .catch(() => {
         setAccessToken(null);
@@ -47,6 +58,10 @@ async function refreshAccessToken(): Promise<string | null> {
       });
   }
   return refreshPromise;
+}
+
+async function refreshAccessToken(): Promise<string | null> {
+  return (await refreshSession())?.accessToken ?? null;
 }
 
 api.interceptors.response.use(
@@ -72,4 +87,4 @@ api.interceptors.response.use(
   }
 );
 
-export { refreshAccessToken };
+export { refreshAccessToken, refreshSession };

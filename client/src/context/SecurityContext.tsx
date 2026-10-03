@@ -118,6 +118,7 @@ export function SecurityProvider({ children }: { children: ReactNode }) {
   // ---- load on sign-in ---------------------------------------------------------------------
   const userId = user?.id;
   const familyEncrypted = family?.encryptionEnabled ?? false;
+  const hasVault = user?.hasVault ?? false;
   useEffect(() => {
     privateKeyRef.current = null;
     familyKeyRef.current = null;
@@ -131,6 +132,13 @@ export function SecurityProvider({ children }: { children: ReactNode }) {
     setScreenLockEnabled(screenOn);
     setScreenLocked(screenOn);
     setEasyUnlockEnabled(storageGet(`ff.easyUnlock.${userId}`) !== null);
+
+    // Most people have no vault, and /auth/me already says so: skip the round trip for them.
+    if (!hasVault) {
+      setVault(null);
+      setStatus(familyEncrypted ? "setup" : "none");
+      return;
+    }
 
     let cancelled = false;
     setStatus("loading");

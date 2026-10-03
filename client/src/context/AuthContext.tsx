@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { api, refreshAccessToken } from "../api/client";
+import { api, refreshSession } from "../api/client";
 import { setAccessToken, setOnAuthExpired } from "../api/tokenStore";
 import { clearVaultSession } from "../api/vaultSession";
 import { applyServerPrefs, type ServerPrefs } from "../lib/prefs";
@@ -40,15 +40,24 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
+function isCurrentUser(data: unknown): data is CurrentUser {
+  const u = data as CurrentUser | null | undefined;
+  return typeof u === "object" && u !== null && typeof u.id === "string" && Array.isArray(u.families);
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<CurrentUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
+  const applyUser = useCallback((next: CurrentUser) => {
+    applyServerPrefs(next.preferences);
+    setUser(next);
+  }, []);
+
   const loadMe = useCallback(async () => {
     const res = await api.get<CurrentUser>("/auth/me");
-    applyServerPrefs(res.data.preferences);
-    setUser(res.data);
-  }, []);
+    applyUser(res.data);
+  }, [applyUser]);
 
   const refreshUser = useCallback(async () => {
     await loadMe();
@@ -58,10 +67,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setOnAuthExpired(() => setUser(null));
 
     (async () => {
-      const token = await refreshAccessToken();
-      if (token) {
+      // One round trip: the refreshed token and the user together.
+      const session = await refreshSession(true);
+      if (session) {
         try {
-          await loadMe();
+          if (isCurrentUser(session.user)) applyUser(session.user);
+          else await loadMe(); // a server that predates ?include=user
         } catch {
           setUser(null);
         }
@@ -70,7 +81,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     })();
 
     return () => setOnAuthExpired(null);
-  }, [loadMe]);
+  }, [applyUser, loadMe]);
 
   const login = useCallback(
     async (email: string, password: string) => {

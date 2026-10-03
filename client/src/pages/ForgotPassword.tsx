@@ -4,10 +4,11 @@ import { useAuth } from "../context/AuthContext";
 import { api } from "../api/client";
 import { getErrorMessage } from "../api/errors";
 import { AuthShell } from "../components/AuthShell";
+import { FullPageLoader } from "../components/FullPageLoader";
 import { Button, ErrorText, Field, Input, SuccessText } from "../components/ui";
 
 export function ForgotPassword() {
-  const { user, completeSignIn } = useAuth();
+  const { user, isLoading, completeSignIn } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [step, setStep] = useState<"email" | "reset">("email");
@@ -18,7 +19,8 @@ export function ForgotPassword() {
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  if (user) return <Navigate to="/" replace />;
+  if (isLoading) return <FullPageLoader />;
+  if (user) return <Navigate to="/dashboard" replace />;
 
   async function sendCode(e?: FormEvent) {
     e?.preventDefault();
@@ -42,7 +44,7 @@ export function ForgotPassword() {
     try {
       const { data } = await api.post<{ accessToken: string }>("/auth/password/reset", { email, code, password });
       await completeSignIn(data.accessToken);
-      navigate("/", { replace: true });
+      navigate("/dashboard", { replace: true });
     } catch (err) {
       setError(getErrorMessage(err, "Unable to reset your password"));
     } finally {
