@@ -8,6 +8,9 @@ import { SecurityGate } from "../../src/components/SecurityGate";
 import { TodayWidgetSync } from "../../src/components/TodayWidgetSync";
 import { RecurringSync } from "../../src/components/RecurringSync";
 import { registerBackgroundSync } from "../../src/lib/backgroundSync";
+import { ScreenErrorBoundary } from "../../src/components/ScreenFallbacks";
+
+export { ScreenErrorBoundary as ErrorBoundary };
 
 // A screen opened straight from a deep link (a home-screen widget's quick add) still gets the
 // tabs underneath it, so going back lands on the transactions list instead of leaving the app.
@@ -21,6 +24,11 @@ export default function AppLayout() {
   useEffect(() => {
     if (hasFamily) registerBackgroundSync().catch(() => undefined);
   }, [hasFamily]);
+
+  // Signing out (or the session ending) clears `user` a moment before the root navigator drops this
+  // group. Every screen in here reads `user!`, so unmount them now rather than let one render
+  // without a user — a render error in a release build leaves the app on a blank screen.
+  if (!user) return null;
 
   return (
     <SecurityGate>

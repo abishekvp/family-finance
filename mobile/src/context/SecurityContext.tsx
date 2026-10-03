@@ -104,6 +104,8 @@ export function SecurityProvider({ children }: { children: ReactNode }) {
   const [appLocked, setAppLocked] = useState(false);
   const privateKeyRef = useRef<Uint8Array | null>(null);
   const familyKeyRef = useRef<Uint8Array | null>(null);
+  // Set when /auth/vault couldn't be reached at sign-in, so whether a vault exists is unknown.
+  const vaultCheckFailed = useRef(false);
 
   // ---- load on sign-in ---------------------------------------------------------------------
   useEffect(() => {
@@ -132,10 +134,15 @@ export function SecurityProvider({ children }: { children: ReactNode }) {
       try {
         const { data } = await api.get<{ vault: VaultRecord | null }>("/auth/vault");
         if (cancelled) return;
+        vaultCheckFailed.current = false;
         setVault(data.vault);
         setStatus(data.vault ? "locked" : familyEncrypted ? "setup" : "none");
       } catch {
-        if (!cancelled) setStatus("none");
+        // Offline at launch: let the app open (payees/notes show as locked) and look again when
+        // the app next comes to the foreground, below.
+        if (cancelled) return;
+        vaultCheckFailed.current = true;
+        setStatus("none");
       }
     })();
     return () => {
@@ -143,6 +150,24 @@ export function SecurityProvider({ children }: { children: ReactNode }) {
     };
     // Only re-run for a different account — not on every /auth/me refresh.
   }, [userId]);
+
+  // The vault couldn't be checked at launch: try again on return to the app, and ask for the
+  // master password then if there is one.
+  useEffect(() => {
+    if (!userId) return;
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state !== "active" || !vaultCheckFailed.current) return;
+      api
+        .get<{ vault: VaultRecord | null }>("/auth/vault")
+        .then(({ data }) => {
+          vaultCheckFailed.current = false;
+          setVault(data.vault);
+          setStatus((current) => (current !== "none" ? current : data.vault ? "locked" : familyEncrypted ? "setup" : "none"));
+        })
+        .catch(() => undefined);
+    });
+    return () => sub.remove();
+  }, [userId, familyEncrypted]);
 
   useEffect(() => {
     if (familyId) setFamilyEncrypted(familyId, familyEncrypted);

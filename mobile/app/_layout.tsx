@@ -11,13 +11,16 @@ import { ThemeProvider, useTheme } from "../src/context/ThemeContext";
 import { UpdateProvider } from "../src/context/UpdateContext";
 import { Logo } from "../src/components/Logo";
 import { UpdateChecker } from "../src/components/UpdateChecker";
+import { OfflineScreen, ScreenErrorBoundary } from "../src/components/ScreenFallbacks";
+
+export { ScreenErrorBoundary as ErrorBoundary };
 
 SplashScreen.preventAutoHideAsync().catch(() => undefined);
 // Closes the Google/Microsoft Custom Tab when it redirects back to familyfinance://oauth-callback.
 WebBrowser.maybeCompleteAuthSession();
 
 function RootNavigator() {
-  const { user, isLoading } = useAuth();
+  const { user, isLoading, offline, retry, logout } = useAuth();
   const { colors, resolved } = useTheme();
 
   useEffect(() => {
@@ -31,6 +34,15 @@ function RootNavigator() {
       <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.canvas }}>
         <Logo size={52} />
       </View>
+    );
+  }
+
+  if (!user && offline) {
+    return (
+      <>
+        <StatusBar style={resolved === "dark" ? "light" : "dark"} />
+        <OfflineScreen onRetry={retry} onSignOut={logout} />
+      </>
     );
   }
 

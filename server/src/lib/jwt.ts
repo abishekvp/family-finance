@@ -31,6 +31,17 @@ export function hashRefreshToken(token: string): string {
   return crypto.createHash("sha256").update(token).digest("hex");
 }
 
+/**
+ * The token a refresh token rotates into. Derived from the old token (rather than random) so that a
+ * client whose refresh response got lost — a dropped connection, a timeout, the app being killed —
+ * can present the old token again and be handed the very same successor, instead of looking like a
+ * replayed (stolen) token. Only someone holding the old token can compute it.
+ */
+export function successorRefreshToken(token: string): { token: string; tokenHash: string; expiresAt: Date } {
+  const next = crypto.createHmac("sha256", purposeSecret("refresh-rotation")).update(token).digest("hex");
+  return { token: next, tokenHash: hashRefreshToken(next), expiresAt: new Date(Date.now() + REFRESH_TOKEN_TTL_MS) };
+}
+
 // Short-lived, single-purpose tokens (an in-progress email change, OAuth state). They're signed
 // with a purpose-specific secret so they can never be replayed as access tokens, or vice versa.
 function purposeSecret(purpose: string) {

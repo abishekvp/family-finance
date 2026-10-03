@@ -10,7 +10,9 @@ import {
   displayName,
   issueSession,
   REFRESH_COOKIE,
+  replaySession,
   revokeAllSessions,
+  rotateSession,
   sanitizeUser,
 } from "../lib/session";
 import { consumeCode, createCode } from "../lib/otp";
@@ -90,6 +92,11 @@ authRouter.post(
 // A rotated refresh token presented again within this window is treated as a concurrent-request race
 // (two tabs, a retried request) rather than theft.
 const REUSE_GRACE_MS = 10_000;
+// A rotated token whose successor was never used is honored again for this long: the client most
+// likely never received the rotation's response (a phone dropping its connection mid-request, a
+// timeout, the app killed) and is retrying. It gets the same successor back. Beyond this, or once
+// the successor has itself been used, a replay is treated as theft.
+const REPLAY_WINDOW_MS = 15 * 60_000;
 
 authRouter.post(
   "/refresh",
@@ -106,9 +113,17 @@ authRouter.post(
     }
 
     if (existing.revokedAt) {
+      const revokedAgo = Date.now() - existing.revokedAt.getTime();
+      if (revokedAgo < REPLAY_WINDOW_MS) {
+        const replayed = await replaySession(res, token);
+        if (replayed) {
+          res.json(replayed);
+          return;
+        }
+      }
       // Rotated moments ago: most likely a second tab or request that raced the rotation. Refuse it,
       // but leave the cookie (it may already hold the new token) and the other sessions alone.
-      if (Date.now() - existing.revokedAt.getTime() < REUSE_GRACE_MS) {
+      if (revokedAgo < REUSE_GRACE_MS) {
         throw new AppError(401, "Refresh token is invalid or expired");
       }
       // This token was already rotated away. Presenting it again means it leaked (someone else
@@ -119,18 +134,13 @@ authRouter.post(
     }
 
     // Conditioned on still being unrevoked, so two concurrent refreshes of the same token can't
-    // both rotate it — only the first wins. The loser raced it within the same instant, which is
-    // the benign case the grace window above covers, so it is refused without revoking anything.
-    const { count } = await prisma.refreshToken.updateMany({
-      where: { id: existing.id, revokedAt: null },
-      data: { revokedAt: new Date() },
-    });
-    if (count === 0) {
+    // both rotate it — only the first wins. The loser raced it within the same instant and gets
+    // the successor the winner created, so both callers end up holding the same live token.
+    const session = (await rotateSession(res, existing.id, existing.userId, token)) ?? (await replaySession(res, token));
+    if (!session) {
       throw new AppError(401, "Refresh token is invalid or expired");
     }
-
-    const { accessToken, refreshToken } = await issueSession(res, existing.userId);
-    res.json({ accessToken, refreshToken });
+    res.json(session);
   })
 );
 

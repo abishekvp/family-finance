@@ -13,7 +13,8 @@ import { decryptIncoming, encryptOutgoing } from "./vaultSession";
 const DEFAULT_API_URL = "https://finance.abishek.in/api";
 export const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL?.trim() || DEFAULT_API_URL;
 
-export const api = axios.create({ baseURL: API_BASE_URL });
+// Without a timeout a request on a dead mobile connection hangs forever, leaving screens stuck loading.
+export const api = axios.create({ baseURL: API_BASE_URL, timeout: 30_000 });
 
 let onAuthExpired: (() => void) | null = null;
 export function setOnAuthExpired(handler: (() => void) | null) {
@@ -77,7 +78,15 @@ async function refreshAccessToken(): Promise<string | null> {
     refreshPromise = (async () => {
       sessionRejected = false;
       for (let attempt = 0; attempt < 3; attempt++) {
-        const storedRefreshToken = await getStoredRefreshToken();
+        let storedRefreshToken: string | null;
+        try {
+          storedRefreshToken = await getStoredRefreshToken();
+        } catch {
+          // The keystore can fail transiently (e.g. right after boot, before the device is unlocked).
+          // That says nothing about the session, so it must not sign the user out.
+          if (attempt < 2) await sleep(1000 * (attempt + 1));
+          continue;
+        }
         if (!storedRefreshToken) {
           sessionRejected = true;
           return null;
@@ -87,7 +96,9 @@ async function refreshAccessToken(): Promise<string | null> {
           const res = await axios.post(
             `${API_BASE_URL}/auth/refresh`,
             { refreshToken: storedRefreshToken },
-            { timeout: 15_000 }
+            // Longer than a cold serverless start, shorter than the function's 30s limit. If it
+            // still gives up after the server rotated the token, the retry gets the same new one back.
+            { timeout: 25_000 }
           );
           const { accessToken, refreshToken } = res.data as { accessToken: string; refreshToken: string };
           setAccessToken(accessToken);
@@ -98,7 +109,7 @@ async function refreshAccessToken(): Promise<string | null> {
           if (status === 401 || status === 403) {
             // The background sync / SMS task run in their own JS context and may have rotated the
             // token under us. If the stored token changed, that's not a rejection — retry with it.
-            if ((await getStoredRefreshToken()) !== storedRefreshToken) continue;
+            if ((await getStoredRefreshToken().catch(() => storedRefreshToken)) !== storedRefreshToken) continue;
             sessionRejected = true;
             setAccessToken(null);
             await setStoredRefreshToken(null);
