@@ -6,6 +6,7 @@ import { asyncHandler, AppError } from "../middleware/errorHandler";
 import { requireAuth, requireFamilyRole } from "../middleware/auth";
 import { assertEncryptionPolicy, maybeEncryptedText } from "../lib/encryption";
 import { initialApprovalStatus } from "../lib/approval";
+import { recalculateAccountBalances } from "../lib/balances";
 
 export const transactionsRouter = Router({ mergeParams: true });
 transactionsRouter.use(requireAuth);
@@ -435,26 +436,30 @@ transactionsRouter.post(
     // Saved either way, so nothing is lost; with approvals on, a member's entry waits for an admin.
     const approvalStatus = await initialApprovalStatus(familyId, requesterId, [parsed.accountId, transferToAccountId], req.familyMembership!.role);
 
-    const transaction = await prisma.transaction.create({
-      data: {
-        familyId,
-        userId: requesterId,
-        accountId: parsed.accountId,
-        transferToAccountId,
-        categoryId,
-        type: parsed.type,
-        status: parsed.status ?? TransactionStatus.CLEARED,
-        amount: parsed.amount,
-        date: parsed.date ? new Date(parsed.date) : new Date(),
-        payee: parsed.payee ?? null,
-        notes: parsed.notes ?? null,
-        tags: parsed.tags ?? [],
-        dueDate: parsed.dueDate ? new Date(parsed.dueDate) : null,
-        repaysId,
-        refundsId,
-        approvalStatus,
-      },
-      include: TRANSACTION_INCLUDE,
+    const transaction = await prisma.$transaction(async (tx) => {
+      const created = await tx.transaction.create({
+        data: {
+          familyId,
+          userId: requesterId,
+          accountId: parsed.accountId,
+          transferToAccountId,
+          categoryId,
+          type: parsed.type,
+          status: parsed.status ?? TransactionStatus.CLEARED,
+          amount: parsed.amount,
+          date: parsed.date ? new Date(parsed.date) : new Date(),
+          payee: parsed.payee ?? null,
+          notes: parsed.notes ?? null,
+          tags: parsed.tags ?? [],
+          dueDate: parsed.dueDate ? new Date(parsed.dueDate) : null,
+          repaysId,
+          refundsId,
+          approvalStatus,
+        },
+        include: TRANSACTION_INCLUDE,
+      });
+      await recalculateAccountBalances(tx, [parsed.accountId, transferToAccountId]);
+      return created;
     });
 
     res.status(201).json(serializeTransaction(transaction));
@@ -529,25 +534,34 @@ transactionsRouter.patch(
         ? await initialApprovalStatus(familyId, requesterId, [mergedAccountId, transferToAccountId], req.familyMembership!.role)
         : null;
 
-    const updated = await prisma.transaction.update({
-      where: { id: existing.id },
-      data: {
-        accountId: mergedAccountId,
-        type: mergedType,
-        amount: mergedAmount,
-        date: mergedDate,
-        categoryId,
+    const updated = await prisma.$transaction(async (tx) => {
+      const updatedTx = await tx.transaction.update({
+        where: { id: existing.id },
+        data: {
+          accountId: mergedAccountId,
+          type: mergedType,
+          amount: mergedAmount,
+          date: mergedDate,
+          categoryId,
+          transferToAccountId,
+          payee: mergedPayee,
+          notes: mergedNotes,
+          status: mergedStatus,
+          tags: mergedTags,
+          dueDate: mergedDueDate,
+          repaysId,
+          refundsId,
+          ...(reviewed ? { approvalStatus: reviewed, reviewedById: null, reviewedAt: null } : {}),
+        },
+        include: TRANSACTION_INCLUDE,
+      });
+      await recalculateAccountBalances(tx, [
+        existing.accountId,
+        existing.transferToAccountId,
+        mergedAccountId,
         transferToAccountId,
-        payee: mergedPayee,
-        notes: mergedNotes,
-        status: mergedStatus,
-        tags: mergedTags,
-        dueDate: mergedDueDate,
-        repaysId,
-        refundsId,
-        ...(reviewed ? { approvalStatus: reviewed, reviewedById: null, reviewedAt: null } : {}),
-      },
-      include: TRANSACTION_INCLUDE,
+      ]);
+      return updatedTx;
     });
 
     res.json(serializeTransaction(updated));
@@ -568,9 +582,12 @@ transactionsRouter.delete(
 
     assertCanModify(existing.userId, requesterId, req.familyMembership!.role);
 
-    await prisma.transaction.update({
-      where: { id: existing.id },
-      data: { isDeleted: true, deletedAt: new Date() },
+    await prisma.$transaction(async (tx) => {
+      await tx.transaction.update({
+        where: { id: existing.id },
+        data: { isDeleted: true, deletedAt: new Date() },
+      });
+      await recalculateAccountBalances(tx, [existing.accountId, existing.transferToAccountId]);
     });
 
     res.status(204).send();
@@ -597,25 +614,42 @@ transactionsRouter.post(
     if (from && Number.isNaN(from.getTime())) throw new AppError(400, "Invalid from date");
     if (to && Number.isNaN(to.getTime())) throw new AppError(400, "Invalid to date");
 
-    const result = await prisma.transaction.updateMany({
-      where: {
-        familyId,
-        isDeleted: false,
-        // An admin can delete anything; a member can only delete their own entries.
-        ...(req.familyMembership!.role !== Role.ADMIN ? { userId: requesterId } : {}),
-        account: { OR: [{ ownerId: null }, { ownerId: requesterId }] },
-        ...(parsed.accountId ? { accountId: parsed.accountId } : {}),
-        ...(parsed.categoryId ? { categoryId: parsed.categoryId } : {}),
-        ...(from || to
-          ? {
-              date: {
-                ...(from ? { gte: from } : {}),
-                ...(to ? { lt: to } : {}),
-              },
-            }
-          : {}),
-      },
-      data: { isDeleted: true, deletedAt: new Date() },
+    const whereClause = {
+      familyId,
+      isDeleted: false,
+      ...(req.familyMembership!.role !== Role.ADMIN ? { userId: requesterId } : {}),
+      account: { OR: [{ ownerId: null }, { ownerId: requesterId }] },
+      ...(parsed.accountId ? { accountId: parsed.accountId } : {}),
+      ...(parsed.categoryId ? { categoryId: parsed.categoryId } : {}),
+      ...(from || to
+        ? {
+            date: {
+              ...(from ? { gte: from } : {}),
+              ...(to ? { lt: to } : {}),
+            },
+          }
+        : {}),
+    };
+
+    const result = await prisma.$transaction(async (tx) => {
+      // Find which accounts are affected
+      const affected = await tx.transaction.findMany({
+        where: whereClause,
+        select: { accountId: true, transferToAccountId: true },
+      });
+      const accountIds = new Set<string>();
+      for (const t of affected) {
+        accountIds.add(t.accountId);
+        if (t.transferToAccountId) accountIds.add(t.transferToAccountId);
+      }
+
+      const updateResult = await tx.transaction.updateMany({
+        where: whereClause,
+        data: { isDeleted: true, deletedAt: new Date() },
+      });
+
+      await recalculateAccountBalances(tx, Array.from(accountIds));
+      return updateResult;
     });
 
     res.json({ deletedCount: result.count });
@@ -636,10 +670,14 @@ transactionsRouter.post(
 
     assertCanModify(existing.userId, requesterId, req.familyMembership!.role);
 
-    const restored = await prisma.transaction.update({
-      where: { id: existing.id },
-      data: { isDeleted: false, deletedAt: null },
-      include: TRANSACTION_INCLUDE,
+    const restored = await prisma.$transaction(async (tx) => {
+      const updated = await tx.transaction.update({
+        where: { id: existing.id },
+        data: { isDeleted: false, deletedAt: null },
+        include: TRANSACTION_INCLUDE,
+      });
+      await recalculateAccountBalances(tx, [updated.accountId, updated.transferToAccountId]);
+      return updated;
     });
 
     res.json(serializeTransaction(restored));
@@ -693,8 +731,24 @@ transactionsRouter.post(
     if (endDate) dateFilter.lte = new Date(endDate);
     const hasDateFilter = startDate || endDate;
 
-    const [transactions, accounts] = await prisma.$transaction([
-      prisma.transaction.updateMany({
+    const { transactions, accounts } = await prisma.$transaction(async (tx) => {
+      // Find affected accounts
+      const affected = await tx.transaction.findMany({
+        where: {
+          familyId,
+          isDeleted: false,
+          account: visible,
+          ...(hasDateFilter ? { date: dateFilter } : {}),
+        },
+        select: { accountId: true, transferToAccountId: true },
+      });
+      const accountIds = new Set<string>();
+      for (const t of affected) {
+        accountIds.add(t.accountId);
+        if (t.transferToAccountId) accountIds.add(t.transferToAccountId);
+      }
+
+      const txResult = await tx.transaction.updateMany({
         where: {
           familyId,
           isDeleted: false,
@@ -702,17 +756,20 @@ transactionsRouter.post(
           ...(hasDateFilter ? { date: dateFilter } : {}),
         },
         data: { isDeleted: true, deletedAt: new Date() },
-      }),
-      // Only reset opening balances if wiping EVERYTHING
-      ...(hasDateFilter
-        ? []
-        : [
-            prisma.account.updateMany({
-              where: { familyId, ...visible },
-              data: { openingBalance: 0 },
-            }),
-          ]),
-    ]);
+      });
+
+      let accountsResult = { count: 0 };
+      if (!hasDateFilter) {
+        accountsResult = await tx.account.updateMany({
+          where: { familyId, ...visible },
+          data: { openingBalance: 0, currentBalance: 0 },
+        });
+      }
+
+      await recalculateAccountBalances(tx, Array.from(accountIds));
+
+      return { transactions: txResult, accounts: accountsResult };
+    });
 
     res.json({ transactionsCleared: transactions.count, accountsReset: accounts ? accounts.count : 0 });
   })
@@ -754,20 +811,37 @@ transactionsRouter.post(
     const requesterId = req.user!.id;
     const { ids, decision } = reviewSchema.parse(req.body);
 
-    const result = await prisma.transaction.updateMany({
-      where: {
-        id: { in: ids },
-        familyId,
-        isDeleted: false,
-        // An admin can't see into another member's private account, so can't review what's in it.
-        account: { OR: [{ ownerId: null }, { ownerId: requesterId }] },
-        approvalStatus: { not: decision === "APPROVE" ? ApprovalStatus.APPROVED : ApprovalStatus.REJECTED },
-      },
-      data: {
-        approvalStatus: decision === "APPROVE" ? ApprovalStatus.APPROVED : ApprovalStatus.REJECTED,
-        reviewedById: requesterId,
-        reviewedAt: new Date(),
-      },
+    const whereClause = {
+      id: { in: ids },
+      familyId,
+      isDeleted: false,
+      account: { OR: [{ ownerId: null }, { ownerId: requesterId }] },
+      approvalStatus: { not: decision === "APPROVE" ? ApprovalStatus.APPROVED : ApprovalStatus.REJECTED },
+    };
+
+    const result = await prisma.$transaction(async (tx) => {
+      const affected = await tx.transaction.findMany({
+        where: whereClause,
+        select: { accountId: true, transferToAccountId: true },
+      });
+      const accountIds = new Set<string>();
+      for (const t of affected) {
+        accountIds.add(t.accountId);
+        if (t.transferToAccountId) accountIds.add(t.transferToAccountId);
+      }
+
+      const updateResult = await tx.transaction.updateMany({
+        where: whereClause,
+        data: {
+          approvalStatus: decision === "APPROVE" ? ApprovalStatus.APPROVED : ApprovalStatus.REJECTED,
+          reviewedById: requesterId,
+          reviewedAt: new Date(),
+        },
+      });
+
+      await recalculateAccountBalances(tx, Array.from(accountIds));
+
+      return updateResult;
     });
 
     res.json({ updated: result.count });

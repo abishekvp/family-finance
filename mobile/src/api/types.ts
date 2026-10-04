@@ -66,6 +66,10 @@ export interface Transaction {
   recurringId?: string | null;
   /** A return of money lent or borrowed: the lend/borrow entry it pays back. */
   repaysId?: string | null;
+  /** An entry that refunds an expense. */
+  refundsId?: string | null;
+  /** True when a live refund points back at this entry. */
+  isRefunded?: boolean;
   isDeleted?: boolean;
   deletedAt?: string | null;
   createdAt: string;

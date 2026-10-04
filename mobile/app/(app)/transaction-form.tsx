@@ -80,6 +80,7 @@ export default function TransactionForm() {
     kind?: string;
     amount?: string;
     repaysId?: string;
+    refundsId?: string;
     source?: string;
   }>();
 
@@ -159,6 +160,7 @@ export default function TransactionForm() {
   const [dueDate, setDueDate] = useState(initial?.dueDate ? localDateInput(new Date(initial.dueDate)) : "");
   // A return pays back this lend/borrow entry first; null matches it to the oldest open loans.
   const [repaysId, setRepaysId] = useState<string | null>(initial?.repaysId ?? params.repaysId ?? null);
+  const [refundsId, setRefundsId] = useState<string | null>(initial?.refundsId ?? params.refundsId ?? null);
   const [addingCategory, setAddingCategory] = useState(false);
   // A person created by a save whose transaction then failed — reused on retry, never created twice.
   const createdPerson = useRef<Account | null>(null);
@@ -224,6 +226,12 @@ export default function TransactionForm() {
     return trackLoans(history, person).filter((l) => l.transaction && l.direction === repaying && (!l.settled || l.transaction.id === repaysId));
   }, [repaying, person, personHistory, initial?.id, repaysId]);
   const linkedLoan = openLoans.find((l) => l.transaction!.id === repaysId) ?? null;
+  
+  const expenseFilter = useMemo(() => (type === "INCOME" ? { type: "EXPENSE" as const } : null), [type]);
+  const { transactions: expenses } = useTransactions(user!.id, family.id, expenseFilter);
+  const recentExpenses = useMemo(() => expenses.filter((t) => !t.isDeleted && !t.isRefunded && t.id !== initial?.id).slice(0, 30), [expenses, initial?.id]);
+  const linkedRefund = recentExpenses.find((t) => t.id === refundsId) || (initial?.refundsId ? { id: initial.refundsId, payee: "an expense", amount: 0, date: "" } as any : null);
+
   // New categories are income or expense; for Lend/Borrow, by which way the money went.
   const newCategoryType = isLending ? (moneyGoesOut(kind) ? "EXPENSE" : "INCOME") : type === "INCOME" ? "INCOME" : "EXPENSE";
 
@@ -311,7 +319,7 @@ export default function TransactionForm() {
     const match = typedName ? people.find((p) => p.name.trim().toLowerCase() === typedName) : undefined;
     handleSelectType("LENDING");
     setKind(nextKind);
-    setRepaysId(null);
+    setRepaysId(null); setRefundsId(null);
     if (match) {
       setAddingPerson(false);
       setPersonId(match.id);
@@ -388,8 +396,9 @@ export default function TransactionForm() {
       transferToAccountId: type === "TRANSFER" ? transferToAccountId : null,
       payee: payee.trim() || null,
       notes: notes.trim() || null,
+      refundsId: type === "INCOME" ? refundsId : null,
       // An entry turned from Lend/Borrow into something else stops being a loan.
-      ...(initial ? { tags: withoutKindTag(initial.tags), dueDate: null, repaysId: null } : {}),
+      ...(initial ? { tags: withoutKindTag(initial.tags), dueDate: null, repaysId: null, ...(type !== "INCOME" ? { refundsId: null } : {}) } : {}),
     };
   }
 
@@ -446,7 +455,8 @@ export default function TransactionForm() {
         setPayee("");
         setNotes("");
         setDueDate("");
-        setRepaysId(null);
+        setRepaysId(null); setRefundsId(null);
+        setRefundsId(null);
         setRepeat(null);
         setDate(todayIso());
         if (isLending) {
@@ -545,7 +555,7 @@ export default function TransactionForm() {
                   selected={kind === k.value}
                   onPress={() => {
                     setKind(k.value);
-                    setRepaysId(null);
+                    setRepaysId(null); setRefundsId(null);
                   }}
                 />
               ))}
@@ -595,7 +605,7 @@ export default function TransactionForm() {
                   selected={!addingPerson && personId === p.id}
                   onPress={() => {
                     setAddingPerson(false);
-                    if (p.id !== personId) setRepaysId(null);
+                    if (p.id !== personId) setRepaysId(null); setRefundsId(null);
                     setPersonId(p.id);
                   }}
                 />
@@ -607,7 +617,7 @@ export default function TransactionForm() {
                   selected={addingPerson}
                   onPress={() => {
                     setAddingPerson(true);
-                    setRepaysId(null);
+                    setRepaysId(null); setRefundsId(null);
                   }}
                 />
               )}
@@ -646,6 +656,32 @@ export default function TransactionForm() {
                   onPress={() => {
                     setRepaysId(loan.transaction!.id);
                     if (!amount.trim() && loan.remaining > 0) setAmount(String(Number(loan.remaining.toFixed(2))));
+                  }}
+                />
+              ))}
+            </View>
+          </Field>
+        )}
+
+        {type === "INCOME" && recentExpenses.length > 0 && (
+          <Field
+            label="Refunds Expense"
+            hint={
+              linkedRefund
+                ? "This income will cancel out the selected expense in your budgets."
+                : "Select an expense to mark this income as a refund."
+            }
+          >
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+              <Chip label="Not a refund" selected={!linkedRefund} onPress={() => setRefundsId(null)} />
+              {recentExpenses.map((expense) => (
+                <Chip
+                  key={expense.id}
+                  label={`${expense.date.slice(5, 10)} - ${expense.payee || "Expense"} (${currencySymbol(family.currency)}${expense.amount})`}
+                  selected={linkedRefund?.id === expense.id}
+                  onPress={() => {
+                    setRefundsId(expense.id);
+                    if (!amount.trim()) setAmount(String(expense.amount));
                   }}
                 />
               ))}

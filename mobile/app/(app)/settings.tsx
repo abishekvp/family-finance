@@ -272,8 +272,8 @@ function BinCard() {
       <CardHeader
         title="Recycle Bin"
         icon={<Trash2 size={16} color={colors.ink} />}
-        actions={
-          <Link href="/bin" asChild>
+        action={
+          <Link href={"/bin" as any} asChild>
             <Button variant="secondary" title="Open Bin" />
           </Link>
         }

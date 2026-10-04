@@ -24,35 +24,10 @@ accountsRouter.get(
       include: { owner: { select: { id: true, name: true } } },
     });
 
-    // Balance = opening balance + all non-deleted, approved transactions that post to this account,
-    // minus outgoing transfers, plus incoming transfers landing on it.
-    // Convention: EXPENSE and outgoing TRANSFER amounts are stored as positive numbers
-    // that subtract from the source account; INCOME adds; the incoming leg of a TRANSFER
-    // adds to the destination account.
-    const withBalances = await Promise.all(
-      accounts.map(async (account) => {
-        const [outgoingTx, incoming] = await Promise.all([
-          prisma.transaction.findMany({
-            where: { accountId: account.id, isDeleted: false, ...COUNTED },
-            select: { type: true, amount: true },
-          }),
-          prisma.transaction.aggregate({
-            where: { transferToAccountId: account.id, isDeleted: false, type: "TRANSFER", ...COUNTED },
-            _sum: { amount: true },
-          }),
-        ]);
-
-        const delta = outgoingTx.reduce((sum, t) => {
-          return t.type === "INCOME" ? sum + Number(t.amount) : sum - Number(t.amount);
-        }, 0);
-        const incomingTransferTotal = Number(incoming._sum.amount ?? 0);
-
-        return {
-          ...account,
-          balance: Number(account.openingBalance) + delta + incomingTransferTotal,
-        };
-      })
-    );
+    const withBalances = accounts.map((account) => ({
+      ...account,
+      balance: Number(account.currentBalance),
+    }));
 
     res.json(withBalances);
   })

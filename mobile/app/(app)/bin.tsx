@@ -60,7 +60,7 @@ export default function BinScreen() {
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.background }}>
+    <View style={{ flex: 1, backgroundColor: colors.canvas }}>
       <FlatList
         data={binned}
         keyExtractor={(item) => item.id}
@@ -84,8 +84,8 @@ export default function BinScreen() {
                 </Text>
               </View>
               <View style={{ flexDirection: "row", gap: 8 }}>
-                <Button variant="secondary" icon={<RefreshCcw size={16} color={colors.ink} />} onPress={() => handleRestore(item)} />
-                <Button variant="danger" icon={<Trash size={16} color={colors.expense} />} onPress={() => handlePurge(item)} />
+                <Button title="" variant="secondary" icon={<RefreshCcw size={16} color={colors.ink} />} onPress={() => handleRestore(item)} />
+                <Button title="" variant="danger" icon={<Trash size={16} color={colors.expense} />} onPress={() => handlePurge(item)} />
               </View>
             </View>
           </Card>

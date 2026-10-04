@@ -287,6 +287,7 @@ model Account {
   type              AccountType
   currency          String      @default("USD")
   openingBalance    Decimal     @default(0) @db.Decimal(14, 2)
+  currentBalance    Decimal     @default(0) @db.Decimal(14, 2)
   creditLimit       Decimal?    @db.Decimal(14, 2)
   interestRate      Decimal?    @db.Decimal(6, 3)
   color             String?
