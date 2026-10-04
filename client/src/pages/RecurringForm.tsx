@@ -1,7 +1,7 @@
 import { useEffect, useState, FormEvent } from "react";
 import { useParams, useNavigate, useOutletContext } from "react-router-dom";
 import { api } from "../api/client";
-import type { RecurringTransaction, Account, Category, Budget, RecurringFrequency } from "../api/types";
+import type { RecurringTransaction, Account, Category, RecurringFrequency } from "../api/types";
 import { Button, Card, Field, Input, Select, ErrorText, Toggle } from "../components/ui";
 import type { LayoutContext } from "../components/Layout";
 

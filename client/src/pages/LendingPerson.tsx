@@ -47,8 +47,8 @@ export function LendingPerson() {
     <div className="space-y-6">
       <Card className="items-center justify-center text-center py-6">
         <h2 className="text-xl font-bold text-ink">{person.name}</h2>
-        <Money amount={Math.abs(person.balance)} currency={person.currency} tone={person.balance > 0 ? "income" : person.balance < 0 ? "expense" : "auto"} className="text-2xl font-bold" />
-        <p className="text-xs text-ink-subtle">{person.balance > 0 ? "Owes you" : person.balance < 0 ? "You owe" : "Settled up"}</p>
+        <Money amount={Math.abs(person.balance ?? 0)} currency={person.currency} tone={(person.balance ?? 0) > 0 ? "income" : (person.balance ?? 0) < 0 ? "expense" : "auto"} className="text-2xl font-bold" />
+        <p className="text-xs text-ink-subtle">{(person.balance ?? 0) > 0 ? "Owes you" : (person.balance ?? 0) < 0 ? "You owe" : "Settled up"}</p>
       </Card>
 
       <div className="flex gap-4">

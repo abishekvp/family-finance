@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
-import { ArrowRightLeft, HandCoins, Landmark, MinusCircle, PlusCircle } from "lucide-react";
+import { ArrowRightLeft, HandCoins, Landmark, MinusCircle, PlusCircle, Repeat } from "lucide-react";
 import { api } from "../../api/client";
 import { getErrorMessage } from "../../api/errors";
 import { Button, Checkbox, Chip, ErrorText, Field, Input, Label, Modal, Segmented, Select, useToast } from "../ui";
@@ -70,6 +70,7 @@ interface FormState {
   notes: string;
   refundsId: string;
   repaysId: string;
+  repeat: import("../../api/types").RecurringFrequency | null;
 }
 
 /** A new transaction starts on the first real account — never on a friend's lend & borrow tab. */
@@ -89,6 +90,7 @@ function emptyForm(accounts: Account[]): FormState {
     notes: "",
     refundsId: "",
     repaysId: "",
+    repeat: null,
   };
 }
 
@@ -104,6 +106,7 @@ function formFromTransaction(t: Transaction): FormState {
     notes: t.notes ?? "",
     refundsId: t.refundsId ?? "",
     repaysId: t.repaysId ?? "",
+    repeat: null,
   };
 }
 
@@ -244,6 +247,25 @@ export function TransactionFormModal({
         isEdit && transaction
           ? await api.patch<Transaction>(`/families/${familyId}/transactions/${transaction.id}`, payload)
           : await api.post<Transaction>(`/families/${familyId}/transactions`, payload);
+      
+      if (!isEdit && form.repeat && (form.type === "INCOME" || form.type === "EXPENSE") && !person) {
+        try {
+          await api.post(`/families/${familyId}/recurring`, {
+            type: form.type,
+            amount: Number(form.amount) || 0,
+            accountId: form.accountId,
+            categoryId: form.categoryId || null,
+            payee: form.payee.trim() || null,
+            notes: form.notes.trim() || null,
+            frequency: form.repeat,
+            startDate: form.date,
+            firstTransactionId: saved.data.id,
+          });
+        } catch (err) {
+          toast("Saved, but couldn't make it repeat. " + getErrorMessage(err, "Try again"));
+        }
+      }
+
       // Saved, but it won't show in totals until an admin approves it.
       if (saved.data.approvalStatus === "PENDING") toast("Saved and sent to an admin for approval");
 
@@ -270,6 +292,8 @@ export function TransactionFormModal({
     Number(form.amount) > 0 &&
     (form.type !== "TRANSFER" || Boolean(form.transferToAccountId)) &&
     (form.type !== "INCOME" || !isRefund || Boolean(form.refundsId));
+
+  const canRepeat = !isEdit && (form.type === "INCOME" || form.type === "EXPENSE") && !person;
 
   return (
     <Modal
@@ -514,6 +538,29 @@ export function TransactionFormModal({
                 </Field>
               </div>
             )}
+          </div>
+        )}
+
+        {canRepeat && (
+          <div>
+            <Label>Repeat</Label>
+            <p className="mb-2 text-xs text-ink-subtle">
+              {form.repeat ? "Recorded automatically on schedule. You can change it later." : `Set up a repeating payment starting ${form.date || "today"}.`}
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Chip type="button" selected={!form.repeat} onClick={() => update("repeat", null)}>
+                Don't repeat
+              </Chip>
+              <Chip type="button" selected={form.repeat === "WEEKLY"} onClick={() => update("repeat", "WEEKLY")}>
+                <span className="flex items-center gap-1.5"><Repeat size={12} /> Weekly</span>
+              </Chip>
+              <Chip type="button" selected={form.repeat === "MONTHLY"} onClick={() => update("repeat", "MONTHLY")}>
+                <span className="flex items-center gap-1.5"><Repeat size={12} /> Monthly</span>
+              </Chip>
+              <Chip type="button" selected={form.repeat === "YEARLY"} onClick={() => update("repeat", "YEARLY")}>
+                <span className="flex items-center gap-1.5"><Repeat size={12} /> Yearly</span>
+              </Chip>
+            </div>
           </div>
         )}
 

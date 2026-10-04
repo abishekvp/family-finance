@@ -3,8 +3,7 @@ import { Link, useOutletContext, useNavigate } from "react-router-dom";
 import { ArrowDownLeft, ArrowUpRight, ChevronRight, HandCoins } from "lucide-react";
 import { api } from "../api/client";
 import type { Account } from "../api/types";
-import { useAuth } from "../context/AuthContext";
-import { Button, Card, EmptyState, SkeletonRows, Badge } from "../components/ui";
+import { Button, Card, EmptyState, SkeletonRows } from "../components/ui";
 import { Money, StatTile } from "../components/figures";
 import type { LayoutContext } from "../components/Layout";
 import { isPerson } from "../lib/lending";
@@ -14,7 +13,7 @@ const isSettled = (b: number) => Math.abs(b) < EPSILON;
 
 export function Lending() {
   const { family } = useOutletContext<LayoutContext>();
-  const { user } = useAuth();
+  
   const navigate = useNavigate();
   const [people, setPeople] = useState<Account[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -32,14 +31,15 @@ export function Lending() {
     let owed = 0;
     let owe = 0;
     for (const p of people) {
-      if (p.balance > 0) owed += p.balance;
-      else if (p.balance < 0) owe += Math.abs(p.balance);
+      const b = p.balance ?? 0;
+      if (b > 0) owed += b;
+      else if (b < 0) owe += Math.abs(b);
     }
     return { owedToYou: owed, youOwe: owe };
   }, [people]);
 
-  const open = people.filter((p) => !isSettled(p.balance)).sort((a, b) => Math.abs(b.balance) - Math.abs(a.balance));
-  const settled = people.filter((p) => isSettled(p.balance));
+  const open = people.filter((p) => !isSettled(p.balance ?? 0)).sort((a, b) => Math.abs(b.balance ?? 0) - Math.abs(a.balance ?? 0));
+  const settled = people.filter((p) => isSettled(p.balance ?? 0));
 
   return (
     <div className="space-y-6">
@@ -70,10 +70,10 @@ export function Lending() {
                         <div className="flex-1 min-w-0">
                           <p className="font-bold text-ink truncate">{p.name}</p>
                           <p className="text-xs text-ink-subtle mt-1">
-                            {p.balance > 0 ? "Owes you" : "You owe"} {p.owner ? "" : "· Shared"}
+                            {(p.balance ?? 0) > 0 ? "Owes you" : "You owe"} {p.owner ? "" : "· Shared"}
                           </p>
                         </div>
-                        <Money amount={Math.abs(p.balance)} currency={p.currency} tone={p.balance > 0 ? "income" : "expense"} className="font-bold" />
+                        <Money amount={Math.abs(p.balance ?? 0)} currency={p.currency} tone={(p.balance ?? 0) > 0 ? "income" : "expense"} className="font-bold" />
                         <ChevronRight size={16} className="text-ink-subtle" />
                       </Link>
                     </li>

@@ -3,7 +3,7 @@ import { Link, useOutletContext, useNavigate } from "react-router-dom";
 import { Plus, Repeat } from "lucide-react";
 import { api } from "../api/client";
 import type { RecurringTransaction } from "../api/types";
-import { Button, Card, EmptyState, SkeletonRows, Badge } from "../components/ui";
+import { Button, Card, EmptyState, SkeletonRows } from "../components/ui";
 import { Money, StatTile } from "../components/figures";
 import type { LayoutContext } from "../components/Layout";
 
