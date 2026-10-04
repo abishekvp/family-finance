@@ -36,7 +36,7 @@ export default function Login() {
   return (
     <View style={{ flex: 1, backgroundColor: colors.canvas }}>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-        <ScrollView contentContainerStyle={{ flexGrow: 1, justifyContent: "center", padding: 24 }}>
+        <ScrollView contentContainerStyle={{ flexGrow: 1, justifyContent: "center", padding: 24, paddingBottom: 64 }} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets={true}>
           <Logo size={56} style={{ alignSelf: "center", marginBottom: 24 }} />
           <Text style={{ fontSize: 24, fontWeight: "900", color: colors.ink, textAlign: "center" }}>Welcome back</Text>
           <Text style={{ color: colors.inkMuted, textAlign: "center", marginTop: 6, marginBottom: 28 }}>

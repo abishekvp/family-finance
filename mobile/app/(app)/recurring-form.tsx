@@ -194,8 +194,8 @@ export default function RecurringForm() {
         : "Recorded on each date and counted in your monthly budget for its category.";
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1, backgroundColor: colors.canvas }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-      <ScrollView contentContainerStyle={{ padding: 16, gap: 18 }} keyboardShouldPersistTaps="handled">
+    <KeyboardAvoidingView style={{ flex: 1, backgroundColor: colors.canvas }} behavior={Platform.OS === "ios" ? "padding" : undefined} keyboardVerticalOffset={Platform.OS === "ios" ? 100 : 0}>
+      <ScrollView contentContainerStyle={{ padding: 16, gap: 18, paddingBottom: 64 }} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets={true}>
         <ErrorText>{loadError}</ErrorText>
 
         <Segmented

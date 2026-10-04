@@ -10,6 +10,7 @@ import { useTheme } from "../../src/context/ThemeContext";
 import { ClientError, getErrorMessage } from "../../src/api/errors";
 import { Button, Chip, ErrorText, Field, Input, Segmented, SkeletonRows, Toggle } from "../../src/components/ui";
 import { CategoryPicker } from "../../src/components/CategoryPicker";
+import { RefundsPicker } from "../../src/components/RefundsPicker";
 import { NewCategoryForm } from "../../src/components/NewCategoryForm";
 import { currencySymbol, formatCurrency } from "../../src/lib/format";
 import { MONTH_LABELS, localDateInput } from "../../src/lib/dateUtils";
@@ -518,8 +519,8 @@ export default function TransactionForm() {
     type === "INCOME" || (isLending && !moneyGoesOut(kind)) ? colors.income : type === "EXPENSE" || isLending ? colors.expense : colors.brand600;
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1, backgroundColor: colors.canvas }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-      <ScrollView contentContainerStyle={{ padding: 16, gap: 18 }} keyboardShouldPersistTaps="handled">
+    <KeyboardAvoidingView style={{ flex: 1, backgroundColor: colors.canvas }} behavior={Platform.OS === "ios" ? "padding" : undefined} keyboardVerticalOffset={Platform.OS === "ios" ? 100 : 0}>
+      <ScrollView contentContainerStyle={{ padding: 16, gap: 18, paddingBottom: 64 }} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets={true}>
         <ErrorText>{loadError}</ErrorText>
 
         <Segmented fullWidth value={type} onChange={handleSelectType} options={TYPE_OPTIONS} />
@@ -672,20 +673,18 @@ export default function TransactionForm() {
                 : "Select an expense to mark this income as a refund."
             }
           >
-            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-              <Chip label="Not a refund" selected={!linkedRefund} onPress={() => setRefundsId(null)} />
-              {recentExpenses.map((expense) => (
-                <Chip
-                  key={expense.id}
-                  label={`${expense.date.slice(5, 10)} - ${expense.payee || "Expense"} (${currencySymbol(family.currency)}${expense.amount})`}
-                  selected={linkedRefund?.id === expense.id}
-                  onPress={() => {
-                    setRefundsId(expense.id);
-                    if (!amount.trim()) setAmount(String(expense.amount));
-                  }}
-                />
-              ))}
-            </View>
+            <RefundsPicker
+              expenses={recentExpenses}
+              selectedId={refundsId}
+              familyCurrency={family.currency}
+              onSelect={(id) => {
+                setRefundsId(id);
+                if (id) {
+                  const expense = recentExpenses.find((e) => e.id === id);
+                  if (expense && !amount.trim()) setAmount(String(expense.amount));
+                }
+              }}
+            />
           </Field>
         )}
 
