@@ -4,6 +4,7 @@ import * as Clipboard from "expo-clipboard";
 import { useFocusEffect } from "expo-router";
 import { Check, Copy, LogOut, Mail, Users } from "lucide-react-native";
 import { api } from "../../src/api/client";
+import { fetchWithCache } from "../../src/lib/cache";
 import { useAuth } from "../../src/context/AuthContext";
 import { useTheme } from "../../src/context/ThemeContext";
 import { getErrorMessage } from "../../src/api/errors";
@@ -41,8 +42,8 @@ export default function FamilySettings() {
 
   const loadMembers = useCallback(async () => {
     const [membersRes, invitesRes] = await Promise.all([
-      api.get<Member[]>(`/families/${family.id}/members`),
-      api.get<Invite[]>(`/families/${family.id}/invites`).catch(() => ({ data: [] as Invite[] })),
+      fetchWithCache<Member[]>(`/families/${family.id}/members`, undefined, (cached) => setMembers(cached.data)),
+      fetchWithCache<Invite[]>(`/families/${family.id}/invites`, undefined, (cached) => setPendingInvites(cached.data)).catch(() => ({ data: [] as Invite[] })),
     ]);
     setMembers(membersRes.data);
     setPendingInvites(invitesRes.data);

@@ -103,6 +103,8 @@ export default function Settings() {
         </View>
       </Card>
 
+      <BinCard />
+      {isAdmin && <BulkDeleteCard familyId={family.id} />}
       {isAdmin && <ResetDataCard />}
 
       <AppUpdateCard />
@@ -191,6 +193,93 @@ function AppUpdateCard() {
             onPress={() => checkForUpdates({ manual: true })}
           />
         )}
+      </View>
+    </Card>
+  );
+}
+
+function BulkDeleteCard({ familyId }: { familyId: string }) {
+  const { colors } = useTheme();
+  const { user } = useAuth();
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  async function purge() {
+    setError(null);
+    setNotice(null);
+    setBusy(true);
+    try {
+      const payload: Record<string, string> = {};
+      if (from) payload.from = new Date(from).toISOString();
+      if (to) payload.to = new Date(to).toISOString();
+      const res = await api.post<{ deletedCount: number }>(`/families/${familyId}/transactions/bulk-delete`, payload);
+      await syncTransactions(user!.id, familyId, { force: true });
+      setNotice(`Moved ${res.data.deletedCount} transactions to bin.`);
+      setFrom("");
+      setTo("");
+    } catch (err) {
+      setError(getErrorMessage(err, "Unable to purge transactions"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function confirmPurge() {
+    Alert.alert(
+      "Purge transactions?",
+      "Move transactions in this date range to the bin. They will be auto-deleted after 30 days.",
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Move to Bin", style: "destructive", onPress: purge },
+      ]
+    );
+  }
+
+  return (
+    <Card>
+      <CardHeader title="Purge Transactions" icon={<Trash2 size={16} color={colors.expense} />} />
+      <View style={{ gap: 12 }}>
+        <Text style={{ color: colors.inkSubtle, fontSize: 12 }}>Delete transactions in a date range. They move to the bin and can be restored for 30 days.</Text>
+        <View style={{ flexDirection: "row", gap: 12 }}>
+          <View style={{ flex: 1 }}>
+            <Field label="From (inclusive)">
+              <Input value={from} onChangeText={setFrom} placeholder="YYYY-MM-DD" autoCapitalize="none" />
+            </Field>
+          </View>
+          <View style={{ flex: 1 }}>
+            <Field label="To (exclusive)">
+              <Input value={to} onChangeText={setTo} placeholder="YYYY-MM-DD" autoCapitalize="none" />
+            </Field>
+          </View>
+        </View>
+        {notice && <SuccessText>{notice}</SuccessText>}
+        <ErrorText>{error}</ErrorText>
+        <Button title="Delete to Bin" variant="danger" disabled={busy || (!from && !to)} onPress={confirmPurge} />
+      </View>
+    </Card>
+  );
+}
+
+import { Link } from "expo-router";
+
+function BinCard() {
+  const { colors } = useTheme();
+  return (
+    <Card>
+      <CardHeader
+        title="Recycle Bin"
+        icon={<Trash2 size={16} color={colors.ink} />}
+        actions={
+          <Link href="/bin" asChild>
+            <Button variant="secondary" title="Open Bin" />
+          </Link>
+        }
+      />
+      <View style={{ gap: 12 }}>
+        <Text style={{ color: colors.inkSubtle, fontSize: 12 }}>View and restore recently deleted transactions.</Text>
       </View>
     </Card>
   );

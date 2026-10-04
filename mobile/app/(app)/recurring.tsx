@@ -3,6 +3,7 @@ import { Pressable, ScrollView, Text, View } from "react-native";
 import { useFocusEffect, useRouter } from "expo-router";
 import { Plus, Repeat } from "lucide-react-native";
 import { api } from "../../src/api/client";
+import { fetchWithCache } from "../../src/lib/cache";
 import type { RecurringFrequency, RecurringTransaction } from "../../src/api/types";
 import { useAuth } from "../../src/context/AuthContext";
 import { useTheme } from "../../src/context/ThemeContext";
@@ -31,15 +32,22 @@ export default function Recurring() {
 
   const load = useCallback(async () => {
     try {
-      const res = await api.get<RecurringTransaction[]>(`/families/${family.id}/recurring`);
+      const res = await fetchWithCache<RecurringTransaction[]>(
+        `/families/${family.id}/recurring`,
+        undefined,
+        (cached) => {
+          setRules(cached.data);
+          setIsLoading(false);
+        }
+      );
       setRules(res.data);
       setError(null);
     } catch (err) {
-      setError(getErrorMessage(err, "Unable to load repeating payments"));
+      if (rules.length === 0) setError(getErrorMessage(err, "Unable to load repeating payments"));
     } finally {
       setIsLoading(false);
     }
-  }, [family.id]);
+  }, [family.id, rules.length]);
 
   useFocusEffect(
     useCallback(() => {

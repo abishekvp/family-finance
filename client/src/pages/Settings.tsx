@@ -10,6 +10,8 @@ import { loadPrefs, savePrefs, type LandingView, type Prefs, type WeekStart } fr
 import { CategoryManager } from "../components/settings/CategoryManager";
 import { BudgetManager } from "../components/settings/BudgetManager";
 import { GoalManager } from "../components/settings/GoalManager";
+import { BulkDeleteCard } from "../components/settings/BulkDeleteCard";
+import { BinManager } from "../components/settings/BinManager";
 
 const LANDING_VIEW_OPTIONS: LandingView[] = ["Daily", "Calendar"];
 const WEEK_START_OPTIONS: WeekStart[] = ["Sunday", "Monday"];
@@ -197,6 +199,9 @@ export function Settings() {
       <CategoryManager familyId={family.id} />
       <BudgetManager familyId={family.id} currency={family.currency} />
       <GoalManager familyId={family.id} currency={family.currency} />
+
+      <BulkDeleteCard familyId={family.id} />
+      <BinManager familyId={family.id} />
 
       {isAdmin && <ResetDataCard familyId={family.id} />}
 

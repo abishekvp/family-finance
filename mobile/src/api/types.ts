@@ -66,6 +66,8 @@ export interface Transaction {
   recurringId?: string | null;
   /** A return of money lent or borrowed: the lend/borrow entry it pays back. */
   repaysId?: string | null;
+  isDeleted?: boolean;
+  deletedAt?: string | null;
   createdAt: string;
   updatedAt: string;
   account: { id: string; name: string; currency: string };

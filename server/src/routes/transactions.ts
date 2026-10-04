@@ -46,6 +46,8 @@ function serializeTransaction(t: TransactionWithRelations) {
     approvalStatus: t.approvalStatus,
     reviewedById: t.reviewedById,
     reviewedAt: t.reviewedAt ? t.reviewedAt.toISOString() : null,
+    isDeleted: t.isDeleted,
+    deletedAt: t.deletedAt ? t.deletedAt.toISOString() : null,
     createdAt: t.createdAt.toISOString(),
     updatedAt: t.updatedAt.toISOString(),
     account: t.account,
@@ -254,10 +256,26 @@ transactionsRouter.get(
       }
     }
 
+    const isBin = req.query.bin === "true";
+
+    // Auto-purge transactions in bin older than 30 days
+    if (isBin) {
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      // Fire and forget
+      prisma.transaction.deleteMany({
+        where: {
+          familyId,
+          isDeleted: true,
+          deletedAt: { lt: thirtyDaysAgo },
+        },
+      }).catch(console.error);
+    }
+
     const transactions = await prisma.transaction.findMany({
       where: {
         familyId,
-        isDeleted: false,
+        isDeleted: isBin,
         // Totals are summed from this list, so by default it holds only what counts.
         ...(approval === "ALL" ? {} : { approvalStatus: approval }),
         // Both legs: what the account paid out and the transfers that landed on it.
@@ -559,12 +577,108 @@ transactionsRouter.delete(
   })
 );
 
-const resetSchema = z.object({ confirm: z.literal(true) });
+const bulkDeleteSchema = z.object({
+  from: z.string().datetime().optional(),
+  to: z.string().datetime().optional(),
+  accountId: z.string().optional(),
+  categoryId: z.string().optional(),
+});
+
+transactionsRouter.post(
+  "/bulk-delete",
+  requireFamilyRole(Role.MEMBER),
+  asyncHandler(async (req, res) => {
+    const familyId = req.params.familyId;
+    const requesterId = req.user!.id;
+    const parsed = bulkDeleteSchema.parse(req.body);
+
+    const from = parsed.from ? new Date(parsed.from) : undefined;
+    const to = parsed.to ? new Date(parsed.to) : undefined;
+    if (from && Number.isNaN(from.getTime())) throw new AppError(400, "Invalid from date");
+    if (to && Number.isNaN(to.getTime())) throw new AppError(400, "Invalid to date");
+
+    const result = await prisma.transaction.updateMany({
+      where: {
+        familyId,
+        isDeleted: false,
+        // An admin can delete anything; a member can only delete their own entries.
+        ...(req.familyMembership!.role !== Role.ADMIN ? { userId: requesterId } : {}),
+        account: { OR: [{ ownerId: null }, { ownerId: requesterId }] },
+        ...(parsed.accountId ? { accountId: parsed.accountId } : {}),
+        ...(parsed.categoryId ? { categoryId: parsed.categoryId } : {}),
+        ...(from || to
+          ? {
+              date: {
+                ...(from ? { gte: from } : {}),
+                ...(to ? { lt: to } : {}),
+              },
+            }
+          : {}),
+      },
+      data: { isDeleted: true, deletedAt: new Date() },
+    });
+
+    res.json({ deletedCount: result.count });
+  })
+);
+
+transactionsRouter.post(
+  "/:transactionId/restore",
+  requireFamilyRole(Role.MEMBER),
+  asyncHandler(async (req, res) => {
+    const familyId = req.params.familyId;
+    const requesterId = req.user!.id;
+
+    const existing = await prisma.transaction.findFirst({
+      where: { id: req.params.transactionId, familyId, isDeleted: true },
+    });
+    if (!existing) throw new AppError(404, "Transaction not found in bin");
+
+    assertCanModify(existing.userId, requesterId, req.familyMembership!.role);
+
+    const restored = await prisma.transaction.update({
+      where: { id: existing.id },
+      data: { isDeleted: false, deletedAt: null },
+      include: TRANSACTION_INCLUDE,
+    });
+
+    res.json(serializeTransaction(restored));
+  })
+);
+
+transactionsRouter.delete(
+  "/:transactionId/purge",
+  requireFamilyRole(Role.MEMBER),
+  asyncHandler(async (req, res) => {
+    const familyId = req.params.familyId;
+    const requesterId = req.user!.id;
+
+    const existing = await prisma.transaction.findFirst({
+      where: { id: req.params.transactionId, familyId, isDeleted: true },
+    });
+    if (!existing) throw new AppError(404, "Transaction not found in bin");
+
+    assertCanModify(existing.userId, requesterId, req.familyMembership!.role);
+
+    await prisma.transaction.delete({
+      where: { id: existing.id },
+    });
+
+    res.status(204).send();
+  })
+);
+
+const resetSchema = z.object({
+  confirm: z.literal(true),
+  startDate: z.string().datetime().optional(),
+  endDate: z.string().datetime().optional(),
+});
 
 /**
  * Wipes the money history: every transaction (soft-deleted, so synced devices drop them) and every
  * account's opening balance, leaving all balances at zero. Accounts, categories, budgets, goals and
  * repeating payments stay. Only reaches accounts the admin can see, never another member's private ones.
+ * If a date range is provided, only transactions in that range are deleted, and opening balances are kept.
  */
 transactionsRouter.post(
   "/reset",
@@ -572,17 +686,35 @@ transactionsRouter.post(
   asyncHandler(async (req, res) => {
     const familyId = req.params.familyId;
     const visible = { OR: [{ ownerId: null }, { ownerId: req.user!.id }] };
-    resetSchema.parse(req.body);
+    const { startDate, endDate } = resetSchema.parse(req.body);
+
+    const dateFilter: any = {};
+    if (startDate) dateFilter.gte = new Date(startDate);
+    if (endDate) dateFilter.lte = new Date(endDate);
+    const hasDateFilter = startDate || endDate;
 
     const [transactions, accounts] = await prisma.$transaction([
       prisma.transaction.updateMany({
-        where: { familyId, isDeleted: false, account: visible },
+        where: {
+          familyId,
+          isDeleted: false,
+          account: visible,
+          ...(hasDateFilter ? { date: dateFilter } : {}),
+        },
         data: { isDeleted: true, deletedAt: new Date() },
       }),
-      prisma.account.updateMany({ where: { familyId, ...visible }, data: { openingBalance: 0 } }),
+      // Only reset opening balances if wiping EVERYTHING
+      ...(hasDateFilter
+        ? []
+        : [
+            prisma.account.updateMany({
+              where: { familyId, ...visible },
+              data: { openingBalance: 0 },
+            }),
+          ]),
     ]);
 
-    res.json({ transactionsCleared: transactions.count, accountsReset: accounts.count });
+    res.json({ transactionsCleared: transactions.count, accountsReset: accounts ? accounts.count : 0 });
   })
 );
 

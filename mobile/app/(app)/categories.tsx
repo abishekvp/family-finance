@@ -3,6 +3,7 @@ import { Pressable, ScrollView, Text, View } from "react-native";
 import { useFocusEffect } from "expo-router";
 import { ChevronRight, Pencil, Tag, Trash2 } from "lucide-react-native";
 import { api } from "../../src/api/client";
+import { fetchWithCache } from "../../src/lib/cache";
 import type { Category, CategoryType, FamilyRole } from "../../src/api/types";
 import { useAuth } from "../../src/context/AuthContext";
 import { useTheme } from "../../src/context/ThemeContext";
@@ -35,15 +36,24 @@ export default function Categories() {
 
   const load = useCallback(async () => {
     try {
-      const res = await api.get<Category[]>(`/families/${family.id}/categories`);
+      const res = await fetchWithCache<Category[]>(
+        `/families/${family.id}/categories`,
+        undefined,
+        (cached) => {
+          setCategories(cached.data);
+          setIsLoading(false);
+        }
+      );
       setCategories(res.data);
       setError(null);
     } catch (err) {
-      setError(getErrorMessage(err, "Unable to load categories"));
+      if (categories.length === 0) {
+        setError(getErrorMessage(err, "Unable to load categories"));
+      }
     } finally {
       setIsLoading(false);
     }
-  }, [family.id]);
+  }, [family.id, categories.length]);
 
   useFocusEffect(
     useCallback(() => {

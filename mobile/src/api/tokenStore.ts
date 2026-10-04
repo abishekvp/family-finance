@@ -13,13 +13,27 @@ export function setAccessToken(token: string | null) {
 }
 
 export async function getStoredRefreshToken(): Promise<string | null> {
-  return SecureStore.getItemAsync(REFRESH_TOKEN_KEY);
+  let token = await SecureStore.getItemAsync(REFRESH_TOKEN_KEY, {
+    keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK,
+  });
+  if (!token) {
+    token = await SecureStore.getItemAsync(REFRESH_TOKEN_KEY);
+    if (token) {
+      await setStoredRefreshToken(token);
+    }
+  }
+  return token;
 }
 
 export async function setStoredRefreshToken(token: string | null): Promise<void> {
   if (token) {
-    await SecureStore.setItemAsync(REFRESH_TOKEN_KEY, token);
+    await SecureStore.setItemAsync(REFRESH_TOKEN_KEY, token, {
+      keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK,
+    });
   } else {
-    await SecureStore.deleteItemAsync(REFRESH_TOKEN_KEY);
+    await SecureStore.deleteItemAsync(REFRESH_TOKEN_KEY, {
+      keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK,
+    }).catch(() => undefined);
+    await SecureStore.deleteItemAsync(REFRESH_TOKEN_KEY).catch(() => undefined);
   }
 }

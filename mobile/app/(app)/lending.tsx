@@ -3,6 +3,7 @@ import { Pressable, ScrollView, Text, View } from "react-native";
 import { useFocusEffect, useRouter } from "expo-router";
 import { ArrowDownLeft, ArrowUpRight, ChevronRight, HandCoins } from "lucide-react-native";
 import { api } from "../../src/api/client";
+import { fetchWithCache } from "../../src/lib/cache";
 import type { Account } from "../../src/api/types";
 import { useAuth } from "../../src/context/AuthContext";
 import { useTheme } from "../../src/context/ThemeContext";
@@ -28,7 +29,16 @@ export default function Lending() {
 
   const load = useCallback(async () => {
     try {
-      const [res] = await Promise.all([api.get<Account[]>(`/families/${family.id}/accounts`), syncTransactions(user!.id, family.id)]);
+      const [res] = await Promise.all([
+        fetchWithCache<Account[]>(`/families/${family.id}/accounts`, undefined, (cached) => {
+          const found = cached.data.filter(isPerson);
+          setPeople(found);
+          const open = found.filter((p) => !isSettled(p.balance));
+          setDues(Object.fromEntries(open.map((p) => [p.id, nextDue(trackLoans(selectTransactions(user!.id, family.id, { accountId: p.id }), p))])));
+          setIsLoading(false);
+        }),
+        syncTransactions(user!.id, family.id),
+      ]);
       const found = res.data.filter(isPerson);
       setPeople(found);
       setError(null);
@@ -36,11 +46,11 @@ export default function Lending() {
       const open = found.filter((p) => !isSettled(p.balance));
       setDues(Object.fromEntries(open.map((p) => [p.id, nextDue(trackLoans(selectTransactions(user!.id, family.id, { accountId: p.id }), p))])));
     } catch (err) {
-      setError(getErrorMessage(err, "Unable to load"));
+      if (people.length === 0) setError(getErrorMessage(err, "Unable to load"));
     } finally {
       setIsLoading(false);
     }
-  }, [family.id, user]);
+  }, [family.id, user, people.length]);
 
   useFocusEffect(
     useCallback(() => {

@@ -3,6 +3,7 @@ import { Pressable, ScrollView, Text, View } from "react-native";
 import { useFocusEffect } from "expo-router";
 import { CheckCircle2, Target } from "lucide-react-native";
 import { api } from "../../src/api/client";
+import { fetchWithCache } from "../../src/lib/cache";
 import type { Goal } from "../../src/api/types";
 import { useAuth } from "../../src/context/AuthContext";
 import { useTheme } from "../../src/context/ThemeContext";
@@ -23,15 +24,22 @@ export default function Goals() {
 
   const load = useCallback(async () => {
     try {
-      const res = await api.get<Goal[]>(`/families/${family.id}/goals`);
+      const res = await fetchWithCache<Goal[]>(
+        `/families/${family.id}/goals`,
+        undefined,
+        (cached) => {
+          setGoals(cached.data);
+          setIsLoading(false);
+        }
+      );
       setGoals(res.data);
       setError(null);
     } catch (err) {
-      setError(getErrorMessage(err, "Unable to load goals"));
+      if (goals.length === 0) setError(getErrorMessage(err, "Unable to load goals"));
     } finally {
       setIsLoading(false);
     }
-  }, [family.id]);
+  }, [family.id, goals.length]);
 
   useFocusEffect(
     useCallback(() => {

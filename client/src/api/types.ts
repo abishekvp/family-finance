@@ -87,6 +87,8 @@ export interface Transaction {
   approvalStatus?: ApprovalStatus;
   reviewedById?: string | null;
   reviewedAt?: string | null;
+  isDeleted?: boolean;
+  deletedAt?: string | null;
   createdAt: string;
   updatedAt: string;
   account: { id: string; name: string; currency: string };

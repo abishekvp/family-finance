@@ -3,6 +3,7 @@ import { Pressable, ScrollView, Text, View } from "react-native";
 import { useFocusEffect, useRouter } from "expo-router";
 import { ChevronLeft, ChevronRight, Pencil, PiggyBank, Plus, Repeat } from "lucide-react-native";
 import { api } from "../../src/api/client";
+import { fetchWithCache } from "../../src/lib/cache";
 import type { Budget, Category, RecurringTransaction } from "../../src/api/types";
 import { useAuth } from "../../src/context/AuthContext";
 import { useTheme } from "../../src/context/ThemeContext";
@@ -79,20 +80,27 @@ export default function Budgets() {
           ? { year: anchor.year, month: anchor.month, includeProjected: "1" }
           : { year: anchor.year, period: "ANNUAL", includeProjected: "1" };
       const [budgetsRes, categoriesRes, rulesRes] = await Promise.all([
-        api.get<Budget[]>(`/families/${family.id}/budgets`, { params }),
-        api.get<Category[]>(`/families/${family.id}/categories`),
-        api.get<RecurringTransaction[]>(`/families/${family.id}/recurring`),
+        fetchWithCache<Budget[]>(`/families/${family.id}/budgets`, { params }, (cached) => {
+          setBudgets(cached.data);
+          setIsLoading(false);
+        }),
+        fetchWithCache<Category[]>(`/families/${family.id}/categories`, undefined, (cached) => {
+          setCategories(cached.data.filter((c) => c.type === "EXPENSE"));
+        }),
+        fetchWithCache<RecurringTransaction[]>(`/families/${family.id}/recurring`, undefined, (cached) => {
+          setRules(cached.data);
+        }),
       ]);
       setBudgets(budgetsRes.data);
       setCategories(categoriesRes.data.filter((c) => c.type === "EXPENSE"));
       setRules(rulesRes.data);
       setError(null);
     } catch (err) {
-      setError(getErrorMessage(err, "Unable to load budgets"));
+      if (budgets.length === 0) setError(getErrorMessage(err, "Unable to load budgets"));
     } finally {
       setIsLoading(false);
     }
-  }, [family.id, mode, anchor.year, anchor.month]);
+  }, [family.id, mode, anchor.year, anchor.month, budgets.length]);
 
   useFocusEffect(
     useCallback(() => {

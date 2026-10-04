@@ -9,7 +9,7 @@ import { useTheme } from "../../src/context/ThemeContext";
 import { useSmsImport } from "../../src/context/SmsImportContext";
 import { getErrorMessage } from "../../src/api/errors";
 import { isPerson } from "../../src/lib/lending";
-import { Button, Card, CardHeader, Chip, ErrorText, Field, SkeletonRows, SuccessText, Toggle } from "../../src/components/ui";
+import { Button, Card, CardHeader, Chip, ErrorText, Field, SkeletonRows, SuccessText, Toggle, Input } from "../../src/components/ui";
 
 const HISTORY_OPTIONS: { days: number; label: string }[] = [
   { days: 7, label: "7 days" },
@@ -211,6 +211,9 @@ export default function SmsImport() {
 function PastMessagesCard({ historyDays, onHistoryDaysChange }: { historyDays: number; onHistoryDaysChange: (days: number) => void }) {
   const { colors } = useTheme();
   const sms = useSmsImport();
+  const [customDate, setCustomDate] = useState("");
+  const isValidCustomDate = customDate.trim().length === 10 && !Number.isNaN(new Date(customDate).getTime());
+  
   const { historyFrom, since } = sms.settings;
   const coveredFrom = historyFrom ?? since;
   const result = sms.historyResult;
@@ -240,7 +243,18 @@ function PastMessagesCard({ historyDays, onHistoryDaysChange }: { historyDays: n
           {HISTORY_OPTIONS.map((o) => (
             <Chip key={o.days} label={o.label} selected={historyDays === o.days} onPress={() => onHistoryDaysChange(o.days)} />
           ))}
+          <Chip label="Custom" selected={historyDays === -1} onPress={() => onHistoryDaysChange(-1)} />
         </View>
+        {historyDays === -1 && (
+          <Field label="Import from date (YYYY-MM-DD)">
+            <Input 
+              value={customDate} 
+              onChangeText={setCustomDate} 
+              placeholder="YYYY-MM-DD" 
+              autoCapitalize="none"
+            />
+          </Field>
+        )}
         {importedSome && (
           <Text style={{ color: colors.inkSubtle, fontSize: 12 }}>Imported back to {format(coveredFrom, "d MMM yyyy")}.</Text>
         )}
@@ -255,12 +269,19 @@ function PastMessagesCard({ historyDays, onHistoryDaysChange }: { historyDays: n
         )}
         <ErrorText>{result?.error}</ErrorText>
         <Button
-          title={alreadyCovered ? "Already imported" : `Import past ${historyDays} days`}
+          title={alreadyCovered ? "Already imported" : historyDays === -1 ? "Import from custom date" : `Import past ${historyDays} days`}
           variant="secondary"
           loading={sms.isImportingHistory}
-          disabled={alreadyCovered || sms.isSyncing}
+          disabled={alreadyCovered || sms.isSyncing || (historyDays === -1 && !isValidCustomDate)}
           icon={<History size={16} color={colors.ink} />}
-          onPress={() => sms.importHistory(historyDays)}
+          onPress={() => {
+            if (historyDays === -1) {
+              const diffMs = Date.now() - new Date(customDate).getTime();
+              sms.importHistory(Math.max(1, Math.ceil(diffMs / DAY_MS)));
+            } else {
+              sms.importHistory(historyDays);
+            }
+          }}
         />
       </View>
     </Card>

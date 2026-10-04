@@ -3,6 +3,7 @@ import { KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, View } fro
 import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
 import { ArrowRight, Plus, Repeat, Trash2 } from "lucide-react-native";
 import { api } from "../../src/api/client";
+import { fetchWithCache } from "../../src/lib/cache";
 import type { Account, Budget, Category, RecurringFrequency, Transaction, TransactionType } from "../../src/api/types";
 import { useAuth } from "../../src/context/AuthContext";
 import { useTheme } from "../../src/context/ThemeContext";
@@ -106,7 +107,17 @@ export default function TransactionForm() {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([api.get<Account[]>(`/families/${family.id}/accounts`), api.get<Category[]>(`/families/${family.id}/categories`)])
+    Promise.all([
+      fetchWithCache<Account[]>(`/families/${family.id}/accounts`, undefined, (cached) => {
+        if (!cancelled) setAccounts(cached.data);
+      }),
+      fetchWithCache<Category[]>(`/families/${family.id}/categories`, undefined, (cached) => {
+        if (!cancelled) {
+          setCategories(cached.data);
+          setIsLoading(false);
+        }
+      }),
+    ])
       .then(([accountsRes, categoriesRes]) => {
         if (cancelled) return;
         setAccounts(accountsRes.data);
@@ -247,8 +258,12 @@ export default function TransactionForm() {
     let cancelled = false;
     const url = `/families/${family.id}/budgets`;
     Promise.all([
-      api.get<Budget[]>(url, { params: { year: budgetYear, month: budgetMonth } }),
-      api.get<Budget[]>(url, { params: { year: budgetYear, period: "ANNUAL" } }),
+      fetchWithCache<Budget[]>(url, { params: { year: budgetYear, month: budgetMonth } }, (cached) => {
+        if (!cancelled) setBudgets((prev) => [...cached.data, ...prev.filter(b => b.period === "ANNUAL")]); // A bit rough but we'll just let the then block overwrite it completely.
+      }),
+      fetchWithCache<Budget[]>(url, { params: { year: budgetYear, period: "ANNUAL" } }, (cached) => {
+        if (!cancelled) setBudgets((prev) => [...prev.filter(b => b.period === "MONTHLY"), ...cached.data]);
+      }),
     ])
       .then(([monthRes, yearRes]) => {
         if (!cancelled) setBudgets([...monthRes.data, ...yearRes.data]);

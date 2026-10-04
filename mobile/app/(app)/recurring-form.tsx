@@ -3,6 +3,7 @@ import { KeyboardAvoidingView, Platform, ScrollView, Text, View } from "react-na
 import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
 import { Trash2 } from "lucide-react-native";
 import { api } from "../../src/api/client";
+import { fetchWithCache } from "../../src/lib/cache";
 import type { Account, Budget, Category, RecurringFrequency, RecurringTransaction } from "../../src/api/types";
 import { useAuth } from "../../src/context/AuthContext";
 import { useTheme } from "../../src/context/ThemeContext";
@@ -58,10 +59,21 @@ export default function RecurringForm() {
     const now = new Date();
     const budgetsUrl = `/families/${family.id}/budgets`;
     Promise.all([
-      api.get<Account[]>(`/families/${family.id}/accounts`),
-      api.get<Category[]>(`/families/${family.id}/categories`),
-      api.get<Budget[]>(budgetsUrl, { params: { year: now.getFullYear(), month: now.getMonth() + 1 } }).catch(() => ({ data: [] as Budget[] })),
-      api.get<Budget[]>(budgetsUrl, { params: { year: now.getFullYear(), period: "ANNUAL" } }).catch(() => ({ data: [] as Budget[] })),
+      fetchWithCache<Account[]>(`/families/${family.id}/accounts`, undefined, (cached) => {
+        if (!cancelled) setAccounts(cached.data.filter((a) => !isPerson(a)));
+      }),
+      fetchWithCache<Category[]>(`/families/${family.id}/categories`, undefined, (cached) => {
+        if (!cancelled) setCategories(cached.data);
+      }),
+      fetchWithCache<Budget[]>(budgetsUrl, { params: { year: now.getFullYear(), month: now.getMonth() + 1 } }, (cached) => {
+        if (!cancelled) setBudgets((prev) => [...cached.data, ...prev.filter(b => b.period === "ANNUAL")]);
+      }).catch(() => ({ data: [] as Budget[] })),
+      fetchWithCache<Budget[]>(budgetsUrl, { params: { year: now.getFullYear(), period: "ANNUAL" } }, (cached) => {
+        if (!cancelled) {
+          setBudgets((prev) => [...prev.filter(b => b.period === "MONTHLY"), ...cached.data]);
+          setIsLoading(false);
+        }
+      }).catch(() => ({ data: [] as Budget[] })),
     ])
       .then(([accountsRes, categoriesRes, monthRes, yearRes]) => {
         if (cancelled) return;
