@@ -3,6 +3,7 @@ import { Pressable, ScrollView, Text, View, type NativeScrollEvent, type NativeS
 import { useFocusEffect, useNavigation, useRouter } from "expo-router";
 import { ChevronLeft, ChevronRight, Filter as FilterIcon, Plus } from "lucide-react-native";
 import { api } from "../../../src/api/client";
+import { fetchWithCache } from "../../../src/lib/cache";
 import type { Account, Transaction } from "../../../src/api/types";
 import { useAuth } from "../../../src/context/AuthContext";
 import { usePrefs } from "../../../src/context/PrefsContext";
@@ -73,7 +74,7 @@ export default function TransactionsHub() {
 
   const loadAccounts = useCallback(async () => {
     try {
-      const res = await api.get<Account[]>(`/families/${family.id}/accounts`);
+      const res = await fetchWithCache<Account[]>(`/families/${family.id}/accounts`, undefined, (cached) => { setAccounts(cached.data); setAccountsError(null); });
       setAccounts(res.data);
       setAccountsError(null);
     } catch (err) {
@@ -152,10 +153,15 @@ export default function TransactionsHub() {
 
   const scopedAccountIds = useMemo(() => selectedAccountIds ?? new Set(accounts.map((a) => a.id)), [selectedAccountIds, accounts]);
 
-  const periodTotals = useMemo(() => {
+    const periodTotals = useMemo(() => {
     let income = 0;
     let expense = 0;
     for (const t of filteredTransactions) {
+      if (t.type === "EXPENSE" && t.isRefunded) continue;
+      if (t.type === "INCOME" && t.refundsId) continue;
+      const catName = t.category?.name?.toLowerCase() || "";
+      if (catName.includes("return") || catName.includes("refund")) continue;
+
       if (t.type === "INCOME") income += t.amount;
       else if (t.type === "EXPENSE") expense += t.amount;
     }
@@ -303,3 +309,5 @@ export default function TransactionsHub() {
     </View>
   );
 }
+
+

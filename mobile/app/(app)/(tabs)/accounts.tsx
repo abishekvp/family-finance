@@ -15,6 +15,7 @@ import {
   type LucideIcon,
 } from "lucide-react-native";
 import { api } from "../../../src/api/client";
+import { fetchWithCache } from "../../../src/lib/cache";
 import type { Account, AccountType } from "../../../src/api/types";
 import { useAuth } from "../../../src/context/AuthContext";
 import { useTheme } from "../../../src/context/ThemeContext";
@@ -59,7 +60,7 @@ export default function AccountsScreen() {
 
   const load = useCallback(async () => {
     try {
-      const res = await api.get<Account[]>(`/families/${family.id}/accounts`);
+      const res = await fetchWithCache<Account[]>(`/families/${family.id}/accounts`, undefined, (cached) => { setAccounts(cached.data); setIsLoading(false); });
       setAccounts(res.data);
       setError(null);
     } catch (err) {

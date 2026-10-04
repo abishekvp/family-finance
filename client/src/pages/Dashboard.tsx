@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useOutletContext } from "react-router-dom";
 import {
   ArrowDownRight,
-  ArrowRight,
   ArrowUpRight,
   PiggyBank,
   Plus,
@@ -16,13 +15,12 @@ import { subMonths } from "date-fns";
 import { api } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { getErrorMessage } from "../api/errors";
-import { Button, Card, CardHeader, Dot, EmptyState, ErrorText, ProgressBar, SkeletonRows } from "../components/ui";
+import { Button, Card, CardHeader, Dot, ErrorText, ProgressBar } from "../components/ui";
 import { Money, StatTile } from "../components/figures";
 import type { LayoutContext } from "../components/Layout";
 import type { Budget, Goal, Transaction } from "../api/types";
 import { formatPercent, safePercent } from "../lib/format";
 import { monthRange } from "../lib/dateUtils";
-import { TransactionRow } from "../components/transactions/TransactionRow";
 import { TransactionFormModal } from "../components/transactions/TransactionFormModal";
 import { countsTowardTotals } from "../lib/transactionTotals";
 import { useFamilyData, useYearTransactions } from "../context/FamilyDataContext";
@@ -36,7 +34,7 @@ export function Dashboard() {
   // Accounts, categories and full-year transactions come from the shared cache (see
   // FamilyDataContext) so opening Dashboard after Transactions or Insights doesn't re-fetch them.
   const { accounts, categories, isLoadingStatic, staticError, invalidateYear } = useFamilyData();
-  const [recentTransactions, setRecentTransactions] = useState<Transaction[]>([]);
+  
   const [budgets, setBudgets] = useState<Budget[]>([]);
   const [goals, setGoals] = useState<Goal[]>([]);
   const [isLoadingExtras, setIsLoadingExtras] = useState(true);
@@ -65,8 +63,8 @@ export function Dashboard() {
     setIsLoadingExtras(true);
     setError(null);
     try {
-      const [recentRes, budgetsRes, goalsRes] = await Promise.all([
-        api.get<Transaction[]>(`/families/${family.id}/transactions`, { params: { limit: 6 } }),
+      const [, budgetsRes, goalsRes] = await Promise.all([
+        Promise.resolve({ data: [] as Transaction[] }),
         api
           .get<Budget[]>(`/families/${family.id}/budgets`, {
             params: { year: now.getFullYear(), month: now.getMonth() + 1 },
@@ -74,7 +72,7 @@ export function Dashboard() {
           .catch(() => ({ data: [] as Budget[] })),
         api.get<Goal[]>(`/families/${family.id}/goals`).catch(() => ({ data: [] as Goal[] })),
       ]);
-      setRecentTransactions(recentRes.data);
+      
       setBudgets(budgetsRes.data);
       setGoals(goalsRes.data);
     } catch (err) {
@@ -119,24 +117,7 @@ export function Dashboard() {
   const thisMonthTotals = useMemo(() => summarize(monthTransactions), [monthTransactions, visibleAccountIds]);
   const lastMonthTotals = useMemo(() => summarize(lastMonthTransactions), [lastMonthTransactions, visibleAccountIds]);
 
-  const topCategories = useMemo(() => {
-    const totals = new Map<string, { name: string; color: string; amount: number }>();
-    for (const t of monthTransactions) {
-      if (t.type !== "EXPENSE" || !visibleAccountIds.has(t.accountId) || !countsTowardTotals(t)) continue;
-      const key = t.categoryId ?? "uncategorized";
-      const entry = totals.get(key) ?? {
-        name: t.category?.name ?? "Uncategorized",
-        color: t.category?.color ?? "#94A3B8",
-        amount: 0,
-      };
-      entry.amount += t.amount;
-      totals.set(key, entry);
-    }
-    return Array.from(totals.values())
-      .sort((a, b) => b.amount - a.amount)
-      .slice(0, 5);
-  }, [monthTransactions, visibleAccountIds]);
-  const topCategoriesTotal = topCategories.reduce((s, c) => s + c.amount, 0);
+  
 
   const budgetHighlights = useMemo(() => {
     const relevant = scope === "family" ? budgets.filter((b) => b.ownerId === null) : budgets;
@@ -234,69 +215,6 @@ export function Dashboard() {
         />
       </div>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-5">
-        <Card className="lg:col-span-2">
-          <CardHeader title="Top spending" subtitle={monthLabel} icon={<PiggyBank size={17} />} />
-          {isLoading ? (
-            <SkeletonRows rows={4} />
-          ) : topCategories.length === 0 ? (
-            <EmptyState title="No expenses yet" description="Categorized spending will show up here." />
-          ) : (
-            <ul className="space-y-3.5">
-              {topCategories.map((c) => (
-                <li key={c.name}>
-                  <div className="mb-1.5 flex items-center justify-between gap-3 text-sm">
-                    <span className="flex min-w-0 items-center gap-2 font-medium text-ink">
-                      <Dot color={c.color} />
-                      <span className="truncate">{c.name}</span>
-                    </span>
-                    <span className="tnum shrink-0 font-semibold">
-                      <Money amount={c.amount} currency={family.currency} />
-                    </span>
-                  </div>
-                  <ProgressBar value={safePercent(c.amount, topCategoriesTotal) / 100} />
-                </li>
-              ))}
-            </ul>
-          )}
-        </Card>
-
-        <Card className="lg:col-span-3">
-          <CardHeader
-            title="Recent transactions"
-            icon={<Wallet size={17} />}
-            actions={
-              <Link
-                to="/transactions"
-                className="flex items-center gap-1 text-sm font-semibold text-brand-600 hover:text-brand-700"
-              >
-                View all
-                <ArrowRight size={14} />
-              </Link>
-            }
-          />
-          {isLoading ? (
-            <SkeletonRows rows={5} />
-          ) : recentTransactions.length === 0 ? (
-            <EmptyState
-              title="No transactions yet"
-              description="Add your first transaction to see it here."
-              action={
-                <Button size="sm" icon={<Plus size={15} />} onClick={() => setShowAddTransaction(true)}>
-                  Add transaction
-                </Button>
-              }
-            />
-          ) : (
-            <div className="divide-y divide-line">
-              {recentTransactions.map((t) => (
-                <TransactionRow key={t.id} transaction={t} onClick={() => setEditingTransaction(t)} />
-              ))}
-            </div>
-          )}
-        </Card>
-      </div>
-
       {budgetHighlights.length > 0 && (
         <Card>
           <CardHeader
@@ -383,3 +301,7 @@ export function Dashboard() {
     </div>
   );
 }
+
+
+
+
