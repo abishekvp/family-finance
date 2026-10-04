@@ -33,19 +33,20 @@ function assertCanModify(ownerId: string | null, requesterId: string, role: Role
   }
 }
 
-// Resolves the [start, end) window a budget's "spent" total is computed over:
-// MONTHLY periods run for the calendar month, ANNUAL periods for the calendar year.
-function periodRange(period: BudgetPeriod, year: number, month: number | null) {
+// Resolves the [start, end) window a budget's "spent" total is computed over.
+// Monthly boundaries use the client's local timezone (via tzOffset in minutes).
+function periodRange(period: BudgetPeriod, year: number, month: number | null, tzOffset: number = 0) {
+  const offsetMs = tzOffset * 60000;
   if (period === BudgetPeriod.ANNUAL) {
     return {
-      start: new Date(Date.UTC(year, 0, 1)),
-      end: new Date(Date.UTC(year + 1, 0, 1)),
+      start: new Date(Date.UTC(year, 0, 1) + offsetMs),
+      end: new Date(Date.UTC(year + 1, 0, 1) + offsetMs),
     };
   }
   const m = month ?? 1;
   return {
-    start: new Date(Date.UTC(year, m - 1, 1)),
-    end: new Date(Date.UTC(year, m, 1)),
+    start: new Date(Date.UTC(year, m - 1, 1) + offsetMs),
+    end: new Date(Date.UTC(year, m, 1) + offsetMs),
   };
 }
 
@@ -191,6 +192,11 @@ budgetsRouter.get(
     // Future periods can show repeating budgets that will be added when the period starts. Only
     // clients that know those are read-only ask for them.
     const includeProjected = req.query.includeProjected === "1";
+    let tzOffset = 0;
+    if (typeof req.query.tzOffset === "string") {
+      const parsed = Number(req.query.tzOffset);
+      if (Number.isFinite(parsed)) tzOffset = parsed;
+    }
 
     let projected: ProjectedBudget[] = [];
     if (year !== undefined && month !== undefined) {
@@ -225,7 +231,7 @@ budgetsRouter.get(
 
     const withSpent = await Promise.all(
       [...budgets, ...projected].map(async (budget) => {
-        const { start, end } = periodRange(budget.period, budget.year, budget.month);
+        const { start, end } = periodRange(budget.period, budget.year, budget.month, tzOffset);
         const categoryIds = [budget.categoryId, ...subcategories.filter((c) => c.parentId === budget.categoryId).map((c) => c.id)];
         const rules = rulesInBudget(expenseRules, categoryIds, budget.period);
         const spent = await computeSpent(familyId, requesterId, categoryIds, budget.period, start, end);

@@ -43,7 +43,7 @@ export default function Goals() {
 
   useFocusEffect(
     useCallback(() => {
-      setIsLoading(true);
+
       load();
     }, [load])
   );

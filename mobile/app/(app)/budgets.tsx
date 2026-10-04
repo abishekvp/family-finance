@@ -77,8 +77,8 @@ export default function Budgets() {
     try {
       const params =
         mode === "monthly"
-          ? { year: anchor.year, month: anchor.month, includeProjected: "1" }
-          : { year: anchor.year, period: "ANNUAL", includeProjected: "1" };
+          ? { year: anchor.year, month: anchor.month, includeProjected: "1", tzOffset: new Date().getTimezoneOffset() }
+          : { year: anchor.year, period: "ANNUAL", includeProjected: "1", tzOffset: new Date().getTimezoneOffset() };
       const [budgetsRes, categoriesRes, rulesRes] = await Promise.all([
         fetchWithCache<Budget[]>(`/families/${family.id}/budgets`, { params }, (cached) => {
           setBudgets(cached.data);
@@ -104,7 +104,7 @@ export default function Budgets() {
 
   useFocusEffect(
     useCallback(() => {
-      setIsLoading(true);
+
       load();
     }, [load])
   );

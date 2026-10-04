@@ -393,6 +393,7 @@ transactionsRouter.get(
 );
 
 const createTransactionSchema = z.object({
+  id: z.string().optional(),
   accountId: z.string().min(1, "accountId is required"),
   type: transactionTypeSchema,
   amount: z.number().finite().gt(0, "amount must be greater than 0"),
@@ -439,6 +440,7 @@ transactionsRouter.post(
     const transaction = await prisma.$transaction(async (tx) => {
       const created = await tx.transaction.create({
         data: {
+          id: parsed.id,
           familyId,
           userId: requesterId,
           accountId: parsed.accountId,

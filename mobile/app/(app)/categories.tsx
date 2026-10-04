@@ -57,7 +57,7 @@ export default function Categories() {
 
   useFocusEffect(
     useCallback(() => {
-      setIsLoading(true);
+
       load();
     }, [load])
   );

@@ -65,10 +65,10 @@ export default function RecurringForm() {
       fetchWithCache<Category[]>(`/families/${family.id}/categories`, undefined, (cached) => {
         if (!cancelled) setCategories(cached.data);
       }),
-      fetchWithCache<Budget[]>(budgetsUrl, { params: { year: now.getFullYear(), month: now.getMonth() + 1 } }, (cached) => {
+      fetchWithCache<Budget[]>(budgetsUrl, { params: { year: now.getFullYear(), month: now.getMonth() + 1, tzOffset: new Date().getTimezoneOffset() } }, (cached) => {
         if (!cancelled) setBudgets((prev) => [...cached.data, ...prev.filter(b => b.period === "ANNUAL")]);
       }).catch(() => ({ data: [] as Budget[] })),
-      fetchWithCache<Budget[]>(budgetsUrl, { params: { year: now.getFullYear(), period: "ANNUAL" } }, (cached) => {
+      fetchWithCache<Budget[]>(budgetsUrl, { params: { year: now.getFullYear(), period: "ANNUAL", tzOffset: new Date().getTimezoneOffset() } }, (cached) => {
         if (!cancelled) {
           setBudgets((prev) => [...prev.filter(b => b.period === "MONTHLY"), ...cached.data]);
           setIsLoading(false);

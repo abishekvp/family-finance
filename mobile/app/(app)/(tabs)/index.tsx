@@ -74,7 +74,7 @@ export default function TransactionsHub() {
 
   const loadAccounts = useCallback(async () => {
     try {
-      const res = await fetchWithCache<Account[]>(`/families/${family.id}/accounts`, undefined, (cached) => { setAccounts(cached.data); setAccountsError(null); });
+      const res = await fetchWithCache<Account[]>(`/families/${family.id}/accounts`, undefined, (cached) => { setAccounts(cached.data); setAccountsError(null); }, 5 * 60 * 1000);
       setAccounts(res.data);
       setAccountsError(null);
     } catch (err) {

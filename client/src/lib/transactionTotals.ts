@@ -15,3 +15,9 @@ export function countsTowardTotals(t: Transaction): boolean {
   return true;
 }
 
+export function totalsContribution(t: Transaction): { income: number; expense: number } {
+  if (!countsTowardTotals(t)) return { income: 0, expense: 0 };
+  if (t.type === "INCOME") return { income: t.amount, expense: 0 };
+  if (t.type === "EXPENSE") return { income: 0, expense: t.amount };
+  return { income: 0, expense: 0 };
+}

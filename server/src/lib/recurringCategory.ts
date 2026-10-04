@@ -18,8 +18,9 @@ export function currentPeriodStart(frequency: RecurringFrequency, now = new Date
 }
 
 /** Start of a budget's period. */
-export function budgetPeriodStart(period: BudgetPeriod, year: number, month: number | null): Date {
-  return period === BudgetPeriod.ANNUAL ? new Date(Date.UTC(year, 0, 1)) : new Date(Date.UTC(year, (month ?? 1) - 1, 1));
+export function budgetPeriodStart(period: BudgetPeriod, year: number, month: number | null, tzOffset: number = 0): Date {
+  const offsetMs = tzOffset * 60000;
+  return period === BudgetPeriod.ANNUAL ? new Date(Date.UTC(year, 0, 1) + offsetMs) : new Date(Date.UTC(year, (month ?? 1) - 1, 1) + offsetMs);
 }
 
 /**

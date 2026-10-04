@@ -12,17 +12,30 @@ function getCacheFile(url: string, params?: any) {
 export async function fetchWithCache<T>(
   url: string,
   config?: any,
-  onCacheHit?: (res: { data: T }) => void
+  onCacheHit?: (res: { data: T }) => void,
+  maxAgeMs?: number
 ): Promise<{ data: T }> {
   const file = getCacheFile(url, config?.params);
+  let isFresh = false;
 
   if (file.exists && onCacheHit) {
     try {
       const cached = JSON.parse(file.textSync());
       onCacheHit({ data: cached as T });
+      if (maxAgeMs !== undefined) {
+        const stat = file.getInfo();
+        if (stat.exists && stat.modificationTime) {
+          const ageMs = Date.now() - (stat.modificationTime * 1000);
+          if (ageMs < maxAgeMs) isFresh = true;
+        }
+      }
     } catch (e) {
       // ignore cache read errors
     }
+  }
+
+  if (isFresh) {
+    return { data: JSON.parse(file.textSync()) as T };
   }
 
   const res = await api.get<T>(url, config);

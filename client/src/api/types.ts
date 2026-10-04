@@ -117,6 +117,32 @@ export interface Budget {
   /** Repeating payments in this category still to come in the period. */
   upcoming?: number;
   remaining: number;
+  recurringIds?: string[];
+  projected?: boolean;
+}
+
+export type RecurringFrequency = "WEEKLY" | "MONTHLY" | "YEARLY";
+
+export interface RecurringTransaction {
+  id: string;
+  familyId: string;
+  userId: string;
+  accountId: string;
+  categoryId: string | null;
+  type: "INCOME" | "EXPENSE";
+  amount: number;
+  payee: string | null;
+  notes: string | null;
+  frequency: RecurringFrequency;
+  startDate: string;
+  endDate: string | null;
+  nextDate: string;
+  postedCount: number;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+  account: { id: string; name: string; currency: string };
+  category: { id: string; name: string; color: string; icon: string; type: CategoryType } | null;
 }
 
 export interface Goal {

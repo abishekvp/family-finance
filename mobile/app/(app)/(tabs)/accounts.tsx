@@ -60,7 +60,7 @@ export default function AccountsScreen() {
 
   const load = useCallback(async () => {
     try {
-      const res = await fetchWithCache<Account[]>(`/families/${family.id}/accounts`, undefined, (cached) => { setAccounts(cached.data); setIsLoading(false); });
+      const res = await fetchWithCache<Account[]>(`/families/${family.id}/accounts`, undefined, (cached) => { setAccounts(cached.data); setIsLoading(false); }, 5 * 60 * 1000);
       setAccounts(res.data);
       setError(null);
     } catch (err) {
@@ -72,7 +72,7 @@ export default function AccountsScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      setIsLoading(true);
+
       load();
     }, [load])
   );

@@ -17,6 +17,10 @@ import { GetTheApp } from "./pages/GetTheApp";
 import { ForgotPassword } from "./pages/ForgotPassword";
 import { Account } from "./pages/Account";
 import { Approvals } from "./pages/Approvals";
+import { Lending } from "./pages/Lending";
+import { LendingPerson } from "./pages/LendingPerson";
+import { Recurring } from "./pages/Recurring";
+import { RecurringForm } from "./pages/RecurringForm";
 
 export default function App() {
   return (
@@ -41,6 +45,10 @@ export default function App() {
             <Route path="/family" element={<FamilySettings />} />
             <Route path="/approvals" element={<Approvals />} />
             <Route path="/get-the-app" element={<GetTheApp />} />
+            <Route path="/lending" element={<Lending />} />
+            <Route path="/lending/:id" element={<LendingPerson />} />
+            <Route path="/recurring" element={<Recurring />} />
+            <Route path="/recurring/:id" element={<RecurringForm />} />
           </Route>
         </Route>
       </Route>

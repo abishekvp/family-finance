@@ -32,6 +32,7 @@ export function BudgetManager({ familyId, currency }: { familyId: string; curren
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth() + 1);
+  const [period, setPeriod] = useState<"MONTHLY" | "ANNUAL">("MONTHLY");
   const [budgets, setBudgets] = useState<Budget[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -44,8 +45,11 @@ export function BudgetManager({ familyId, currency }: { familyId: string; curren
     setIsLoading(true);
     setError(null);
     try {
+      const params: any = { year, tzOffset: new Date().getTimezoneOffset() };
+      if (period === "MONTHLY") params.month = month;
+      else params.period = "ANNUAL";
       const [budgetsRes, categoriesRes] = await Promise.all([
-        api.get<Budget[]>(`/families/${familyId}/budgets`, { params: { year, month } }),
+        api.get<Budget[]>(`/families/${familyId}/budgets`, { params }),
         api.get<Category[]>(`/families/${familyId}/categories`),
       ]);
       setBudgets(budgetsRes.data);
@@ -60,7 +64,7 @@ export function BudgetManager({ familyId, currency }: { familyId: string; curren
   useEffect(() => {
     load().catch(() => undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [familyId, year, month]);
+  }, [familyId, year, month, period]);
 
   const expenseCategories = useMemo(() => categories.filter((c) => c.type === "EXPENSE"), [categories]);
   const budgetedCategoryIds = useMemo(() => new Set(budgets.map((b) => b.categoryId)), [budgets]);
@@ -92,17 +96,23 @@ export function BudgetManager({ familyId, currency }: { familyId: string; curren
     <Card>
       <CardHeader
         title="Budgets"
-        subtitle={budgets.length > 0 ? `${MONTH_LABELS[month - 1]} ${year}` : undefined}
+        subtitle={budgets.length > 0 ? (period === "MONTHLY" ? `${MONTH_LABELS[month - 1]} ${year}` : `${year}`) : undefined}
         icon={<PiggyBank size={17} />}
         actions={
           <>
-            <Select value={month} onChange={(e) => setMonth(Number(e.target.value))} className="!h-9 !text-xs">
-              {MONTH_LABELS.map((label, index) => (
-                <option key={label} value={index + 1}>
-                  {label}
-                </option>
-              ))}
+            <Select value={period} onChange={(e) => setPeriod(e.target.value as any)} className="!h-9 !text-xs">
+              <option value="MONTHLY">Monthly</option>
+              <option value="ANNUAL">Yearly</option>
             </Select>
+            {period === "MONTHLY" && (
+              <Select value={month} onChange={(e) => setMonth(Number(e.target.value))} className="!h-9 !text-xs">
+                {MONTH_LABELS.map((label, index) => (
+                  <option key={label} value={index + 1}>
+                    {label}
+                  </option>
+                ))}
+              </Select>
+            )}
             <Select value={year} onChange={(e) => setYear(Number(e.target.value))} className="!h-9 !text-xs">
               {Array.from({ length: 6 }, (_, i) => now.getFullYear() - 2 + i).map((y) => (
                 <option key={y} value={y}>
@@ -213,6 +223,7 @@ export function BudgetManager({ familyId, currency }: { familyId: string; curren
           familyId={familyId}
           year={year}
           month={month}
+          period={period}
           budget={editing === "new" ? null : editing}
           categories={editing === "new" ? availableCategories : expenseCategories}
           onClose={() => setEditing(null)}
@@ -227,6 +238,7 @@ function BudgetFormModal({
   familyId,
   year,
   month,
+  period,
   budget,
   categories,
   onClose,
@@ -235,6 +247,7 @@ function BudgetFormModal({
   familyId: string;
   year: number;
   month: number;
+  period: "MONTHLY" | "ANNUAL";
   budget: Budget | null;
   categories: Category[];
   onClose: () => void;
@@ -259,6 +272,7 @@ function BudgetFormModal({
           name: name.trim() || null,
           amount: Number(amount) || 0,
           rollover,
+          isCommon,
         });
       } else {
         await api.post(`/families/${familyId}/budgets`, {
@@ -266,8 +280,8 @@ function BudgetFormModal({
           name: name.trim() || null,
           amount: Number(amount) || 0,
           year,
-          month,
-          period: "MONTHLY",
+          month: period === "MONTHLY" ? month : undefined,
+          period,
           rollover,
           isCommon,
         });
@@ -306,7 +320,7 @@ function BudgetFormModal({
           <Field label="Category">
             {(props) =>
               categories.length === 0 ? (
-                <p className="text-sm text-ink-subtle">All expense categories already have a budget for this month.</p>
+                <p className="text-sm text-ink-subtle">All expense categories already have a budget for this {period === "MONTHLY" ? "month" : "year"}.</p>
               ) : (
                 <Select {...props} required value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
                   {categories.map((c) => (
@@ -330,7 +344,7 @@ function BudgetFormModal({
             />
           )}
         </Field>
-        <Field label="Monthly amount">
+        <Field label={period === "MONTHLY" ? "Monthly amount" : "Yearly amount"}>
           {(props) => (
             <Input
               {...props}
@@ -344,9 +358,7 @@ function BudgetFormModal({
           )}
         </Field>
         <Toggle checked={rollover} onChange={setRollover} label="Roll over unused amount" description="Carries leftover budget into next month." />
-        {!isEdit && (
-          <Toggle checked={isCommon} onChange={setIsCommon} label="Shared family budget" description="Tracked against shared spending." />
-        )}
+        <Toggle checked={isCommon} onChange={setIsCommon} label="Shared family budget" description="Tracked against shared spending." />
         <ErrorText>{error}</ErrorText>
       </form>
     </Modal>

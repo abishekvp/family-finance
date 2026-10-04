@@ -267,10 +267,10 @@ export default function TransactionForm() {
     let cancelled = false;
     const url = `/families/${family.id}/budgets`;
     Promise.all([
-      fetchWithCache<Budget[]>(url, { params: { year: budgetYear, month: budgetMonth } }, (cached) => {
+      fetchWithCache<Budget[]>(url, { params: { year: budgetYear, month: budgetMonth, tzOffset: new Date().getTimezoneOffset() } }, (cached) => {
         if (!cancelled) setBudgets((prev) => [...cached.data, ...prev.filter(b => b.period === "ANNUAL")]); // A bit rough but we'll just let the then block overwrite it completely.
       }),
-      fetchWithCache<Budget[]>(url, { params: { year: budgetYear, period: "ANNUAL" } }, (cached) => {
+      fetchWithCache<Budget[]>(url, { params: { year: budgetYear, period: "ANNUAL", tzOffset: new Date().getTimezoneOffset() } }, (cached) => {
         if (!cancelled) setBudgets((prev) => [...prev.filter(b => b.period === "MONTHLY"), ...cached.data]);
       }),
     ])
