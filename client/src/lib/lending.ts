@@ -2,19 +2,23 @@ import type { Account, Transaction } from "../api/types";
 import { formatCurrency } from "./format";
 
 /**
- * Lend & borrow, mirroring the mobile app: each friend or relative is a PERSON account, money moves
- * to and from it as transfers, and a return can be linked to the loan it pays back (repaysId).
+ * Lend & borrow (shared with the mobile app's src/lib/lending.ts): each friend or relative is a PERSON account whose balance is what they owe you
+ * (positive) or what you owe them (negative). Money only ever moves to and from it as transfers,
+ * so borrowed money never shows up as income and lent money never as an expense.
  */
 
-/** What an entry is, from your side. */
+/**
+ * What an entry is, from your side. "lent" and "paid-back" move money from your account to the
+ * person; "borrowed" and "got-back" move it the other way.
+ */
 export type LendingKind = "lent" | "borrowed" | "got-back" | "paid-back";
 
-export const LENDING_KIND_LABELS: Record<LendingKind, string> = {
-  lent: "Lent",
-  borrowed: "Borrowed",
-  "got-back": "Got back",
-  "paid-back": "Paid back",
-};
+export const LENDING_KINDS: { value: LendingKind; label: string; hint: string }[] = [
+  { value: "lent", label: "Lent", hint: "You gave them money they'll return" },
+  { value: "borrowed", label: "Borrowed", hint: "They gave you money you'll return" },
+  { value: "got-back", label: "Got back", hint: "They returned money you lent" },
+  { value: "paid-back", label: "Paid back", hint: "You returned money you borrowed" },
+];
 
 const KIND_TAG_PREFIX = "lending:";
 
@@ -22,16 +26,22 @@ export function kindTag(kind: LendingKind) {
   return `${KIND_TAG_PREFIX}${kind}`;
 }
 
+/** Tags without the lending kind, so a new one can be set (or none, when it stops being a loan). */
 export function withoutKindTag(tags: string[]) {
   return tags.filter((t) => !t.startsWith(KIND_TAG_PREFIX));
 }
 
-function parseKind(value: string | undefined | null): LendingKind | null {
-  return value && value in LENDING_KIND_LABELS ? (value as LendingKind) : null;
+export function parseKind(value: string | undefined | null): LendingKind | null {
+  return LENDING_KINDS.some((k) => k.value === value) ? (value as LendingKind) : null;
 }
 
 export function moneyGoesOut(kind: LendingKind) {
   return kind === "lent" || kind === "paid-back";
+}
+
+/** Whether the entry starts a loan (and so can have a return-by date) rather than returning one. */
+export function startsLoan(kind: LendingKind) {
+  return kind === "lent" || kind === "borrowed";
 }
 
 // Amounts are cents-precise; anything smaller is floating-point noise, not a debt.
@@ -41,7 +51,40 @@ export function isPerson(account: Pick<Account, "type">) {
   return account.type === "PERSON";
 }
 
-/** The payee recorded on the transfer, so it reads well in the transaction list. */
+export function isSettled(balance: number) {
+  return Math.abs(balance) < EPSILON;
+}
+
+/** Plain-language position with one person, e.g. "Ravi owes you ₹2,000". */
+export function describeBalance(name: string, balance: number, currency: string) {
+  if (isSettled(balance)) return "All settled up";
+  const amount = formatCurrency(Math.abs(balance), currency);
+  return balance > 0 ? `${name} owes you ${amount}` : `You owe ${name} ${amount}`;
+}
+
+/** Short status for list rows. */
+export function balanceStatus(balance: number) {
+  if (isSettled(balance)) return "Settled up";
+  return balance > 0 ? "Owes you" : "You owe";
+}
+
+export function lendingTotals(people: Account[]) {
+  let owedToYou = 0;
+  let youOwe = 0;
+  for (const p of people) {
+    const balance = p.balance ?? 0;
+    if (balance > 0) owedToYou += balance;
+    else youOwe += -balance;
+  }
+  return { owedToYou, youOwe };
+}
+
+/** How an entry changes the person's balance: positive means they owe you more. */
+export function balanceEffect(kind: LendingKind, amount: number) {
+  return moneyGoesOut(kind) ? amount : -amount;
+}
+
+/** The payee recorded on the transfer, so it reads well in the transaction list and the widget. */
 export function entryLabel(kind: LendingKind, name: string) {
   switch (kind) {
     case "lent":
@@ -55,7 +98,10 @@ export function entryLabel(kind: LendingKind, name: string) {
   }
 }
 
-/** The kind of an existing transfer with a person (tag first, then the older label/direction rules). */
+/**
+ * The kind of an existing transfer with a person. Entries record it as a tag; older ones (made
+ * before tags) are recognised by the label they were saved with, then by direction.
+ */
 export function kindOf(t: Transaction, personId: string): LendingKind {
   const tagged = t.tags.find((tag) => tag.startsWith(KIND_TAG_PREFIX));
   const parsed = parseKind(tagged?.slice(KIND_TAG_PREFIX.length));
@@ -66,11 +112,22 @@ export function kindOf(t: Transaction, personId: string): LendingKind {
   return / paid back$/.test(payee) ? "got-back" : "borrowed";
 }
 
-/** How an entry changes the person's balance: positive means they owe you more. */
-function effectOf(t: Transaction, personId: string): number {
-  if (t.type === "TRANSFER") return t.transferToAccountId === personId ? t.amount : -t.amount;
-  // They paid for something of yours (expense: you owe them) or received something for you (income).
-  return t.type === "EXPENSE" ? -t.amount : t.amount;
+/**
+ * One line of a person's history, from your side: how it moved their balance (positive means they
+ * owe you more) and where the money came from or went.
+ */
+export function describeEntry(t: Transaction, personId: string): { effect: number; label: string; detail: string } {
+  if (t.type === "TRANSFER" && t.transferToAccountId === personId) {
+    return { effect: t.amount, label: t.payee || "You gave", detail: `From ${t.account.name}` };
+  }
+  if (t.type === "TRANSFER") {
+    return { effect: -t.amount, label: t.payee || "You got", detail: t.transferToAccount ? `Into ${t.transferToAccount.name}` : "" };
+  }
+  // They paid for something of yours: a real expense for you, and now you owe them for it.
+  if (t.type === "EXPENSE") {
+    return { effect: -t.amount, label: t.payee || "Paid for you", detail: t.category?.name ?? "Paid for you" };
+  }
+  return { effect: t.amount, label: t.payee || "Received for you", detail: t.category?.name ?? "Received for you" };
 }
 
 /** The loans a return of this kind pays back: "got back" returns what you lent, "paid back" what you borrowed. */
@@ -149,9 +206,9 @@ export function trackLoans(history: Transaction[], person: Pick<Account, "id" | 
   }
 
   const opening = Number(person.openingBalance) || 0;
-  if (Math.abs(opening) >= EPSILON) apply(opening, null, new Date(person.createdAt));
+  if (!isSettled(opening)) apply(opening, null, new Date(person.createdAt));
   for (const t of [...history].sort(chronological)) {
-    apply(effectOf(t, person.id), t, new Date(t.date));
+    apply(describeEntry(t, person.id).effect, t, new Date(t.date));
   }
 
   for (const loan of loans) {
@@ -171,4 +228,11 @@ function shortDay(date: Date) {
 export function loanLabel(loan: Loan, currency: string) {
   const what = `${loan.direction === "lent" ? "Lent" : "Borrowed"} ${formatCurrency(loan.amount, currency)} on ${shortDay(loan.date)}`;
   return loan.returned > EPSILON ? `${what} · ${formatCurrency(loan.remaining, currency)} left` : what;
+}
+
+/** The earliest return-by date among a person's open loans, and whether anything is overdue. */
+export function nextDue(loans: Loan[]) {
+  const open = loans.filter((l) => !l.settled && l.dueDate);
+  const earliest = open.reduce<Date | null>((min, l) => (!min || l.dueDate! < min ? l.dueDate! : min), null);
+  return { dueDate: earliest, overdue: open.some((l) => l.overdue) };
 }

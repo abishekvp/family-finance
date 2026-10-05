@@ -21,8 +21,8 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// Transactions and repeating payments both carry end-to-end encrypted payee/notes.
-const TRANSACTIONS_URL = /\/families\/([^/]+)\/(?:transactions|recurring)(?:\/|$|\?)/;
+// Transactions, repeating payments and payee rules all carry end-to-end encrypted payee (and notes).
+const TRANSACTIONS_URL = /\/families\/([^/]+)\/(?:transactions|recurring|payee-rules)(?:\/|$|\?)/;
 
 /** A refreshed session; `user` is the /auth/me payload when it was asked for (and the server sent it). */
 export interface RefreshedSession {

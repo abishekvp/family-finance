@@ -119,8 +119,11 @@ export interface Budget {
   /** Repeating payments in this category still to come in the period. */
   upcoming?: number;
   remaining: number;
+  /** Repeating payments counted in it (in its category or a subcategory). */
   recurringIds?: string[];
+  /** A future period's copy of a repeating budget, not saved yet (read-only). */
   projected?: boolean;
+  sourceId?: string;
 }
 
 export type RecurringFrequency = "WEEKLY" | "MONTHLY" | "YEARLY";
@@ -171,4 +174,20 @@ export interface Family {
   createdAt: string;
   updatedAt: string;
   role: FamilyRole;
+}
+
+/** "Payees like this go in that category" — see lib/payeeRules. */
+export interface PayeeRule {
+  id: string;
+  familyId: string;
+  createdById: string | null;
+  /** Matched against a transaction's payee, ignoring case, from the start of any word. */
+  payee: string;
+  type: "INCOME" | "EXPENSE";
+  categoryId: string | null;
+  /** Mark matches as money to or from family: not income or spending (see FAMILY_TRANSFER_TAG). */
+  familyTransfer: boolean;
+  createdAt: string;
+  updatedAt: string;
+  category: { id: string; name: string; color: string; icon: string; type: CategoryType } | null;
 }

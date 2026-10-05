@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api } from "../api/client";
 import { getErrorMessage } from "../api/errors";
 import type { Account, Category, Transaction } from "../api/types";
@@ -205,4 +205,23 @@ export function useYearTransactions(year: number) {
     ensureYear(year).catch(() => undefined);
   }, [year, ensureYear]);
   return { data: getYear(year) ?? [], isLoading: isYearLoading(year) && !getYear(year) };
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * The last `days` of transactions, newest first, read from the per-year cache (so it spans into last
+ * year in January without a separate fetch). What payee suggestions and the uncategorised review use.
+ */
+export function useRecentHistory(days = 365) {
+  const [since] = useState(() => new Date(Date.now() - days * DAY_MS));
+  const thisYear = new Date().getFullYear();
+  const current = useYearTransactions(thisYear);
+  const previous = useYearTransactions(since.getFullYear());
+  const data = useMemo(() => {
+    const rows = since.getFullYear() === thisYear ? current.data : [...current.data, ...previous.data];
+    const from = since.toISOString();
+    return rows.filter((t) => t.date >= from).sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+  }, [current.data, previous.data, since, thisYear]);
+  return { data, isLoading: current.isLoading || previous.isLoading };
 }
