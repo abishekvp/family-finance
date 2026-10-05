@@ -13,7 +13,7 @@ export function TransactionRow({
   const description =
     transaction.payee ||
     transaction.category?.name ||
-    (transaction.type === "TRANSFER" ? "Transfer" : "Transaction");
+    (transaction.type === "TRANSFER" ? "Transfer" : isFamilyTransfer(transaction) ? "Family transfer" : "Uncategorized");
 
   const isTransfer = transaction.type === "TRANSFER";
   const isExpense = transaction.type === "EXPENSE";
@@ -50,6 +50,9 @@ export function TransactionRow({
               <span className="shrink-0 rounded-full bg-surface-sunken px-1.5 py-0.5 text-2xs font-semibold text-ink-subtle">
                 {transaction.type === "INCOME" ? "From family" : "To family"}
               </span>
+            )}
+            {transaction.recurringId && (
+              <span className="shrink-0 rounded-full bg-surface-sunken px-1.5 py-0.5 text-2xs font-semibold text-ink-subtle">Repeating</span>
             )}
             {transaction.refundsId && (
               <span className="shrink-0 rounded-full bg-surface-sunken px-1.5 py-0.5 text-2xs font-semibold text-ink-subtle">

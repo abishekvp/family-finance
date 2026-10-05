@@ -11,16 +11,23 @@ export function BulkDeleteCard({ familyId }: { familyId: string }) {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [isDeleting, setIsDeleting] = useState(false);
+  const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function handleSubmit(e: React.FormEvent) {
+  function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    setConfirming(true);
+  }
+
+  async function purge() {
+    setConfirming(false);
     setError(null);
     setIsDeleting(true);
     try {
       const payload: Record<string, string> = {};
-      if (from) payload.from = new Date(from).toISOString();
-      if (to) payload.to = new Date(to).toISOString();
+      // Local midnight of each picked day, not UTC midnight.
+      if (from) payload.from = new Date(`${from}T00:00:00`).toISOString();
+      if (to) payload.to = new Date(`${to}T00:00:00`).toISOString();
 
       const res = await api.post<{ deletedCount: number }>(`/families/${familyId}/transactions/bulk-delete`, payload);
       invalidateAll();
@@ -57,6 +64,21 @@ export function BulkDeleteCard({ familyId }: { familyId: string }) {
           {isDeleting ? "Deleting..." : "Delete to Bin"}
         </Button>
       </form>
+      {confirming && (
+        <div className="mt-4 space-y-3 rounded-2xl bg-expense-soft p-4">
+          <p className="text-sm font-medium text-ink">
+            Move transactions in this date range to the bin? They're deleted for good after 30 days.
+          </p>
+          <div className="flex gap-2">
+            <Button size="sm" variant="danger" onClick={purge}>
+              Move to bin
+            </Button>
+            <Button size="sm" variant="secondary" onClick={() => setConfirming(false)}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
       {error && <ErrorText>{error}</ErrorText>}
     </Card>
   );

@@ -222,7 +222,7 @@ export function Dashboard() {
             subtitle={monthLabel}
             icon={<PiggyBank size={17} />}
             actions={
-              <Link to="/settings" className="text-sm font-semibold text-brand-600 hover:text-brand-700">
+              <Link to="/budgets" className="text-sm font-semibold text-brand-600 hover:text-brand-700">
                 Manage budgets
               </Link>
             }
@@ -256,7 +256,7 @@ export function Dashboard() {
             subtitle="In progress"
             icon={<Target size={17} />}
             actions={
-              <Link to="/settings" className="text-sm font-semibold text-brand-600 hover:text-brand-700">
+              <Link to="/goals" className="text-sm font-semibold text-brand-600 hover:text-brand-700">
                 Manage goals
               </Link>
             }

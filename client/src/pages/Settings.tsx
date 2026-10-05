@@ -1,17 +1,17 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useOutletContext } from "react-router-dom";
-import { CalendarCog, Coins, Smartphone, Trash2 } from "lucide-react";
+import { CalendarCog, Coins, Inbox, Smartphone, Trash2, Wand2 } from "lucide-react";
 import { api } from "../api/client";
 import { getErrorMessage } from "../api/errors";
-import { Button, Card, CardHeader, ErrorText, Field, Input, Modal, Radio, Toggle, useToast } from "../components/ui";
+import { Button, Card, CardHeader, Chip, ErrorText, Field, Input, Modal, Radio, Toggle, useToast } from "../components/ui";
+import { useAuth } from "../context/AuthContext";
 import { useFamilyData } from "../context/FamilyDataContext";
 import type { LayoutContext } from "../components/Layout";
 import { loadPrefs, savePrefs, type LandingView, type Prefs, type WeekStart } from "../lib/prefs";
-import { CategoryManager } from "../components/settings/CategoryManager";
-import { BudgetManager } from "../components/settings/BudgetManager";
-import { GoalManager } from "../components/settings/GoalManager";
 import { BulkDeleteCard } from "../components/settings/BulkDeleteCard";
 import { BinManager } from "../components/settings/BinManager";
+
+const CURRENCIES = ["USD", "EUR", "GBP", "INR", "CAD", "AUD"];
 
 const LANDING_VIEW_OPTIONS: LandingView[] = ["Daily", "Calendar"];
 const WEEK_START_OPTIONS: WeekStart[] = ["Sunday", "Monday"];
@@ -89,6 +89,7 @@ export function Settings() {
   const { family } = useOutletContext<LayoutContext>();
   const isAdmin = family.role === "ADMIN";
   const toast = useToast();
+  const { refreshUser } = useAuth();
 
   const [currency, setCurrency] = useState(family.currency);
   const [currencyError, setCurrencyError] = useState<string | null>(null);
@@ -108,12 +109,18 @@ export function Settings() {
     });
   }
 
-  async function handleCurrencySubmit(e: FormEvent) {
-    e.preventDefault();
+  async function saveCurrency(value: string) {
+    const code = value.trim().toUpperCase();
+    if (code.length !== 3) {
+      setCurrencyError("Enter a 3-letter currency code, e.g. USD");
+      return;
+    }
     setCurrencyError(null);
     setIsSavingCurrency(true);
     try {
-      await api.patch(`/families/${family.id}`, { currency: currency.toUpperCase() });
+      await api.patch(`/families/${family.id}`, { currency: code });
+      setCurrency(code);
+      await refreshUser();
       toast("Currency updated");
     } catch (err) {
       setCurrencyError(getErrorMessage(err, "Unable to update currency"));
@@ -127,8 +134,22 @@ export function Settings() {
       <Card>
         <CardHeader title="Currency" icon={<Coins size={17} />} />
         {isAdmin ? (
-          <form onSubmit={handleCurrencySubmit} className="flex flex-wrap items-end gap-3">
-            <Field label="Family currency (ISO code)" className="w-28">
+          <form
+            onSubmit={(e: FormEvent) => {
+              e.preventDefault();
+              saveCurrency(currency);
+            }}
+            className="space-y-4"
+          >
+            <div className="flex flex-wrap gap-2">
+              {CURRENCIES.map((c) => (
+                <Chip key={c} selected={family.currency === c} disabled={isSavingCurrency} onClick={() => saveCurrency(c)}>
+                  {c}
+                </Chip>
+              ))}
+            </div>
+            <div className="flex flex-wrap items-end gap-3">
+            <Field label="Other currency (ISO code)" className="w-40">
               {(props) => (
                 <Input
                   {...props}
@@ -140,9 +161,10 @@ export function Settings() {
                 />
               )}
             </Field>
-            <Button type="submit" loading={isSavingCurrency}>
+            <Button type="submit" variant="secondary" loading={isSavingCurrency} disabled={currency.trim().length !== 3 || currency.trim().toUpperCase() === family.currency}>
               Save
             </Button>
+            </div>
           </form>
         ) : (
           <p className="text-sm text-ink-muted">
@@ -196,13 +218,31 @@ export function Settings() {
         </div>
       </Card>
 
-      <CategoryManager familyId={family.id} />
-      <BudgetManager familyId={family.id} currency={family.currency} />
-      <GoalManager familyId={family.id} currency={family.currency} />
+      <Card>
+        <CardHeader
+          title="Uncategorised transactions"
+          subtitle="Recent expenses and income that still need a category. Payee rules file most of them on their own."
+          icon={<Inbox size={17} />}
+          className="!mb-0"
+          actions={
+            <>
+              <Link to="/payee-rules">
+                <Button variant="ghost" size="sm" icon={<Wand2 size={14} />}>
+                  Payee rules
+                </Button>
+              </Link>
+              <Link to="/uncategorized">
+                <Button variant="secondary" size="sm">
+                  Review uncategorised
+                </Button>
+              </Link>
+            </>
+          }
+        />
+      </Card>
 
-      <BulkDeleteCard familyId={family.id} />
       <BinManager familyId={family.id} />
-
+      {isAdmin && <BulkDeleteCard familyId={family.id} />}
       {isAdmin && <ResetDataCard familyId={family.id} />}
 
       <Card>

@@ -137,7 +137,7 @@ export function TotalView({
         {isLoadingBudgets ? (
           <SkeletonRows rows={2} />
         ) : budgets.length === 0 ? (
-          <p className="text-sm text-ink-subtle">No budgets set for this month yet. Set one up in Settings.</p>
+          <p className="text-sm text-ink-subtle">No budgets set for this month yet. Set one up under Budgets.</p>
         ) : (
           <ul className="space-y-3.5">
             {budgets.map((b) => {

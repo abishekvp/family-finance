@@ -4,17 +4,23 @@ import {
   ArrowLeftRight,
   ChevronDown,
   ClipboardCheck,
+  HandCoins,
   LayoutDashboard,
   LogOut,
   Monitor,
   Moon,
   PieChart,
+  PiggyBank,
+  Repeat,
   Settings as SettingsIcon,
   ShieldCheck,
   Smartphone,
   Sun,
+  Tag,
+  Target,
   Users,
   Wallet,
+  Wand2,
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { api } from "../api/client";
@@ -42,6 +48,8 @@ interface NavItem {
   primary?: boolean;
   /** A count shown beside the label, e.g. transactions waiting for approval. */
   count?: number;
+  /** Heading the item is grouped under in the sidebar and the "More" sheet. */
+  section?: string;
 }
 
 const NAV_ITEMS: NavItem[] = [
@@ -50,10 +58,16 @@ const NAV_ITEMS: NavItem[] = [
   { to: "/stats", label: "Insights", icon: PieChart, primary: true },
   { to: "/accounts", label: "Accounts", icon: Wallet, primary: true },
   { to: "/approvals", label: "Approvals", icon: ClipboardCheck },
-  { to: "/account", label: "Account & security", icon: ShieldCheck },
-  { to: "/settings", label: "Settings", icon: SettingsIcon },
-  { to: "/family", label: "Family", icon: Users },
-  { to: "/get-the-app", label: "Get the app", icon: Smartphone },
+  { to: "/budgets", label: "Budgets", icon: PiggyBank, section: "Plan" },
+  { to: "/goals", label: "Goals", icon: Target, section: "Plan" },
+  { to: "/recurring", label: "Repeating payments", icon: Repeat, section: "Plan" },
+  { to: "/lending", label: "Lend & borrow", icon: HandCoins, section: "Plan" },
+  { to: "/categories", label: "Categories", icon: Tag, section: "Organise" },
+  { to: "/payee-rules", label: "Payee rules", icon: Wand2, section: "Organise" },
+  { to: "/family", label: "Family", icon: Users, section: "You" },
+  { to: "/account", label: "Account & security", icon: ShieldCheck, section: "You" },
+  { to: "/settings", label: "Settings", icon: SettingsIcon, section: "You" },
+  { to: "/get-the-app", label: "Get the app", icon: Smartphone, section: "You" },
 ];
 
 const PAGE_TITLES: Record<string, string> = {
@@ -63,9 +77,36 @@ const PAGE_TITLES: Record<string, string> = {
   "/accounts": "Accounts",
   "/settings": "Settings",
   "/family": "Family",
+  "/account": "Account & security",
   "/approvals": "Approvals",
   "/get-the-app": "Get the app",
+  "/budgets": "Budgets",
+  "/goals": "Goals",
+  "/recurring": "Repeating payments",
+  "/lending": "Lend & borrow",
+  "/categories": "Categories",
+  "/payee-rules": "Payee rules",
+  "/uncategorized": "Uncategorised",
 };
+
+/** A page's title, including pages under a section (a person under Lend & borrow, a repeating payment). */
+function pageTitle(pathname: string) {
+  if (PAGE_TITLES[pathname]) return PAGE_TITLES[pathname];
+  if (pathname.startsWith("/lending/")) return "Lend & borrow";
+  if (pathname.startsWith("/recurring/")) return "Repeating payment";
+  return null;
+}
+
+/** Items in order, each run of one section under its heading. */
+function sectioned(items: NavItem[]) {
+  const groups: { section?: string; items: NavItem[] }[] = [];
+  for (const item of items) {
+    const last = groups[groups.length - 1];
+    if (last && last.section === item.section) last.items.push(item);
+    else groups.push({ section: item.section, items: [item] });
+  }
+  return groups;
+}
 
 function readScope(): Scope {
   try {
@@ -94,7 +135,7 @@ export function Layout() {
     }
   }, [scope]);
 
-  const title = PAGE_TITLES[location.pathname] ?? family.name;
+  const title = pageTitle(location.pathname) ?? family.name;
   const pendingApprovals = usePendingApprovals(family.id, location.pathname);
   // The Approvals entry shows while approvals are on, or while anything recorded under them still waits.
   const navItems = NAV_ITEMS.flatMap((item) =>
@@ -155,9 +196,14 @@ function DesktopSidebar({ family, items }: { family: FamilySummary; items: NavIt
         </div>
       </div>
 
-      <nav className="flex flex-1 flex-col gap-0.5">
-        {items.map((item) => (
-          <SidebarLink key={item.to} item={item} />
+      <nav className="-mx-1 flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-1">
+        {sectioned(items).map((group, i) => (
+          <div key={group.section ?? `main-${i}`} className="flex flex-col gap-0.5">
+            {group.section && <p className="mb-1 mt-4 px-3 text-2xs font-semibold uppercase tracking-wide text-ink-subtle">{group.section}</p>}
+            {group.items.map((item) => (
+              <SidebarLink key={item.to} item={item} />
+            ))}
+          </div>
         ))}
       </nav>
 
@@ -363,8 +409,11 @@ function MobileTabBar({ items }: { items: NavItem[] }) {
           />
           <div className="glass glass-solid safe-bottom relative z-10 w-full animate-sheet-up rounded-t-3xl p-4 shadow-float">
             <div aria-hidden className="mx-auto mb-4 h-1 w-9 rounded-full bg-line-strong" />
-            <div className="grid gap-1">
-              {secondary.map((item) => {
+            <div className="max-h-[70dvh] space-y-1 overflow-y-auto">
+              {sectioned(secondary).map((group, i) => (
+                <div key={group.section ?? `main-${i}`} className="grid gap-1">
+                  {group.section && <p className="mt-2 px-3 text-2xs font-semibold uppercase tracking-wide text-ink-subtle">{group.section}</p>}
+                  {group.items.map((item) => {
                 const Icon = item.icon;
                 return (
                   <NavLink
@@ -388,7 +437,9 @@ function MobileTabBar({ items }: { items: NavItem[] }) {
                     )}
                   </NavLink>
                 );
-              })}
+                  })}
+                </div>
+              ))}
             </div>
           </div>
         </div>

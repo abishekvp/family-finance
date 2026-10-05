@@ -21,6 +21,11 @@ import { Lending } from "./pages/Lending";
 import { LendingPerson } from "./pages/LendingPerson";
 import { Recurring } from "./pages/Recurring";
 import { RecurringForm } from "./pages/RecurringForm";
+import { Budgets } from "./pages/Budgets";
+import { Categories } from "./pages/Categories";
+import { Goals } from "./pages/Goals";
+import { PayeeRules } from "./pages/PayeeRules";
+import { Uncategorized } from "./pages/Uncategorized";
 
 export default function App() {
   return (
@@ -49,6 +54,11 @@ export default function App() {
             <Route path="/lending/:id" element={<LendingPerson />} />
             <Route path="/recurring" element={<Recurring />} />
             <Route path="/recurring/:id" element={<RecurringForm />} />
+            <Route path="/budgets" element={<Budgets />} />
+            <Route path="/categories" element={<Categories />} />
+            <Route path="/goals" element={<Goals />} />
+            <Route path="/payee-rules" element={<PayeeRules />} />
+            <Route path="/uncategorized" element={<Uncategorized />} />
           </Route>
         </Route>
       </Route>

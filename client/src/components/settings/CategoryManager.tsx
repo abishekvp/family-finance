@@ -20,24 +20,16 @@ import {
   SkeletonRows,
   Toggle,
 } from "../ui";
-import type { Category, CategoryType } from "../../api/types";
+import type { Category, CategoryType, FamilyRole } from "../../api/types";
+import { CATEGORY_SWATCHES as SWATCHES } from "../CategoryPicker";
 
-const SWATCHES = [
-  "#6366F1",
-  "#A855F7",
-  "#22D3EE",
-  "#2DD4BF",
-  "#84CC16",
-  "#F59E0B",
-  "#FB7185",
-  "#EC4899",
-  "#0EA5E9",
-  "#10B981",
-  "#F97316",
-  "#94A3B8",
-];
+/** Mirrors the server's assertCanModify: shared categories are admin-only, personal ones owner-only. */
+function canModify(category: Category, role: FamilyRole) {
+  if (role === "VIEWER") return false;
+  return category.ownerId !== null || role === "ADMIN";
+}
 
-export function CategoryManager({ familyId }: { familyId: string }) {
+export function CategoryManager({ familyId, role }: { familyId: string; role: FamilyRole }) {
   const [type, setType] = useState<CategoryType>("EXPENSE");
   const [categories, setCategories] = useState<Category[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -85,7 +77,7 @@ export function CategoryManager({ familyId }: { familyId: string }) {
       setArchivingId(null);
       await load();
     } catch (err) {
-      setArchiveError(getErrorMessage(err, "Unable to archive category"));
+      setArchiveError(getErrorMessage(err, "Unable to delete category"));
     }
   }
 
@@ -106,14 +98,17 @@ export function CategoryManager({ familyId }: { familyId: string }) {
                 { value: "INCOME", label: "Income" },
               ]}
             />
-            <Button variant="secondary" size="sm" icon={<Plus size={14} />} onClick={() => setEditing("new")}>
-              Add
-            </Button>
+            {role !== "VIEWER" && (
+              <Button variant="secondary" size="sm" icon={<Plus size={14} />} onClick={() => setEditing("new")}>
+                Add
+              </Button>
+            )}
           </>
         }
       />
 
       <ErrorText>{error || archiveError}</ErrorText>
+      {role === "VIEWER" && <p className="mb-3 text-xs text-ink-subtle">Viewers can't change categories. Ask a family admin for member access.</p>}
 
       {isLoading ? (
         <SkeletonRows rows={4} />
@@ -125,6 +120,8 @@ export function CategoryManager({ familyId }: { familyId: string }) {
             <li key={category.id}>
               <CategoryRow
                 category={category}
+                editable={canModify(category, role)}
+                hasChildren={(childrenByParent.get(category.id) ?? []).length > 0}
                 isArchiving={archivingId === category.id}
                 onEdit={() => setEditing(category)}
                 onArchiveStart={() => setArchivingId(category.id)}
@@ -137,6 +134,8 @@ export function CategoryManager({ familyId }: { familyId: string }) {
                     <li key={child.id}>
                       <CategoryRow
                         category={child}
+                        editable={canModify(child, role)}
+                        hasChildren={false}
                         isArchiving={archivingId === child.id}
                         onEdit={() => setEditing(child)}
                         onArchiveStart={() => setArchivingId(child.id)}
@@ -157,6 +156,7 @@ export function CategoryManager({ familyId }: { familyId: string }) {
           familyId={familyId}
           type={type}
           category={editing === "new" ? null : editing}
+          role={role}
           topLevelOptions={topLevel}
           onClose={() => setEditing(null)}
           onSaved={load}
@@ -168,6 +168,8 @@ export function CategoryManager({ familyId }: { familyId: string }) {
 
 function CategoryRow({
   category,
+  editable,
+  hasChildren,
   isArchiving,
   onEdit,
   onArchiveStart,
@@ -175,6 +177,8 @@ function CategoryRow({
   onArchiveConfirm,
 }: {
   category: Category;
+  editable: boolean;
+  hasChildren: boolean;
   isArchiving: boolean;
   onEdit: () => void;
   onArchiveStart: () => void;
@@ -182,31 +186,46 @@ function CategoryRow({
   onArchiveConfirm: () => void;
 }) {
   return (
-    <div className="-mx-2 flex items-center justify-between gap-3 rounded-xl px-2 py-2.5 hover:bg-surface-sunken">
-      <button type="button" onClick={onEdit} className="flex min-w-0 flex-1 items-center gap-2.5 text-left">
-        <Dot color={category.color} />
-        <span className="truncate text-sm font-medium text-ink">{category.name}</span>
-        {category.ownerId && <Badge>Personal</Badge>}
-      </button>
-      <span className="flex shrink-0 items-center gap-1">
-        <IconButton label={`Edit ${category.name}`} onClick={onEdit}>
-          <Pencil size={14} />
-        </IconButton>
-        {isArchiving ? (
-          <span className="flex items-center gap-1.5">
-            <Button size="sm" variant="danger" onClick={onArchiveConfirm}>
-              Confirm
-            </Button>
-            <Button size="sm" variant="ghost" onClick={onArchiveCancel}>
-              Cancel
-            </Button>
+    <div className="-mx-2 rounded-xl px-2 py-2.5 hover:bg-surface-sunken">
+      <div className="flex items-center justify-between gap-3">
+        <button
+          type="button"
+          onClick={onEdit}
+          disabled={!editable}
+          title={editable ? undefined : "A family shared category: only a family admin can edit, delete or make it personal."}
+          className="flex min-w-0 flex-1 items-center gap-2.5 text-left disabled:cursor-default"
+        >
+          <Dot color={category.color} />
+          <span className="truncate text-sm font-medium text-ink">{category.name}</span>
+          <Badge tone={category.ownerId ? "neutral" : "brand"}>{category.ownerId ? "Personal" : "Family"}</Badge>
+        </button>
+        {editable && (
+          <span className="flex shrink-0 items-center gap-1">
+            <IconButton label={`Edit ${category.name}`} onClick={onEdit}>
+              <Pencil size={14} />
+            </IconButton>
+            {isArchiving ? (
+              <span className="flex items-center gap-1.5">
+                <Button size="sm" variant="danger" onClick={onArchiveConfirm}>
+                  Delete
+                </Button>
+                <Button size="sm" variant="ghost" onClick={onArchiveCancel}>
+                  Cancel
+                </Button>
+              </span>
+            ) : (
+              <IconButton label={`Delete ${category.name}`} tone="danger" onClick={onArchiveStart}>
+                <Trash2 size={14} />
+              </IconButton>
+            )}
           </span>
-        ) : (
-          <IconButton label={`Archive ${category.name}`} tone="danger" onClick={onArchiveStart}>
-            <Trash2 size={14} />
-          </IconButton>
         )}
-      </span>
+      </div>
+      {isArchiving && (
+        <p className="mt-1.5 pl-5 text-xs text-ink-muted">
+          Delete “{category.name}”?{hasChildren ? " Its subcategories are deleted too." : ""} Transactions already in it keep their history.
+        </p>
+      )}
     </div>
   );
 }
@@ -215,6 +234,7 @@ function CategoryFormModal({
   familyId,
   type,
   category,
+  role,
   topLevelOptions,
   onClose,
   onSaved,
@@ -222,6 +242,7 @@ function CategoryFormModal({
   familyId: string;
   type: CategoryType;
   category: Category | null;
+  role: FamilyRole;
   topLevelOptions: Category[];
   onClose: () => void;
   onSaved: () => void;
@@ -327,8 +348,14 @@ function CategoryFormModal({
         <Toggle
           checked={isCommon}
           onChange={setIsCommon}
-          label="Shared family category"
-          description="Visible to the whole family rather than just you. Turn off to make it personal."
+          label="Share with family"
+          description={
+            isCommon
+              ? "Everyone in the family can see and use it."
+              : role === "ADMIN"
+                ? "Personal — only you can see and use it."
+                : "Personal — only you can see and use it. Once shared, only a family admin can make it personal again."
+          }
         />
 
         <ErrorText>{error}</ErrorText>

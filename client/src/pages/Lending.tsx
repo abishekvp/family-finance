@@ -1,109 +1,156 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useOutletContext, useNavigate } from "react-router-dom";
+import { Link, useOutletContext } from "react-router-dom";
 import { ArrowDownLeft, ArrowUpRight, ChevronRight, HandCoins } from "lucide-react";
 import { api } from "../api/client";
-import type { Account } from "../api/types";
-import { Button, Card, EmptyState, SkeletonRows } from "../components/ui";
+import type { Account, Transaction } from "../api/types";
+import { Avatar, Badge, Button, Card, EmptyState, ErrorText, SkeletonRows } from "../components/ui";
 import { Money, StatTile } from "../components/figures";
 import type { LayoutContext } from "../components/Layout";
-import { isPerson } from "../lib/lending";
+import { useFamilyData } from "../context/FamilyDataContext";
+import { getErrorMessage } from "../api/errors";
+import { TransactionFormModal, type TransactionPreset } from "../components/transactions/TransactionFormModal";
+import { balanceStatus, isPerson, isSettled, lendingTotals, nextDue, trackLoans } from "../lib/lending";
 
-const EPSILON = 0.005;
-const isSettled = (b: number) => Math.abs(b) < EPSILON;
+type Due = { dueDate: Date | null; overdue: boolean };
 
 export function Lending() {
   const { family } = useOutletContext<LayoutContext>();
-  
-  const navigate = useNavigate();
-  const [people, setPeople] = useState<Account[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const { accounts, categories, isLoadingStatic, staticError, invalidateYear } = useFamilyData();
+  const canRecord = family.role !== "VIEWER";
+  const people = useMemo(() => accounts.filter(isPerson), [accounts]);
+  // Per person with money outstanding: the earliest return-by date, and whether any is overdue.
+  const [dues, setDues] = useState<Record<string, Due>>({});
+  const [duesError, setDuesError] = useState<string | null>(null);
+  const [preset, setPreset] = useState<TransactionPreset | null>(null);
+  const [version, setVersion] = useState(0);
+
+  const openIds = useMemo(
+    () =>
+      people
+        .filter((p) => !isSettled(p.balance ?? 0))
+        .map((p) => p.id)
+        .join(","),
+    [people]
+  );
 
   useEffect(() => {
-    api.get<Account[]>(`/families/${family.id}/accounts`)
-      .then(res => {
-        setPeople(res.data.filter(isPerson));
-        setIsLoading(false);
-      })
-      .catch(() => setIsLoading(false));
-  }, [family.id]);
-
-  const { owedToYou, youOwe } = useMemo(() => {
-    let owed = 0;
-    let owe = 0;
-    for (const p of people) {
-      const b = p.balance ?? 0;
-      if (b > 0) owed += b;
-      else if (b < 0) owe += Math.abs(b);
+    if (!openIds) {
+      setDues({});
+      return;
     }
-    return { owedToYou: owed, youOwe: owe };
-  }, [people]);
+    let cancelled = false;
+    const open = people.filter((p) => !isSettled(p.balance ?? 0));
+    Promise.all(
+      open.map((p) =>
+        api
+          .get<Transaction[]>(`/families/${family.id}/transactions`, { params: { accountId: p.id, limit: 5000 } })
+          .then((res) => [p.id, nextDue(trackLoans(res.data, p))] as const)
+      )
+    )
+      .then((entries) => {
+        if (!cancelled) setDues(Object.fromEntries(entries));
+      })
+      .catch((err) => !cancelled && setDuesError(getErrorMessage(err, "Unable to load return dates")));
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [family.id, openIds, version]);
 
+  const { owedToYou, youOwe } = lendingTotals(people);
   const open = people.filter((p) => !isSettled(p.balance ?? 0)).sort((a, b) => Math.abs(b.balance ?? 0) - Math.abs(a.balance ?? 0));
   const settled = people.filter((p) => isSettled(p.balance ?? 0));
 
   return (
-    <div className="space-y-6">
+    <div className="mx-auto max-w-3xl space-y-5">
       <div className="grid grid-cols-2 gap-4">
-        <StatTile label="Owed to you" value={owedToYou} currency={family.currency} tone="income" loading={isLoading} />
-        <StatTile label="You owe" value={youOwe} currency={family.currency} tone="expense" loading={isLoading} />
+        <StatTile label="Owed to you" value={owedToYou} currency={family.currency} accent="income" tone="income" loading={isLoadingStatic} />
+        <StatTile label="You owe" value={youOwe} currency={family.currency} accent="expense" tone="expense" loading={isLoadingStatic} />
       </div>
 
-      <div className="flex gap-4">
-        <Button icon={<ArrowUpRight size={16} />} onClick={() => navigate("/transaction-form?type=LENDING&kind=lent")}>Lend</Button>
-        <Button variant="secondary" icon={<ArrowDownLeft size={16} />} onClick={() => navigate("/transaction-form?type=LENDING&kind=borrowed")}>Borrow</Button>
-      </div>
-
-      {isLoading ? (
-        <Card><SkeletonRows rows={3} /></Card>
-      ) : people.length === 0 ? (
-        <EmptyState title="Nothing lent or borrowed" description="Track money you lend to friends or borrow from them." icon={<HandCoins size={20} />} />
-      ) : (
-        <div className="space-y-6">
-          {open.length > 0 && (
-            <div>
-              <h3 className="text-xs font-bold uppercase text-ink-subtle mb-2">Open</h3>
-              <Card className="!p-0">
-                <ul className="divide-y divide-line">
-                  {open.map(p => (
-                    <li key={p.id}>
-                      <Link to={`/lending/${p.id}`} className="flex items-center gap-4 p-4 hover:bg-surface-sunken">
-                        <div className="flex-1 min-w-0">
-                          <p className="font-bold text-ink truncate">{p.name}</p>
-                          <p className="text-xs text-ink-subtle mt-1">
-                            {(p.balance ?? 0) > 0 ? "Owes you" : "You owe"} {p.owner ? "" : "· Shared"}
-                          </p>
-                        </div>
-                        <Money amount={Math.abs(p.balance ?? 0)} currency={p.currency} tone={(p.balance ?? 0) > 0 ? "income" : "expense"} className="font-bold" />
-                        <ChevronRight size={16} className="text-ink-subtle" />
-                      </Link>
-                    </li>
-                  ))}
-                </ul>
-              </Card>
-            </div>
-          )}
-          {settled.length > 0 && (
-            <div>
-              <h3 className="text-xs font-bold uppercase text-ink-subtle mb-2">Settled up</h3>
-              <Card className="!p-0">
-                <ul className="divide-y divide-line">
-                  {settled.map(p => (
-                    <li key={p.id}>
-                      <Link to={`/lending/${p.id}`} className="flex items-center gap-4 p-4 hover:bg-surface-sunken">
-                        <div className="flex-1 min-w-0">
-                          <p className="font-bold text-ink truncate">{p.name}</p>
-                          <p className="text-xs text-ink-subtle mt-1">Settled up</p>
-                        </div>
-                        <ChevronRight size={16} className="text-ink-subtle" />
-                      </Link>
-                    </li>
-                  ))}
-                </ul>
-              </Card>
-            </div>
-          )}
+      {canRecord && (
+        <div className="grid grid-cols-2 gap-3 sm:flex">
+          <Button icon={<ArrowUpRight size={16} />} onClick={() => setPreset({ type: "LENDING", kind: "lent" })}>
+            Lend
+          </Button>
+          <Button variant="secondary" icon={<ArrowDownLeft size={16} />} onClick={() => setPreset({ type: "LENDING", kind: "borrowed" })}>
+            Borrow
+          </Button>
         </div>
       )}
+
+      <p className="text-xs leading-relaxed text-ink-subtle">
+        Money you lend or borrow moves between your accounts and the person, so it changes your balances but never counts as income or an
+        expense.
+      </p>
+
+      <ErrorText>{staticError || duesError}</ErrorText>
+
+      {isLoadingStatic ? (
+        <Card>
+          <SkeletonRows rows={3} />
+        </Card>
+      ) : people.length === 0 ? (
+        <EmptyState
+          title="Nothing lent or borrowed"
+          description="Track money you lend to friends or borrow from them, and what's been paid back."
+          icon={<HandCoins size={20} />}
+        />
+      ) : (
+        <>
+          {open.length > 0 && <PeopleList title="Open" people={open} dues={dues} />}
+          {settled.length > 0 && <PeopleList title="Settled up" people={settled} dues={dues} />}
+        </>
+      )}
+
+      {preset && (
+        <TransactionFormModal
+          familyId={family.id}
+          accounts={accounts}
+          categories={categories}
+          preset={preset}
+          onClose={() => setPreset(null)}
+          onSaved={(saved) => {
+            invalidateYear(new Date(saved.date).getFullYear());
+            setVersion((v) => v + 1);
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+function PeopleList({ title, people, dues }: { title: string; people: Account[]; dues: Record<string, Due> }) {
+  return (
+    <section>
+      <h3 className="mb-2 px-0.5 text-xs font-bold uppercase tracking-wide text-ink-subtle">{title}</h3>
+      <Card padded={false}>
+        <ul className="divide-y divide-line">
+          {people.map((p) => {
+            const balance = p.balance ?? 0;
+            const settled = isSettled(balance);
+            const due = settled ? null : dues[p.id];
+            return (
+              <li key={p.id}>
+                <Link to={`/lending/${p.id}`} className="flex items-center gap-3 rounded-2xl p-4 transition hover:bg-surface-sunken">
+                  <Avatar name={p.name} size={38} />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold text-ink">{p.name}</p>
+                    <p className="mt-0.5 truncate text-xs text-ink-subtle">
+                      {balanceStatus(balance)}
+                      {p.owner ? "" : " · Shared"}
+                      {due?.dueDate && !due.overdue ? ` · Return by ${due.dueDate.toLocaleDateString(undefined, { day: "numeric", month: "short" })}` : ""}
+                    </p>
+                  </div>
+                  {due?.overdue && <Badge tone="expense">Overdue</Badge>}
+                  {!settled && <Money amount={Math.abs(balance)} currency={p.currency} tone={balance > 0 ? "income" : "expense"} className="text-sm font-bold" />}
+                  <ChevronRight size={16} className="shrink-0 text-ink-subtle" />
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+      </Card>
+    </section>
   );
 }

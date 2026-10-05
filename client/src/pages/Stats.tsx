@@ -1,12 +1,13 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useOutletContext } from "react-router-dom";
 import { addMonths, addYears, format, subMonths, subYears } from "date-fns";
 import { ArrowDownRight, ArrowUpRight, ChevronLeft, ChevronRight, PieChart as PieChartIcon } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
-import { Button, Card, Dot, EmptyState, ErrorText, ProgressBar, Segmented, SkeletonRows } from "../components/ui";
+import { Button, Card, Dot, EmptyState, ErrorText, ProgressBar, Segmented, SkeletonRows, cn } from "../components/ui";
 import { Money } from "../components/figures";
 import type { LayoutContext } from "../components/Layout";
-import type { Transaction } from "../api/types";
+import type { Budget, Transaction } from "../api/types";
+import { api } from "../api/client";
 import { monthRange, yearRange } from "../lib/dateUtils";
 import { formatPercent } from "../lib/format";
 import { CategoryPie, type CategorySlice } from "../components/stats/CategoryPie";
@@ -54,6 +55,25 @@ export function Stats() {
   const { data: previousYearTransactions, isLoading: isLoadingPreviousYear } = useYearTransactions(previousYear);
 
   const isLoading = isLoadingStatic || isLoadingYear || isLoadingPreviousYear;
+
+  // The period's budgets, for "overall money used" against what was planned.
+  const [budgetTotal, setBudgetTotal] = useState(0);
+  const anchorMonth = anchor.getMonth() + 1;
+  useEffect(() => {
+    if (metric !== "Expenses") {
+      setBudgetTotal(0);
+      return;
+    }
+    let cancelled = false;
+    const params = period === "Monthly" ? { year, month: anchorMonth } : { year, period: "ANNUAL" };
+    api
+      .get<Budget[]>(`/families/${family.id}/budgets`, { params: { ...params, tzOffset: new Date().getTimezoneOffset() } })
+      .then((res) => !cancelled && setBudgetTotal(res.data.reduce((sum, b) => sum + b.amount, 0)))
+      .catch(() => !cancelled && setBudgetTotal(0));
+    return () => {
+      cancelled = true;
+    };
+  }, [family.id, metric, period, year, anchorMonth]);
 
   const transactions = useMemo(
     () => inRange(yearTransactions, range.from, range.to).filter((t) => t.type === type),
@@ -155,6 +175,15 @@ export function Stats() {
           />
         ) : (
           <div className="space-y-6">
+            <MoneyUsed
+              slices={slices}
+              total={total}
+              budgetTotal={metric === "Expenses" ? budgetTotal : 0}
+              currency={family.currency}
+              title={metric === "Expenses" ? "Overall money used" : "Overall money earned"}
+              hint={metric === "Expenses" ? "Set budgets to see this against what you planned." : "Each colour is a category."}
+            />
+
             <div className="flex flex-col items-center gap-4 sm:flex-row sm:items-center sm:justify-around">
               <CategoryPie slices={slices} currency={family.currency} metricLabel={`Total ${metric.toLowerCase()}`} />
               {(delta !== 0 || previousTotal !== 0) && (
@@ -200,6 +229,65 @@ export function Stats() {
           </div>
         )}
       </Card>
+    </div>
+  );
+}
+
+/**
+ * One bar of everything used in the period, a coloured segment per category. With a budget the bar is
+ * the budget: the empty end is what's left, and spending past it fills the whole bar.
+ */
+function MoneyUsed({
+  slices,
+  total,
+  budgetTotal,
+  currency,
+  title,
+  hint,
+}: {
+  slices: CategorySlice[];
+  total: number;
+  budgetTotal: number;
+  currency: string;
+  title: string;
+  /** Shown under the bar when there's no budget to measure against. */
+  hint: string;
+}) {
+  const hasBudget = budgetTotal > 0;
+  const scale = Math.max(hasBudget ? budgetTotal : total, total, 1);
+  const over = hasBudget && total > budgetTotal;
+  const usedPct = hasBudget ? (total / budgetTotal) * 100 : 100;
+
+  return (
+    <div className="space-y-2.5 rounded-2xl bg-surface-sunken/60 p-4">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <p className="text-sm font-bold text-ink">{title}</p>
+        <p className="text-xs text-ink-muted">
+          <Money amount={total} currency={currency} className="text-sm font-bold text-ink" />
+          {hasBudget && (
+            <>
+              {" of "}
+              <Money amount={budgetTotal} currency={currency} /> budget
+            </>
+          )}
+        </p>
+      </div>
+      <div className="flex h-4 overflow-hidden rounded-lg bg-surface">
+        {slices.map((s) => (
+          <div key={s.key} title={s.name} className="h-full border-r border-surface last:border-r-0" style={{ width: `${(s.amount / scale) * 100}%`, backgroundColor: s.color }} />
+        ))}
+      </div>
+      {hasBudget ? (
+        <div className="flex justify-between text-xs font-semibold">
+          <span className={over ? "text-expense" : "text-ink-subtle"}>{usedPct.toFixed(0)}% of budget used</span>
+          <span className={cn(over ? "text-expense" : "text-income")}>
+            {over ? "Over by " : "Left "}
+            <Money amount={Math.abs(budgetTotal - total)} currency={currency} />
+          </span>
+        </div>
+      ) : (
+        <p className="text-xs text-ink-subtle">{hint}</p>
+      )}
     </div>
   );
 }

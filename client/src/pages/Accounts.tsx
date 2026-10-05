@@ -1,7 +1,8 @@
 import { useMemo, useState, type FormEvent } from "react";
-import { useOutletContext } from "react-router-dom";
+import { Link, useOutletContext } from "react-router-dom";
 import {
   Banknote,
+  ChevronRight,
   CreditCard,
   HandCoins,
   Landmark,
@@ -36,15 +37,18 @@ import { Money, StatTile } from "../components/figures";
 import type { LayoutContext } from "../components/Layout";
 import { ACCOUNT_TYPES } from "../api/types";
 import type { Account, AccountType } from "../api/types";
-import { humanizeEnum, safePercent } from "../lib/format";
+import { formatCurrency, humanizeEnum, safePercent } from "../lib/format";
 import { useFamilyData } from "../context/FamilyDataContext";
+import { isPerson as isPersonAccount, lendingTotals } from "../lib/lending";
+
+// People you lend to or borrow from are added from Lend & borrow, not here.
+const OWN_ACCOUNT_TYPES = ACCOUNT_TYPES.filter((t) => t !== "PERSON");
 
 const GROUPS: { title: string; types: AccountType[] }[] = [
   { title: "Cash", types: ["CASH"] },
   { title: "Accounts", types: ["BANK", "SAVINGS", "INVESTMENT"] },
   { title: "Card", types: ["CREDIT_CARD", "DEBIT_CARD"] },
   { title: "Loans", types: ["LOAN"] },
-  { title: "Lend & borrow", types: ["PERSON"] },
 ];
 
 const TYPE_ICONS: Record<AccountType, LucideIcon> = {
@@ -57,13 +61,6 @@ const TYPE_ICONS: Record<AccountType, LucideIcon> = {
   LOAN: Banknote,
   PERSON: HandCoins,
 };
-
-/** What a person's tab means: a positive balance is money they owe you, a negative one money you owe them. */
-function personStatus(balance: number) {
-  if (balance > 0) return "Owes you";
-  if (balance < 0) return "You owe";
-  return "Settled up";
-}
 
 export function Accounts() {
   const { family, scope } = useOutletContext<LayoutContext>();
@@ -93,6 +90,11 @@ export function Accounts() {
     }, 0);
     return { total, liabilities, assets: total + liabilities };
   }, [scopedAccounts]);
+
+  // Friends you lend to or borrow from live on the Lend & borrow page, not in the account list.
+  const ownAccounts = useMemo(() => scopedAccounts.filter((a) => !isPersonAccount(a)), [scopedAccounts]);
+  const people = useMemo(() => accounts.filter(isPersonAccount), [accounts]);
+  const lending = lendingTotals(people);
 
   async function handleArchive(accountId: string) {
     setArchiveError(null);
@@ -130,10 +132,10 @@ export function Accounts() {
         <Card>
           <SkeletonRows rows={4} />
         </Card>
-      ) : scopedAccounts.length === 0 ? (
+      ) : ownAccounts.length === 0 ? (
         <EmptyState
           title="No accounts yet"
-          description="Add your first account to start tracking balances."
+          description="Add a personal account, or a family one everyone can use."
           icon={<Wallet size={20} />}
           action={
             <Button size="sm" icon={<Plus size={15} />} onClick={() => setEditingAccount("new")}>
@@ -144,7 +146,7 @@ export function Accounts() {
       ) : (
         <div className="space-y-5">
           {GROUPS.map((group) => {
-            const groupAccounts = scopedAccounts.filter((a) => group.types.includes(a.type));
+            const groupAccounts = ownAccounts.filter((a) => group.types.includes(a.type));
             if (groupAccounts.length === 0) return null;
             const subtotal = groupAccounts.reduce((s, a) => s + (a.balance ?? 0), 0);
             return (
@@ -161,7 +163,6 @@ export function Accounts() {
                     const balance = account.balance ?? 0;
                     const creditLimit = account.creditLimit != null ? Number(account.creditLimit) : null;
                     const utilisation = account.type === "CREDIT_CARD" && creditLimit ? Math.max(0, -balance) : null;
-                    const isPerson = account.type === "PERSON";
                     return (
                       <li key={account.id} className="py-3">
                         <div className="flex items-center gap-3">
@@ -176,18 +177,16 @@ export function Accounts() {
                             <div className="min-w-0">
                               <p className="truncate text-sm font-semibold text-ink">{account.name}</p>
                               <p className="flex items-center gap-1.5 truncate text-xs text-ink-subtle">
-                                {isPerson ? personStatus(balance) : humanizeEnum(account.type)}
-                                <Badge tone={account.owner ? "neutral" : "brand"} className="normal-case">
-                                  {account.owner ? account.owner.name : "Shared"}
-                                </Badge>
+                                {humanizeEnum(account.type)}
+                                <Badge tone={account.owner ? "neutral" : "brand"}>{account.owner ? "Personal" : "Family"}</Badge>
                               </p>
                             </div>
                           </button>
                           <div className="flex shrink-0 items-center gap-2">
                             <Money
-                              amount={isPerson ? Math.abs(balance) : balance}
+                              amount={balance}
                               currency={account.currency}
-                              tone={balance < 0 ? "expense" : isPerson && balance > 0 ? "income" : undefined}
+                              tone={balance < 0 ? "expense" : undefined}
                               className="text-sm font-bold"
                             />
                             {isConfirming ? (
@@ -232,9 +231,27 @@ export function Accounts() {
         </div>
       )}
 
+      {!isLoading && people.length > 0 && (
+        <Link to="/lending" className="block">
+          <Card interactive className="flex items-center gap-3">
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-soft text-brand-600">
+              <HandCoins size={17} />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold text-ink">Lend &amp; borrow</p>
+              <p className="truncate text-xs text-ink-subtle">
+                {`${formatCurrency(lending.owedToYou, family.currency)} owed to you · ${formatCurrency(lending.youOwe, family.currency)} you owe`}
+              </p>
+            </div>
+            <ChevronRight size={17} className="text-ink-subtle" />
+          </Card>
+        </Link>
+      )}
+
       {editingAccount && (
         <AccountFormModal
           familyId={family.id}
+          familyCurrency={family.currency}
           account={editingAccount === "new" ? null : editingAccount}
           onClose={() => setEditingAccount(null)}
           onSaved={refreshAccounts}
@@ -246,11 +263,13 @@ export function Accounts() {
 
 function AccountFormModal({
   familyId,
+  familyCurrency,
   account,
   onClose,
   onSaved,
 }: {
   familyId: string;
+  familyCurrency: string;
   account: Account | null;
   onClose: () => void;
   onSaved: () => void;
@@ -259,7 +278,7 @@ function AccountFormModal({
   const [name, setName] = useState(account?.name ?? "");
   const [type, setType] = useState<AccountType>(account?.type ?? "BANK");
   const [isCommon, setIsCommon] = useState(account ? account.ownerId === null : false);
-  const [currency, setCurrency] = useState(account?.currency ?? "USD");
+  const [currency, setCurrency] = useState(account?.currency ?? familyCurrency);
   const [openingBalance, setOpeningBalance] = useState(String(account?.openingBalance ?? 0));
   const [creditLimit, setCreditLimit] = useState(account?.creditLimit != null ? String(account.creditLimit) : "");
   const [error, setError] = useState<string | null>(null);
@@ -274,6 +293,7 @@ function AccountFormModal({
         await api.patch(`/families/${familyId}/accounts/${account.id}`, {
           name,
           type,
+          ...(isCommon !== (account.ownerId === null) ? { isCommon } : {}),
           openingBalance: Number(openingBalance) || 0,
           ...(creditLimit ? { creditLimit: Number(creditLimit) } : {}),
         });
@@ -319,7 +339,7 @@ function AccountFormModal({
         <div>
           <Label>Type</Label>
           <div className="flex flex-wrap gap-2">
-            {ACCOUNT_TYPES.map((t) => {
+            {(type === "PERSON" ? ACCOUNT_TYPES : OWN_ACCOUNT_TYPES).map((t) => {
               const Icon = TYPE_ICONS[t];
               return (
                 <Chip key={t} type="button" selected={type === t} onClick={() => setType(t)}>
@@ -348,7 +368,6 @@ function AccountFormModal({
         </div>
 
         {!isEdit && (
-          <>
             <Field label="Currency">
               {(props) => (
                 <Input
@@ -361,14 +380,15 @@ function AccountFormModal({
                 />
               )}
             </Field>
-            <Toggle
-              checked={isCommon}
-              onChange={setIsCommon}
-              label="Shared family account"
-              description="Visible to the whole family rather than just you."
-            />
-          </>
         )}
+        <Toggle
+          checked={isCommon}
+          onChange={setIsCommon}
+          label="Family account"
+          description={
+            isCommon ? "Everyone in the family can see it and add to it. Only an admin can change it." : "Personal — only you can see it."
+          }
+        />
 
         <ErrorText>{error}</ErrorText>
       </form>
