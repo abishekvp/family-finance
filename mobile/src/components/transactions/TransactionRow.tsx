@@ -4,6 +4,7 @@ import type { Transaction } from "../../api/types";
 import { useTheme } from "../../context/ThemeContext";
 import { Money } from "../ui";
 import { initials } from "../../lib/format";
+import { isFamilyTransfer } from "../../lib/transactionTotals";
 
 function formatDate(dateStr: string) {
   return new Date(dateStr).toLocaleDateString(undefined, { month: "short", day: "numeric" });
@@ -34,8 +35,9 @@ export function TransactionRow({ transaction, onPress }: { transaction: Transact
   const { colors } = useTheme();
   const t = transaction;
   const isTransfer = t.type === "TRANSFER";
+  const fromFamily = isFamilyTransfer(t);
   const badgeColor = isTransfer ? colors.surfaceSunken : t.category?.color ?? colors.inkSubtle;
-  const description = t.payee || t.category?.name || (isTransfer ? "Transfer" : "Uncategorized");
+  const description = t.payee || t.category?.name || (isTransfer ? "Transfer" : fromFamily ? "Family transfer" : "Uncategorized");
   const displayAmount = t.type === "EXPENSE" ? -t.amount : t.amount;
 
   return (
@@ -69,6 +71,7 @@ export function TransactionRow({ transaction, onPress }: { transaction: Transact
         <Text style={{ color: colors.inkSubtle, fontSize: 12, marginTop: 2 }} numberOfLines={1}>
           {formatDate(t.date)} · {t.account.name}
           {isTransfer && t.transferToAccount ? ` → ${t.transferToAccount.name}` : ""}
+          {fromFamily ? (t.type === "INCOME" ? " · From family" : " · To family") : ""}
           {t.recurringId ? " · Repeating" : ""}
           {t.refundsId ? (t.type === "INCOME" ? " · Refund" : " · Returned") : ""}
           {!t.refundsId && t.isRefunded ? (isFullyRefunded(t) ? " · Refunded" : " · Part refunded") : ""}
@@ -77,7 +80,7 @@ export function TransactionRow({ transaction, onPress }: { transaction: Transact
       <Money
         amount={displayAmount}
         currency={t.account.currency}
-        tone={isTransfer ? undefined : t.type === "INCOME" ? "income" : "expense"}
+        tone={isTransfer || fromFamily ? undefined : t.type === "INCOME" ? "income" : "expense"}
         signed={!isTransfer}
         style={{ fontWeight: "800", fontSize: 14 }}
       />

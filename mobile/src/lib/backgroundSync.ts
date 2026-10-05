@@ -5,6 +5,7 @@ import { isSmsReaderAvailable } from "../../modules/sms-reader";
 import { runSmsSync } from "./smsImport";
 import { syncTransactions } from "./transactionStore";
 import { runRecurring } from "./recurring";
+import { refreshUncategorizedReminder } from "./uncategorizedReminder";
 
 export const BACKGROUND_SYNC_TASK = "family-finance-background-sync";
 
@@ -19,7 +20,7 @@ TaskManager.defineTask(BACKGROUND_SYNC_TASK, async ({ error }) => {
 
     const me = await api.get("/auth/me");
     const userId = me.data?.id as string | undefined;
-    const family = me.data?.families?.[0] as { id: string } | undefined;
+    const family = me.data?.families?.[0] as { id: string; currency: string } | undefined;
     if (!userId || !family) return BackgroundTask.BackgroundTaskResult.Failed;
 
     // Recurring payments and the SMS catch-up scan never throw; the transaction sync might, so it's
@@ -29,6 +30,8 @@ TaskManager.defineTask(BACKGROUND_SYNC_TASK, async ({ error }) => {
     if (isSmsReaderAvailable()) await runSmsSync(family.id);
 
     await syncTransactions(userId, family.id, { force: true });
+    // Tonight's "needs a category" reminder, from what just synced (edits on the web included).
+    await refreshUncategorizedReminder(userId, family.id, family.currency);
     return BackgroundTask.BackgroundTaskResult.Success;
   } catch {
     return BackgroundTask.BackgroundTaskResult.Failed;

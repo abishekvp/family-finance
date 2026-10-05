@@ -7,6 +7,7 @@ import { useTheme } from "../../src/context/ThemeContext";
 import { SecurityGate } from "../../src/components/SecurityGate";
 import { TodayWidgetSync } from "../../src/components/TodayWidgetSync";
 import { RecurringSync } from "../../src/components/RecurringSync";
+import { UncategorizedReminderSync } from "../../src/components/UncategorizedReminderSync";
 import { registerBackgroundSync } from "../../src/lib/backgroundSync";
 import { ScreenErrorBoundary } from "../../src/components/ScreenFallbacks";
 
@@ -36,6 +37,7 @@ export default function AppLayout() {
         <SmsImportProvider>
           {hasFamily && <TodayWidgetSync />}
           {hasFamily && <RecurringSync />}
+          {hasFamily && <UncategorizedReminderSync />}
           <Stack
             screenOptions={{
               headerShown: false,
@@ -58,6 +60,8 @@ export default function AppLayout() {
               <Stack.Screen name="lending" options={{ headerShown: true, title: "Lend & borrow" }} />
               <Stack.Screen name="lending-person" options={{ headerShown: true, title: "Lend & borrow" }} />
               <Stack.Screen name="recurring" options={{ headerShown: true, title: "Repeating payments" }} />
+              <Stack.Screen name="payee-rules" options={{ headerShown: true, title: "Payee rules" }} />
+              <Stack.Screen name="uncategorized" options={{ headerShown: true, title: "Uncategorised" }} />
               <Stack.Screen name="recurring-form" options={{ presentation: "modal", headerShown: true, title: "Repeating payment" }} />
               <Stack.Screen
                 name="transaction-form"

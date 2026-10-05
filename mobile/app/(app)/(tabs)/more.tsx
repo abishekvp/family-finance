@@ -1,6 +1,6 @@
 import { Platform, Pressable, ScrollView, Text, View } from "react-native";
 import { useRouter } from "expo-router";
-import { ChevronRight, HandCoins, LogOut, type LucideIcon, MessageSquareText, Repeat, PiggyBank, Settings as SettingsIcon, ShieldCheck, Tag, Target, Users } from "lucide-react-native";
+import { ChevronRight, HandCoins, LogOut, type LucideIcon, MessageSquareText, Repeat, PiggyBank, Settings as SettingsIcon, ShieldCheck, Tag, Target, Users, Wand2 } from "lucide-react-native";
 import { useAuth } from "../../../src/context/AuthContext";
 import { useTheme } from "../../../src/context/ThemeContext";
 import { Avatar, Button, Card } from "../../../src/components/ui";
@@ -12,6 +12,7 @@ const MENU_ITEMS: { path: string; label: string; hint: string; icon: LucideIcon 
   { path: "/account", label: "Account & security", hint: "Profile, email, passkeys, app lock, encryption", icon: ShieldCheck },
   { path: "/settings", label: "Settings", hint: "Currency, defaults, and preferences", icon: SettingsIcon },
   { path: "/categories", label: "Categories", hint: "Manage income and expense categories", icon: Tag },
+  { path: "/payee-rules", label: "Payee rules", hint: "File transactions automatically by payee", icon: Wand2 },
   { path: "/budgets", label: "Budgets", hint: "Monthly and yearly budgets", icon: PiggyBank },
   { path: "/recurring", label: "Repeating payments", hint: "Salaries, rent and subscriptions", icon: Repeat },
   { path: "/goals", label: "Goals", hint: "Save toward a target, together", icon: Target },

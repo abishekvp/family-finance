@@ -2,6 +2,8 @@ import { api, refreshAccessToken } from "../api/client";
 import { isSmsReaderAvailable } from "../../modules/sms-reader";
 import { runSmsSync } from "../lib/smsImport";
 import { refreshTodayWidget } from "../lib/todayWidget";
+import { syncTransactions } from "../lib/transactionStore";
+import { refreshUncategorizedReminder } from "../lib/uncategorizedReminder";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -34,6 +36,11 @@ export default async function smsHeadlessTask(): Promise<void> {
       if ((result.scanned ?? 0) > 0) {
         // Payee names can't be read without the vault, which is locked while the app is closed.
         if (result.imported > 0 && !family.encryptionEnabled) refreshTodayWidget(family.id, family.currency);
+        if (result.imported > 0 && me.data?.id) {
+          // An alert with no matching payee rule lands uncategorised: count it in tonight's reminder.
+          await syncTransactions(me.data.id, family.id, { force: true }).catch(() => undefined);
+          await refreshUncategorizedReminder(me.data.id, family.id, family.currency);
+        }
         return;
       }
       await sleep(INBOX_RETRY_MS);

@@ -56,6 +56,10 @@ function countsInPeriod(period: BudgetPeriod, frequency: RecurringFrequency) {
   return period === BudgetPeriod.ANNUAL || frequency !== RecurringFrequency.YEARLY;
 }
 
+// Tag on an income or expense that is money to or from family: it moves the account's balance but
+// isn't income or spending, and nobody owes it back (unlike lend & borrow).
+const FAMILY_TRANSFER_TAG = "family-transfer";
+
 async function computeSpent(familyId: string, requesterId: string, categoryIds: string[], period: BudgetPeriod, start: Date, end: Date) {
   const expenses: Prisma.TransactionWhereInput = {
     familyId,
@@ -65,6 +69,8 @@ async function computeSpent(familyId: string, requesterId: string, categoryIds: 
     ...COUNTED,
     // Money handed back (an expense that returns an income) isn't spending.
     refundsId: null,
+    // Nor is money given to family (it's marked so in the app; see FAMILY_TRANSFER_TAG).
+    NOT: { tags: { has: FAMILY_TRANSFER_TAG } },
     date: { gte: start, lt: end },
     account: { OR: [{ ownerId: null }, { ownerId: requesterId }] },
     ...(period === BudgetPeriod.ANNUAL

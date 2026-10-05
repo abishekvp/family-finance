@@ -1,9 +1,10 @@
 import * as SecureStore from "expo-secure-store";
 import { api } from "../api/client";
-import type { Transaction } from "../api/types";
+import type { Category, PayeeRule, Transaction } from "../api/types";
 import { getErrorMessage } from "../api/errors";
 import { hasSmsPermission, readInbox, readInboxBefore, type InboxSms } from "../../modules/sms-reader";
 import { parseTransactionSms, type ParsedSms } from "./smsParser";
+import { fetchPayeeRules, learnMappings, matchCategory, tagsWithTarget, type LearnedMapping } from "./payeeRules";
 
 /** A transaction already recorded from SMS, kept to spot the same spend alerted twice. */
 interface RecentImport {
@@ -155,24 +156,21 @@ function isDuplicate(recent: RecentImport[], candidate: RecentImport) {
   );
 }
 
-/**
- * Payee → category learned from the family's recent history, so once a user files "SWIGGY"
- * under Food, later Swiggy alerts land there too.
- */
-async function loadCategoryHints(familyId: string) {
-  const map = new Map<string, string>();
-  try {
-    const res = await api.get<Transaction[]>(`/families/${familyId}/transactions`, { params: { limit: 500 } });
-    for (const t of res.data) {
-      if (!t.payee || !t.categoryId || t.type === "TRANSFER") continue;
-      const key = `${t.type}|${t.payee.trim().toLowerCase()}`;
-      // Newest first from the server, so the latest categorisation wins.
-      if (!map.has(key)) map.set(key, t.categoryId);
-    }
-  } catch {
-    // Best effort — uncategorised is fine.
-  }
-  return map;
+/** Payee → category (or family transfer): the family's saved payee rules first, then what its history says (see payeeRules). */
+interface CategoryHints {
+  rules: PayeeRule[];
+  learned: Map<string, LearnedMapping>;
+}
+
+async function loadCategoryHints(familyId: string): Promise<CategoryHints> {
+  // Each part is best effort — uncategorised is fine.
+  const [rules, transactions, categories] = await Promise.all([
+    fetchPayeeRules(familyId).catch(() => [] as PayeeRule[]),
+    api.get<Transaction[]>(`/families/${familyId}/transactions`, { params: { limit: 500 } }).then((r) => r.data, () => [] as Transaction[]),
+    api.get<Category[]>(`/families/${familyId}/categories`).then((r) => r.data, () => undefined),
+  ]);
+  // Without the live category list a learned category might be archived, and the save would fail.
+  return { rules, learned: categories ? learnMappings(transactions, categories) : new Map() };
 }
 
 /** State threaded through one scan, message by message. */
@@ -181,7 +179,7 @@ interface ScanState {
   /** Fingerprints to check duplicates against. */
   recent: RecentImport[];
   imported: number;
-  categoryHints: Map<string, string> | null;
+  categoryHints: CategoryHints | null;
 }
 
 /** Records `sms` as a transaction if it is a bank alert that hasn't been recorded already. */
@@ -199,17 +197,17 @@ async function handleMessage(familyId: string, state: ScanState, sms: InboxSms):
 
   categoryHints ??= await loadCategoryHints(familyId);
   const accountId = (parsed.accountHint && settings.accountMap[parsed.accountHint]) || settings.defaultAccountId;
-  const categoryId = parsed.payee ? categoryHints.get(`${parsed.type}|${parsed.payee.toLowerCase()}`) ?? null : null;
+  const match = matchCategory(parsed.payee, parsed.type, categoryHints.rules, categoryHints.learned);
 
   await api.post(`/families/${familyId}/transactions`, {
     accountId,
     type: parsed.type,
     amount: parsed.amount,
     date: new Date(sms.date).toISOString(),
-    categoryId,
+    categoryId: match?.categoryId ?? null,
     payee: parsed.payee,
     notes: `Recorded from SMS (${sms.address})`,
-    tags: ["sms"],
+    tags: tagsWithTarget(["sms"], match?.familyTransfer ?? false),
   });
 
   return {

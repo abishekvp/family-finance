@@ -85,8 +85,9 @@ export function DailyView({
         let income = 0;
         let expense = 0;
         for (const t of dayTransactions) {
-          if (t.type === "INCOME") income += t.amount;
-          else if (t.type === "EXPENSE") expense += t.amount;
+          const counted = totalsContribution(t);
+          income += counted.income;
+          expense += counted.expense;
         }
         return (
           <Fragment key={key}>

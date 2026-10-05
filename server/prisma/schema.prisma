@@ -119,6 +119,7 @@ model User {
   vault                UserVault?
   familyKeys           FamilyKey[]
   recurring            RecurringTransaction[] @relation("RecurringOwner")
+  payeeRules           PayeeRule[]            @relation("PayeeRuleCreator")
 }
 
 model OAuthIdentity {
@@ -246,6 +247,7 @@ model Family {
   auditLogs    AuditLog[]
   familyKeys   FamilyKey[]
   recurring    RecurringTransaction[]
+  payeeRules   PayeeRule[]
 }
 
 model FamilyMembership {
@@ -330,6 +332,7 @@ model Category {
   transactions Transaction[]
   budgets      Budget[]
   recurring    RecurringTransaction[]
+  payeeRules   PayeeRule[]
 
   @@index([familyId])
   @@index([parentId])
@@ -448,6 +451,30 @@ model RecurringTransaction {
   transactions Transaction[]
 
   @@index([familyId, nextDate])
+}
+
+// "Payees like this go in that category": a transaction whose payee contains `payee` (ignoring case,
+// from the start of a word) is filed under `categoryId` — and/or marked a family transfer — when it's
+// recorded from SMS or typed into the transaction form. Rules are applied on the device, so `payee`
+// is client-side ciphertext when the family uses end-to-end encryption, like a transaction's.
+model PayeeRule {
+  id             String          @id @default(cuid())
+  familyId       String
+  createdById    String?
+  payee          String
+  type           TransactionType
+  categoryId     String?
+  // Money to or from family that isn't income or spending (see FAMILY_TRANSFER_TAG).
+  familyTransfer Boolean         @default(false)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  family    Family    @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  createdBy User?     @relation("PayeeRuleCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  category  Category? @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@index([familyId])
+  @@index([categoryId])
 }
 
 model Goal {

@@ -150,3 +150,19 @@ export interface Goal {
   remaining: number;
   progress: number;
 }
+
+/** "Payees like this go in that category" — see lib/payeeRules. */
+export interface PayeeRule {
+  id: string;
+  familyId: string;
+  createdById: string | null;
+  /** Matched against a transaction's payee, ignoring case, from the start of any word. */
+  payee: string;
+  type: "INCOME" | "EXPENSE";
+  categoryId: string | null;
+  /** Mark matches as money to or from family: not income or spending (see FAMILY_TRANSFER_TAG). */
+  familyTransfer: boolean;
+  createdAt: string;
+  updatedAt: string;
+  category: { id: string; name: string; color: string; icon: string; type: CategoryType } | null;
+}

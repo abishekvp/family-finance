@@ -65,8 +65,9 @@ export function TotalView({
     let income = 0;
     let expense = 0;
     for (const t of transactions) {
-      if (t.type === "INCOME") income += t.amount;
-      else if (t.type === "EXPENSE") expense += t.amount;
+      const counted = totalsContribution(t);
+      income += counted.income;
+      expense += counted.expense;
     }
     return { income, expense, net: income - expense };
   }, [transactions]);

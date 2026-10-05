@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Alert, ScrollView, Text, View } from "react-native";
-import { CalendarCog, Coins, RefreshCw, Smartphone, Trash2 } from "lucide-react-native";
+import { Bell, CalendarCog, Coins, RefreshCw, Smartphone, Trash2 } from "lucide-react-native";
+import { useRouter } from "expo-router";
 import { api } from "../../src/api/client";
 import { useAuth } from "../../src/context/AuthContext";
 import { usePrefs, type LandingView, type WeekStart } from "../../src/context/PrefsContext";
@@ -9,6 +10,16 @@ import { useAppUpdate } from "../../src/context/UpdateContext";
 import { currentAppVersion } from "../../src/lib/appUpdate";
 import { getErrorMessage } from "../../src/api/errors";
 import { syncTransactions } from "../../src/lib/transactionStore";
+import { href } from "../../src/lib/nav";
+import {
+  DEFAULT_REMINDER_SETTINGS,
+  ensureReminderPermission,
+  formatReminderTime,
+  loadReminderSettings,
+  refreshUncategorizedReminder,
+  saveReminderSettings,
+  type ReminderSettings,
+} from "../../src/lib/uncategorizedReminder";
 import { Button, Card, CardHeader, Chip, ErrorText, Field, Input, SuccessText, Toggle } from "../../src/components/ui";
 
 const CURRENCIES = ["USD", "EUR", "GBP", "INR", "CAD", "AUD"];
@@ -103,12 +114,74 @@ export default function Settings() {
         </View>
       </Card>
 
+      <ReminderCard />
+
       <BinCard />
       {isAdmin && <BulkDeleteCard familyId={family.id} />}
       {isAdmin && <ResetDataCard />}
 
       <AppUpdateCard />
     </ScrollView>
+  );
+}
+
+const REMINDER_HOURS = [19, 20, 21, 22, 23];
+
+/** The end-of-day "needs a category" notification. */
+function ReminderCard() {
+  const { user } = useAuth();
+  const { colors } = useTheme();
+  const router = useRouter();
+  const family = user!.families[0];
+  const [settings, setSettings] = useState<ReminderSettings>(DEFAULT_REMINDER_SETTINGS);
+  const [blocked, setBlocked] = useState(false);
+
+  useEffect(() => {
+    loadReminderSettings().then(setSettings);
+    ensureReminderPermission().then((granted) => setBlocked(!granted));
+  }, []);
+
+  async function update(patch: Partial<ReminderSettings>) {
+    const next = { ...settings, ...patch };
+    setSettings(next);
+    await saveReminderSettings(next);
+    if (next.enabled) setBlocked(!(await ensureReminderPermission({ ask: true, force: true })));
+    await refreshUncategorizedReminder(user!.id, family.id, family.currency);
+  }
+
+  return (
+    <Card>
+      <CardHeader
+        title="End-of-day reminder"
+        subtitle="A notification when today's transactions still need a category."
+        icon={<Bell size={16} color={colors.brand600} />}
+        action={<Toggle value={settings.enabled} onChange={(enabled) => update({ enabled })} />}
+      />
+      <View style={{ gap: 12 }}>
+        {settings.enabled && (
+          <Field label="Remind me at">
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+              {REMINDER_HOURS.map((hour) => (
+                <Chip
+                  key={hour}
+                  label={formatReminderTime({ hour, minute: 0 })}
+                  selected={settings.hour === hour && settings.minute === 0}
+                  onPress={() => update({ hour, minute: 0 })}
+                />
+              ))}
+            </View>
+          </Field>
+        )}
+        {settings.enabled && blocked && (
+          <ErrorText>Notifications are off for Family Finance. Turn them on in your phone's settings to get this reminder.</ErrorText>
+        )}
+        <Text style={{ color: colors.inkSubtle, fontSize: 12 }}>
+          Only entries you recorded today are counted, and nothing is sent when they're all filed. Payee rules file most SMS
+          transactions on their own.
+        </Text>
+        <Button title="Review uncategorised" variant="secondary" onPress={() => router.push(href("/uncategorized"))} />
+      </View>
+    </Card>
   );
 }
 

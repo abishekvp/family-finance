@@ -1,6 +1,7 @@
 import { ArrowRightLeft } from "lucide-react";
 import type { Transaction } from "../../api/types";
 import { Money } from "../figures";
+import { isFamilyTransfer } from "../../lib/transactionTotals";
 
 export function TransactionRow({
   transaction,
@@ -16,7 +17,8 @@ export function TransactionRow({
 
   const isTransfer = transaction.type === "TRANSFER";
   const isExpense = transaction.type === "EXPENSE";
-  const tone = transaction.type === "INCOME" ? "income" : isExpense ? "expense" : undefined;
+  // Family money isn't income or spending, so it reads neutral like a transfer.
+  const tone = isFamilyTransfer(transaction) ? undefined : transaction.type === "INCOME" ? "income" : isExpense ? "expense" : undefined;
   const displayAmount = isExpense ? -transaction.amount : transaction.amount;
 
   return (
@@ -42,6 +44,11 @@ export function TransactionRow({
             {transaction.isRefunded && !transaction.refundsId && (
               <span className="shrink-0 rounded-full bg-surface-sunken px-1.5 py-0.5 text-2xs font-semibold text-ink-subtle">
                 {(transaction.refundedAmount ?? transaction.amount) >= transaction.amount - 0.005 ? "Refunded" : "Part refunded"}
+              </span>
+            )}
+            {isFamilyTransfer(transaction) && (
+              <span className="shrink-0 rounded-full bg-surface-sunken px-1.5 py-0.5 text-2xs font-semibold text-ink-subtle">
+                {transaction.type === "INCOME" ? "From family" : "To family"}
               </span>
             )}
             {transaction.refundsId && (

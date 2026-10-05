@@ -13,6 +13,7 @@ import { budgetsRouter } from "./budgets";
 import { goalsRouter } from "./goals";
 import { encryptionRouter } from "./encryption";
 import { recurringRouter } from "./recurring";
+import { payeeRulesRouter } from "./payeeRules";
 
 export const familiesRouter = Router();
 
@@ -26,6 +27,7 @@ familiesRouter.use("/:familyId/budgets", budgetsRouter);
 familiesRouter.use("/:familyId/goals", goalsRouter);
 familiesRouter.use("/:familyId/encryption", encryptionRouter);
 familiesRouter.use("/:familyId/recurring", recurringRouter);
+familiesRouter.use("/:familyId/payee-rules", payeeRulesRouter);
 
 const createFamilySchema = z.object({
   name: z.string().trim().min(1, "Family name is required").max(100),

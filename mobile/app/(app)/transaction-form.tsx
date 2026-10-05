@@ -1,10 +1,10 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ScrollView, Text, View } from "react-native";
 import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
-import { ArrowRight, Plus, Repeat, Trash2 } from "lucide-react-native";
+import { ArrowRight, Home, Plus, Repeat, Trash2 } from "lucide-react-native";
 import { api } from "../../src/api/client";
 import { fetchWithCache } from "../../src/lib/cache";
-import type { Account, Budget, Category, RecurringFrequency, Transaction, TransactionType } from "../../src/api/types";
+import type { Account, Budget, Category, PayeeRule, RecurringFrequency, Transaction, TransactionType } from "../../src/api/types";
 import { useAuth } from "../../src/context/AuthContext";
 import { useTheme } from "../../src/context/ThemeContext";
 import { ClientError, getErrorMessage } from "../../src/api/errors";
@@ -38,6 +38,19 @@ import { useTransactions } from "../../src/lib/transactionStore";
 import { FREQUENCIES, describeSchedule } from "../../src/lib/recurring";
 import { moveToBackground } from "../../modules/home-widgets";
 import { budgetName } from "../../src/lib/budgets";
+import { isFamilyTransfer } from "../../src/lib/transactionTotals";
+import {
+  createPayeeRule,
+  describeTarget,
+  fetchPayeeRules,
+  findRule,
+  learnMappings,
+  matchCategory,
+  normalizePayee,
+  seriesKey,
+  tagsWithTarget,
+  updatePayeeRule,
+} from "../../src/lib/payeeRules";
 
 /** "LENDING" is saved as a transfer between one of your accounts and a person. */
 type FormType = TransactionType | "LENDING";
@@ -48,6 +61,8 @@ const TYPE_OPTIONS: { value: FormType; label: string }[] = [
   { value: "TRANSFER", label: "Transfer" },
   { value: "LENDING", label: "Lend/Borrow" },
 ];
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 function todayIso() {
   return localDateInput(new Date());
@@ -139,6 +154,11 @@ export default function TransactionForm() {
   const [type, setType] = useState<FormType>(initial?.type ?? parseType(params.type) ?? "EXPENSE");
   const [accountId, setAccountId] = useState(initial?.accountId ?? params.accountId ?? "");
   const [categoryId, setCategoryId] = useState<string | null>(initial?.categoryId ?? null);
+  // Money from or to family: moves the balance, but isn't income or spending and isn't owed back.
+  const [familyTransfer, setFamilyTransfer] = useState(initial ? isFamilyTransfer(initial) : false);
+  // Once the user picks a category (or family transfer) themselves, the payee stops filling it in.
+  const [targetTouched, setTargetTouched] = useState(!!initial && (!!initial.categoryId || isFamilyTransfer(initial)));
+  const [rememberPayee, setRememberPayee] = useState(false);
   const [transferToAccountId, setTransferToAccountId] = useState<string | null>(initial?.transferToAccountId ?? null);
   const [amount, setAmount] = useState(initial ? String(initial.amount) : params.amount ?? "");
   // Local day, not initial.date.slice(0, 10): that is the UTC day, and re-saving it would shift
@@ -239,6 +259,68 @@ export default function TransactionForm() {
   // New categories are income or expense; for Lend/Borrow, by which way the money went.
   const newCategoryType = isLending ? (moneyGoesOut(kind) ? "EXPENSE" : "INCOME") : type === "INCOME" ? "INCOME" : "EXPENSE";
 
+  // Payee → category: the family's payee rules, then how this payee was filed before.
+  const [payeeRules, setPayeeRules] = useState<PayeeRule[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    const show = (rules: PayeeRule[]) => !cancelled && setPayeeRules(rules);
+    fetchPayeeRules(family.id, show).then(show, () => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [family.id]);
+  const historyFilter = useMemo(() => ({ from: new Date(Date.now() - 365 * DAY_MS) }), []);
+  const { transactions: history } = useTransactions(user!.id, family.id, historyFilter);
+  const learned = useMemo(() => learnMappings(history.filter((t) => t.id !== initial?.id), categories), [history, categories, initial?.id]);
+  const filedByPayee = type === "INCOME" || type === "EXPENSE";
+  const payeeMatch = useMemo(
+    () => (filedByPayee ? matchCategory(payee, type, payeeRules, learned) : null),
+    [filedByPayee, payee, type, payeeRules, learned]
+  );
+  const autoFilled = useRef(false);
+  useEffect(() => {
+    if (targetTouched) return;
+    if (payeeMatch) {
+      const category = payeeMatch.categoryId ? categories.find((c) => c.id === payeeMatch.categoryId && c.type === type) : null;
+      setCategoryId(category?.id ?? null);
+      setFamilyTransfer(payeeMatch.familyTransfer);
+      autoFilled.current = true;
+    } else if (autoFilled.current) {
+      // The payee changed to one with no match: take back what the last one filled in.
+      setCategoryId(null);
+      setFamilyTransfer(false);
+      autoFilled.current = false;
+    }
+  }, [payeeMatch, targetTouched, categories, type]);
+
+  function pickCategory(id: string | null) {
+    setTargetTouched(true);
+    setCategoryId(id);
+  }
+  function toggleFamilyTransfer() {
+    setTargetTouched(true);
+    setFamilyTransfer((v) => !v);
+  }
+
+  // "Remember this": files later entries from this payee the same way, through a payee rule.
+  const rememberPattern = seriesKey(payee) || normalizePayee(payee);
+  const existingRule = filedByPayee && payee.trim() ? findRule(payeeRules, payee, type as "INCOME" | "EXPENSE") : null;
+  const canRemember =
+    filedByPayee &&
+    family.role !== "VIEWER" &&
+    rememberPattern.length >= 2 &&
+    (!!categoryId || familyTransfer) &&
+    !(existingRule && existingRule.categoryId === categoryId && existingRule.familyTransfer === familyTransfer);
+  // The same pattern saved before is changed rather than doubled.
+  const sameRule = existingRule && normalizePayee(existingRule.payee) === rememberPattern ? existingRule : null;
+  const rememberTarget = describeTarget({ category: categories.find((c) => c.id === categoryId) ?? null, familyTransfer });
+
+  async function savePayeeRule() {
+    const input = { payee: rememberPattern, type: type as "INCOME" | "EXPENSE", categoryId, familyTransfer };
+    const saved = sameRule ? await updatePayeeRule(family.id, sameRule.id, input) : await createPayeeRule(family.id, input);
+    setPayeeRules((list) => [...list.filter((r) => r.id !== saved.id), saved]);
+  }
+
   const amountValue = Number(amount);
   const canSubmit =
     !!accountId &&
@@ -264,7 +346,8 @@ export default function TransactionForm() {
   const dateDay = parseDay(date);
   const budgetYear = dateDay?.getFullYear();
   const budgetMonth = dateDay ? dateDay.getMonth() + 1 : undefined;
-  const wantsBudgets = type === "EXPENSE";
+  // Money sent to family isn't spending, so it doesn't come out of a budget.
+  const wantsBudgets = type === "EXPENSE" && !familyTransfer;
   useEffect(() => {
     if (!wantsBudgets || !budgetYear || !budgetMonth) return;
     let cancelled = false;
@@ -388,7 +471,7 @@ export default function TransactionForm() {
         notes: notes.trim() || null,
         dueDate: due,
         repaysId: payloadRepaysId,
-        tags: [...withoutKindTag(initial?.tags ?? []), kindTag(kind)],
+        tags: [...tagsWithTarget(withoutKindTag(initial?.tags ?? []), false), kindTag(kind)],
       };
     }
 
@@ -403,7 +486,8 @@ export default function TransactionForm() {
       notes: notes.trim() || null,
       refundsId: type === "INCOME" || type === "EXPENSE" ? refundsId : null,
       // An entry turned from Lend/Borrow into something else stops being a loan.
-      ...(initial ? { tags: withoutKindTag(initial.tags ?? []), dueDate: null, repaysId: null } : {}),
+      tags: tagsWithTarget(withoutKindTag(initial?.tags ?? []), familyTransfer && filedByPayee),
+      ...(initial ? { dueDate: null, repaysId: null } : {}),
     };
   }
 
@@ -435,6 +519,14 @@ export default function TransactionForm() {
       } else if (!savedTransactionId.current) {
         const res = await api.post<Transaction>(`/families/${family.id}/transactions`, payload);
         savedTransactionId.current = res.data.id;
+      }
+      if (rememberPayee && canRemember) {
+        try {
+          await savePayeeRule();
+          setRememberPayee(false);
+        } catch (err) {
+          throw new ClientError(`Saved, but couldn't remember the payee: ${getErrorMessage(err, "try again")}`);
+        }
       }
       if (canRepeat && repeat && savedTransactionId.current) {
         try {
@@ -535,6 +627,12 @@ export default function TransactionForm() {
               {type === "INCOME" ? "Money from a person, not income? Record it as:" : "Money to a person, not spending? Record it as:"}
             </Text>
             <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+              <Chip
+                label={type === "INCOME" ? "From family" : "To family"}
+                icon={<Home size={13} color={familyTransfer ? colors.white : colors.brand600} />}
+                selected={familyTransfer}
+                onPress={toggleFamilyTransfer}
+              />
               {(type === "INCOME" ? (["got-back", "borrowed"] as const) : (["lent", "paid-back"] as const)).map((k) => (
                 <Chip
                   key={k}
@@ -544,6 +642,13 @@ export default function TransactionForm() {
                 />
               ))}
             </View>
+            {familyTransfer && (
+              <Text style={{ fontSize: 12, color: colors.inkSubtle }}>
+                {type === "INCOME"
+                  ? "Family transfer: added to the account's balance, but not counted as income — and nobody owes it back."
+                  : "Family transfer: taken from the account's balance, but not counted as spending or in budgets — and nobody owes it back."}
+              </Text>
+            )}
           </View>
         )}
 
@@ -763,19 +868,32 @@ export default function TransactionForm() {
                       selected={countsIn.includes(b)}
                       onPress={() => {
                         setAddingCategory(false);
-                        setCategoryId(countsIn.includes(b) ? null : b.categoryId);
+                        pickCategory(countsIn.includes(b) ? null : b.categoryId);
                       }}
                     />
                   ))}
                 </View>
               </Field>
             )}
-            <Field label="Category" hint={isLending ? "Optional — what it was for." : undefined}>
+            <Field
+              label="Category"
+              hint={
+                isLending
+                  ? "Optional — what it was for."
+                  : familyTransfer
+                    ? "Optional for a family transfer."
+                    : payeeMatch && !targetTouched
+                      ? payeeMatch.source === "rule"
+                        ? `Filled in by your payee rule “${payeeMatch.rule!.payee}”.`
+                        : "Filled in from how this payee was filed before."
+                      : undefined
+              }
+            >
               <View style={{ gap: 12 }}>
                 <CategoryPicker
                   categories={categoriesForType}
                   selectedId={categoryId}
-                  onSelect={setCategoryId}
+                  onSelect={pickCategory}
                   clearLabel="No category"
                   onAddNew={family.role !== "VIEWER" && !addingCategory ? () => setAddingCategory(true) : undefined}
                 />
@@ -786,7 +904,7 @@ export default function TransactionForm() {
                     taken={categories}
                     onCreated={(created) => {
                       setCategories((list) => [...list, created]);
-                      setCategoryId(created.id);
+                      pickCategory(created.id);
                       setAddingCategory(false);
                     }}
                     onCancel={() => setAddingCategory(false)}
@@ -795,6 +913,18 @@ export default function TransactionForm() {
               </View>
             </Field>
           </>
+        )}
+
+        {canRemember && (
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 12, padding: 12, borderRadius: 14, backgroundColor: colors.surfaceSunken }}>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 13, fontWeight: "700", color: colors.ink }}>Remember for this payee</Text>
+              <Text style={{ fontSize: 12, color: colors.inkSubtle, marginTop: 2 }}>
+                {`${sameRule ? "Change the rule: " : "Always file "}“${rememberPattern}” ${type === "INCOME" ? "income" : "expenses"} as ${rememberTarget}, from SMS too.`}
+              </Text>
+            </View>
+            <Toggle value={rememberPayee} onChange={setRememberPayee} />
+          </View>
         )}
 
         {canRepeat && (

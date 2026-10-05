@@ -216,7 +216,7 @@ export default function SmsImport() {
           <Text style={{ flex: 1, color: colors.inkMuted, fontSize: 12, lineHeight: 18 }}>
             Messages are read on this phone only. Only the amount, payee, date and sender are saved — never the message text. OTPs,
             payment reminders, money requests and offers are ignored. Recorded transactions are tagged "sms" so you can review and edit
-            them; recategorising one teaches future alerts from the same payee.
+            them; recategorising one teaches future alerts from the same payee, and payee rules (More → Payee rules) file them as they arrive.
           </Text>
         </View>
       </Card>

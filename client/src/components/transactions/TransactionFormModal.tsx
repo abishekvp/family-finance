@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
-import { ArrowRightLeft, HandCoins, Landmark, MinusCircle, PlusCircle, Repeat } from "lucide-react";
+import { ArrowRightLeft, HandCoins, Home, Landmark, MinusCircle, PlusCircle, Repeat } from "lucide-react";
+import { FAMILY_TRANSFER_TAG, isFamilyTransfer } from "../../lib/transactionTotals";
 import { api } from "../../api/client";
 import { getErrorMessage } from "../../api/errors";
 import { Button, Chip, ErrorText, Field, Input, Label, Modal, Segmented, Select, useToast } from "../ui";
@@ -92,6 +93,8 @@ interface FormState {
   refundsId: string;
   repaysId: string;
   repeat: import("../../api/types").RecurringFrequency | null;
+  /** Money from or to family: moves the balance, but isn't income or spending, and isn't owed back. */
+  familyTransfer: boolean;
 }
 
 /** A new transaction starts on the first real account — never on a friend's lend & borrow tab. */
@@ -112,6 +115,7 @@ function emptyForm(accounts: Account[]): FormState {
     refundsId: "",
     repaysId: "",
     repeat: null,
+    familyTransfer: false,
   };
 }
 
@@ -128,6 +132,7 @@ function formFromTransaction(t: Transaction): FormState {
     refundsId: t.refundsId ?? "",
     repaysId: t.repaysId ?? "",
     repeat: null,
+    familyTransfer: isFamilyTransfer(t),
   };
 }
 
@@ -299,8 +304,12 @@ export function TransactionFormModal({
         refundsId: form.type === "INCOME" || form.type === "EXPENSE" ? form.refundsId || null : null,
         // A return names the loan it pays back; empty means the oldest open loans with that person.
         repaysId: repaying ? form.repaysId || null : null,
-        // The kind rides along as a tag (as on mobile); other tags are left as they were.
-        tags: [...withoutKindTag(transaction?.tags ?? []), ...(kind ? [kindTag(kind)] : [])],
+        // The kind rides along as a tag (as on mobile), as does a family transfer; other tags are left as they were.
+        tags: [
+          ...withoutKindTag(transaction?.tags ?? []).filter((tag) => tag !== FAMILY_TRANSFER_TAG),
+          ...(kind ? [kindTag(kind)] : []),
+          ...(form.familyTransfer && refundable && !person ? [FAMILY_TRANSFER_TAG] : []),
+        ],
       };
 
       const saved =
@@ -555,6 +564,22 @@ export function TransactionFormModal({
               />
             )}
           </Field>
+        )}
+
+        {refundable && !person && (
+          <div className="space-y-1.5">
+            <Chip selected={form.familyTransfer} onClick={() => update("familyTransfer", !form.familyTransfer)}>
+              <Home size={13} />
+              {form.type === "INCOME" ? "From family — not income" : "To family — not spending"}
+            </Chip>
+            {form.familyTransfer && (
+              <p className="text-xs text-ink-subtle">
+                {form.type === "INCOME"
+                  ? "Added to the account's balance, but not counted as income — and nobody owes it back."
+                  : "Taken from the account's balance, but not counted as spending or in budgets — and nobody owes it back."}
+              </p>
+            )}
+          </div>
         )}
 
         {canRepeat && (

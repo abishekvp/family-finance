@@ -112,21 +112,37 @@ encryptionRouter.get(
       prisma.transaction.count({ where: { familyId, OR: [needs("payee"), needs("notes")] } }),
     ]);
 
-    // Repeating payments hold payee/notes too. Only clients that can convert them ask; an older
-    // client would loop forever on items it can't write back.
+    // Repeating payments hold payee/notes too, and payee rules a payee. Only clients that can convert
+    // them ask (they hand `kind` back as given); an older client would loop forever on items it
+    // can't write back.
     let rules: { id: string; payee: string | null; notes: string | null }[] = [];
     let rulesRemaining = 0;
+    let payeeRules: { id: string; payee: string }[] = [];
+    let payeeRulesRemaining = 0;
     if (req.query.includeRecurring === "1") {
       const ruleWhere = { familyId, OR: [needs("payee"), needs("notes")] } as Prisma.RecurringTransactionWhereInput;
       [rules, rulesRemaining] = await Promise.all([
         prisma.recurringTransaction.findMany({ where: ruleWhere, select: { id: true, payee: true, notes: true }, take: Math.max(0, 200 - items.length) }),
         prisma.recurringTransaction.count({ where: ruleWhere }),
       ]);
+      // A rule's payee is never empty, so it only needs the prefix check.
+      const payeeRuleWhere: Prisma.PayeeRuleWhereInput =
+        direction === "decrypt"
+          ? { familyId, payee: { startsWith: ENCRYPTED_PREFIX } }
+          : { familyId, NOT: { payee: { startsWith: ENCRYPTED_PREFIX } } };
+      [payeeRules, payeeRulesRemaining] = await Promise.all([
+        prisma.payeeRule.findMany({ where: payeeRuleWhere, select: { id: true, payee: true }, take: Math.max(0, 200 - items.length - rules.length) }),
+        prisma.payeeRule.count({ where: payeeRuleWhere }),
+      ]);
     }
 
     res.json({
-      items: [...items.map((i) => ({ ...i, kind: "transaction" as const })), ...rules.map((r) => ({ ...r, kind: "recurring" as const }))],
-      remaining: remaining + rulesRemaining,
+      items: [
+        ...items.map((i) => ({ ...i, kind: "transaction" as const })),
+        ...rules.map((r) => ({ ...r, kind: "recurring" as const })),
+        ...payeeRules.map((r) => ({ ...r, notes: null, kind: "payeeRule" as const })),
+      ],
+      remaining: remaining + rulesRemaining + payeeRulesRemaining,
     });
   })
 );
@@ -142,7 +158,7 @@ encryptionRouter.post(
           .array(
             z.object({
               id: z.string().min(1),
-              kind: z.enum(["transaction", "recurring"]).default("transaction"),
+              kind: z.enum(["transaction", "recurring", "payeeRule"]).default("transaction"),
               payee: maybeEncryptedText(200, 2048).nullable(),
               notes: maybeEncryptedText(1000, 8192).nullable(),
             })
@@ -152,17 +168,23 @@ encryptionRouter.post(
       .parse(req.body);
 
     await prisma.$transaction(
-      items.map((item) =>
-        item.kind === "recurring"
-          ? prisma.recurringTransaction.updateMany({
-              where: { id: item.id, familyId },
-              data: { payee: item.payee, notes: item.notes },
-            })
-          : prisma.transaction.updateMany({
-              where: { id: item.id, familyId },
-              data: { payee: item.payee, notes: item.notes },
-            })
-      )
+      items.flatMap((item) => {
+        if (item.kind === "payeeRule") {
+          // A rule always has a payee; one sent back without it is left as it was.
+          return item.payee ? [prisma.payeeRule.updateMany({ where: { id: item.id, familyId }, data: { payee: item.payee } })] : [];
+        }
+        return [
+          item.kind === "recurring"
+            ? prisma.recurringTransaction.updateMany({
+                where: { id: item.id, familyId },
+                data: { payee: item.payee, notes: item.notes },
+              })
+            : prisma.transaction.updateMany({
+                where: { id: item.id, familyId },
+                data: { payee: item.payee, notes: item.notes },
+              }),
+        ];
+      })
     );
     res.json({ updated: items.length });
   })
@@ -174,12 +196,13 @@ encryptionRouter.post(
   asyncHandler(async (req, res) => {
     const familyId = req.params.familyId;
     const encryptedFields = { OR: [{ payee: { startsWith: ENCRYPTED_PREFIX } }, { notes: { startsWith: ENCRYPTED_PREFIX } }] };
-    const [encryptedTransactions, encryptedRules] = await Promise.all([
+    const [encryptedTransactions, encryptedRules, encryptedPayeeRules] = await Promise.all([
       prisma.transaction.count({ where: { familyId, ...encryptedFields } }),
       // Left encrypted, a repeating payment would keep recording unreadable payees after this.
       prisma.recurringTransaction.count({ where: { familyId, ...encryptedFields } }),
+      prisma.payeeRule.count({ where: { familyId, payee: { startsWith: ENCRYPTED_PREFIX } } }),
     ]);
-    const stillEncrypted = encryptedTransactions + encryptedRules;
+    const stillEncrypted = encryptedTransactions + encryptedRules + encryptedPayeeRules;
     if (stillEncrypted > 0) {
       throw new AppError(409, `${stillEncrypted} transactions are still encrypted — decrypt them first`);
     }

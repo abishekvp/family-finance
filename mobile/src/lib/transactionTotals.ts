@@ -1,5 +1,12 @@
 import type { Transaction } from "../api/types";
 
+/** Marks an income or expense as money to or from family (see countedAmount). */
+export const FAMILY_TRANSFER_TAG = "family-transfer";
+
+export function isFamilyTransfer(t: Pick<Transaction, "type" | "tags">) {
+  return t.type !== "TRANSFER" && (t.tags ?? []).includes(FAMILY_TRANSFER_TAG);
+}
+
 /**
  * What an entry counts for in income and spending totals. Shared by every screen that adds things
  * up (and mirrored in the web app's lib/transactionTotals.ts) so the same period always shows the
@@ -10,10 +17,13 @@ import type { Transaction } from "../api/types";
  *   it reverses instead. So a ₹2 card-verification charge refunded straight away counts as nothing,
  *   and a ₹1,000 order with ₹300 refunded counts as ₹700 of spending.
  *
+ * - A family transfer (tagged FAMILY_TRANSFER_TAG) — money from a parent, or sent home — is
+ *   neither income nor spending, and unlike lend & borrow nobody owes it back.
+ *
  * Account balances aren't adjusted this way: both legs really moved money.
  */
 export function countedAmount(t: Transaction): number {
-  if (t.type === "TRANSFER" || t.refundsId) return 0;
+  if (t.type === "TRANSFER" || t.refundsId || isFamilyTransfer(t)) return 0;
   // Rows synced before the server sent refundedAmount only know whether they were refunded.
   const refunded = t.refundedAmount ?? (t.isRefunded ? t.amount : 0);
   return Math.max(0, t.amount - refunded);
