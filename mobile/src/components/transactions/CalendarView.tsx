@@ -8,6 +8,7 @@ import type { WeekStart } from "../../context/PrefsContext";
 import { localDateInput, weekStartsOn } from "../../lib/dateUtils";
 import { CarryOverRow } from "./CarryOverRow";
 import { TransactionRow } from "./TransactionRow";
+import { totalsContribution } from "../../lib/transactionTotals";
 
 const WEEKDAY_LABELS_SUN = ["S", "M", "T", "W", "T", "F", "S"];
 const WEEKDAY_LABELS_MON = ["M", "T", "W", "T", "F", "S", "S"];
@@ -45,8 +46,11 @@ export function CalendarView({
     for (const t of transactions) {
       const key = localDateInput(new Date(t.date));
       const entry = map.get(key) ?? { income: 0, expense: 0 };
-      if (t.type === "INCOME") entry.income += t.amount;
-      else if (t.type === "EXPENSE") entry.expense += t.amount;
+      {
+        const counted = totalsContribution(t);
+        entry.income += counted.income;
+        entry.expense += counted.expense;
+      }
       map.set(key, entry);
     }
     return map;

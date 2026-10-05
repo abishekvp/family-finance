@@ -1,11 +1,11 @@
 import { useState } from "react";
-import { KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, View } from "react-native";
+import { Pressable, ScrollView, Text, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { api } from "../src/api/client";
 import { getErrorMessage } from "../src/api/errors";
 import { useAuth } from "../src/context/AuthContext";
 import { useTheme } from "../src/context/ThemeContext";
-import { Button, ErrorText, Field, Input, SuccessText } from "../src/components/ui";
+import { Button, ErrorText, Field, Input, SuccessText, FormScrollView } from "../src/components/ui";
 import { Logo } from "../src/components/Logo";
 
 export default function ForgotPassword() {
@@ -51,8 +51,7 @@ export default function ForgotPassword() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.canvas }}>
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-        <ScrollView contentContainerStyle={{ flexGrow: 1, justifyContent: "center", padding: 24 }} keyboardShouldPersistTaps="handled">
+      <FormScrollView contentContainerStyle={{ flexGrow: 1, justifyContent: "center", padding: 24 }}>
           <Logo size={56} style={{ alignSelf: "center", marginBottom: 24 }} />
           <Text style={{ fontSize: 24, fontWeight: "900", color: colors.ink, textAlign: "center" }}>
             {step === "email" ? "Forgot your password?" : "Choose a new password"}
@@ -102,8 +101,7 @@ export default function ForgotPassword() {
               Remembered it? <Text style={{ color: colors.brand600, fontWeight: "700" }}>Back to sign in</Text>
             </Text>
           </Pressable>
-        </ScrollView>
-      </KeyboardAvoidingView>
+        </FormScrollView>
     </View>
   );
 }

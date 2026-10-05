@@ -1,12 +1,12 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AppState } from "react-native";
-import { isSmsReaderAvailable, requestSmsPermission } from "../../modules/sms-reader";
+import { ensureReceiveSmsPermission, isSmsReaderAvailable, requestSmsPermission } from "../../modules/sms-reader";
 import {
   DEFAULT_SMS_SETTINGS,
-  importSmsHistory,
   loadSmsSettings,
-  saveSmsSettings,
-  syncSmsTransactions,
+  patchSmsSettings,
+  runSmsHistoryImport,
+  runSmsSync,
   type SmsHistoryResult,
   type SmsImportSettings,
   type SmsSyncResult,
@@ -53,26 +53,27 @@ export function SmsImportProvider({ children }: { children: ReactNode }) {
   const [isImportingHistory, setIsImportingHistory] = useState(false);
   const [historyResult, setHistoryResult] = useState<SmsHistoryResult | null>(null);
   const [syncVersion, setSyncVersion] = useState(0);
-  // Syncs read and write settings across awaits; the ref keeps them off stale closures.
+  // Syncs read settings across awaits; the ref keeps them off stale closures.
   const settingsRef = useRef(settings);
   const syncing = useRef<Promise<void> | null>(null);
   const importingHistory = useRef<Promise<void> | null>(null);
-  // Forward scans and history imports both rewrite the watermarks, so they take turns.
-  const scanLock = useRef<Promise<unknown>>(Promise.resolve());
   // Turning import on shouldn't trigger the launch-time scan that `settings.enabled` flipping would.
   const skipNextAutoScan = useRef(false);
 
-  const exclusive = useCallback(<T,>(run: () => Promise<T>): Promise<T> => {
-    const next = scanLock.current.then(run, run);
-    scanLock.current = next.catch(() => undefined);
-    return next;
-  }, []);
-
-  const persist = useCallback(async (next: SmsImportSettings) => {
+  const show = useCallback((next: SmsImportSettings) => {
     settingsRef.current = next;
     setSettings(next);
-    await saveSmsSettings(next);
   }, []);
+
+  // The SMS wake-up and the background sync scan while the app is closed, so the stored settings are
+  // the truth: changes are written on top of them (see patchSmsSettings), never from this copy.
+  const persist = useCallback(
+    async (patch: Partial<SmsImportSettings>) => {
+      if (!familyId) return;
+      show(await patchSmsSettings(familyId, patch));
+    },
+    [familyId, show]
+  );
 
   useEffect(() => {
     if (!familyId || !available) {
@@ -83,9 +84,11 @@ export function SmsImportProvider({ children }: { children: ReactNode }) {
     setIsLoading(true);
     loadSmsSettings(familyId).then((loaded) => {
       if (cancelled) return;
-      settingsRef.current = loaded;
-      setSettings(loaded);
+      show(loaded);
       setIsLoading(false);
+      // Builds from before the SMS wake-up only asked for READ_SMS; without RECEIVE_SMS new alerts
+      // are only picked up when the app is opened.
+      if (loaded.enabled) ensureReceiveSmsPermission().catch(() => undefined);
     });
     return () => {
       cancelled = true;
@@ -99,21 +102,17 @@ export function SmsImportProvider({ children }: { children: ReactNode }) {
     syncing.current = (async () => {
       setIsSyncing(true);
       try {
-        await exclusive(async () => {
-          const { settings: next, result } = await syncSmsTransactions(familyId, settingsRef.current);
-          // The user may have toggled import or remapped accounts while this ran — keep those choices.
-          const { enabled, defaultAccountId, accountMap } = settingsRef.current;
-          await persist({ ...next, enabled, defaultAccountId, accountMap });
-          setLastResult(result);
-          if (result.imported > 0) setSyncVersion((v) => v + 1);
-        });
+        const { settings: next, result } = await runSmsSync(familyId);
+        show(next);
+        setLastResult(result);
+        if (result.imported > 0) setSyncVersion((v) => v + 1);
       } finally {
         setIsSyncing(false);
         syncing.current = null;
       }
     })();
     return syncing.current;
-  }, [familyId, persist, exclusive]);
+  }, [familyId, show]);
 
   const importHistory = useCallback(
     async (days: number) => {
@@ -123,13 +122,10 @@ export function SmsImportProvider({ children }: { children: ReactNode }) {
         setIsImportingHistory(true);
         setHistoryResult(null);
         try {
-          await exclusive(async () => {
-            const { settings: next, result } = await importSmsHistory(familyId, settingsRef.current, days);
-            const { enabled, defaultAccountId, accountMap } = settingsRef.current;
-            await persist({ ...next, enabled, defaultAccountId, accountMap });
-            setHistoryResult(result);
-            if (result.imported > 0) setSyncVersion((v) => v + 1);
-          });
+          const { settings: next, result } = await runSmsHistoryImport(familyId, days);
+          show(next);
+          setHistoryResult(result);
+          if (result.imported > 0) setSyncVersion((v) => v + 1);
         } finally {
           setIsImportingHistory(false);
           importingHistory.current = null;
@@ -137,7 +133,7 @@ export function SmsImportProvider({ children }: { children: ReactNode }) {
       })();
       return importingHistory.current;
     },
-    [familyId, persist, exclusive]
+    [familyId, show]
   );
 
   const enable = useCallback(
@@ -150,7 +146,6 @@ export function SmsImportProvider({ children }: { children: ReactNode }) {
       // Start from now in both directions: new alerts are picked up on the next launch or return
       // to the app, and past ones only if the user asks for them.
       await persist({
-        ...settingsRef.current,
         enabled: true,
         familyId,
         defaultAccountId,
@@ -166,14 +161,14 @@ export function SmsImportProvider({ children }: { children: ReactNode }) {
   );
 
   const disable = useCallback(async () => {
-    await persist({ ...settingsRef.current, enabled: false });
+    await persist({ enabled: false });
     setLastResult(null);
     setHistoryResult(null);
   }, [persist]);
 
   const updateSettings = useCallback(
     async (patch: Partial<Pick<SmsImportSettings, "defaultAccountId" | "accountMap">>) => {
-      await persist({ ...settingsRef.current, ...patch });
+      await persist(patch);
     },
     [persist]
   );

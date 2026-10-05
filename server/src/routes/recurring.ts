@@ -8,6 +8,7 @@ import { assertEncryptionPolicy, maybeEncryptedText } from "../lib/encryption";
 import { formatDay, localToday, occurrence, parseDay, postingInstant } from "../lib/recurring";
 import { currentPeriodStart } from "../lib/recurringCategory";
 import { initialApprovalStatus } from "../lib/approval";
+import { recalculateBalancesNow } from "../lib/balances";
 
 // Repeating payments, nested under /api/families/:familyId/recurring.
 export const recurringRouter = Router({ mergeParams: true });
@@ -258,6 +259,7 @@ recurringRouter.post(
     });
 
     let posted = 0;
+    const postedAccounts = new Set<string>();
     for (const rule of due) {
       if (rule.account.isArchived) continue;
       // A member can't skip approval by making an entry repeat: each occurrence waits like any other.
@@ -295,8 +297,12 @@ recurringRouter.post(
         if (!claimed) break;
         count += 1;
         posted += 1;
+        postedAccounts.add(rule.accountId);
       }
     }
+
+    // Recorded payments move their account's balance like any other transaction.
+    if (postedAccounts.size > 0) await recalculateBalancesNow(Array.from(postedAccounts));
 
     res.json({ posted });
   })

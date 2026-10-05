@@ -2,6 +2,7 @@ import { Wallet } from "lucide-react";
 import type { Account, Transaction } from "../../api/types";
 import { Money } from "../figures";
 import { Checkbox, Popover } from "../ui";
+import { countedAmount } from "../../lib/transactionTotals";
 
 export function FilterPanel({
   accounts,
@@ -32,7 +33,7 @@ export function FilterPanel({
   function balanceFor(accountId: string) {
     return transactions
       .filter((t) => t.accountId === accountId)
-      .reduce((sum, t) => sum + (t.type === "INCOME" ? t.amount : t.type === "EXPENSE" ? -t.amount : 0), 0);
+      .reduce((sum, t) => sum + (t.type === "INCOME" ? countedAmount(t) : t.type === "EXPENSE" ? -countedAmount(t) : 0), 0);
   }
 
   return (

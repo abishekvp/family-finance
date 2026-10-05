@@ -1,95 +1,64 @@
-import { useState } from "react";
-import { ScrollView, Text, View } from "react-native";
-import { Plus } from "lucide-react-native";
+import { useMemo } from "react";
 import type { Category } from "../api/types";
-import { useTheme } from "../context/ThemeContext";
-import { Chip, Dot, Input } from "./ui";
+import { SelectField, type SelectOption } from "./SelectField";
 
 /**
- * Category chips, one row per top-level category with its subcategories after it. `onAddNew` adds a
- * "New category" chip at the end.
+ * A category select field: tapping it opens a searchable list, top-level categories each followed by
+ * their subcategories. `onAddNew` adds a "New category" entry at the end; `clearLabel` lets the
+ * choice be cleared.
  */
 export function CategoryPicker({
   categories,
   selectedId,
   onSelect,
   onAddNew,
-  maxHeight = 260,
+  clearLabel,
+  placeholder = "Select a category",
 }: {
   categories: Category[];
   selectedId: string | null;
-  onSelect: (id: string) => void;
+  onSelect: (id: string | null) => void;
   onAddNew?: () => void;
-  maxHeight?: number;
+  clearLabel?: string;
+  placeholder?: string;
 }) {
-  const { colors } = useTheme();
-  const [search, setSearch] = useState("");
-
-  const lowerSearch = search.trim().toLowerCase();
-  const filteredCategories = lowerSearch ? categories.filter((c) => c.name.toLowerCase().includes(lowerSearch)) : categories;
-
-  const ids = new Set(filteredCategories.map((c) => c.id));
-  // A subcategory whose parent isn't offered here (another type, or not visible) stands on its own.
-  const parents = filteredCategories.filter((c) => c.parentId === null || !ids.has(c.parentId));
-  const childrenByParent = new Map<string, Category[]>();
-  for (const c of filteredCategories) {
-    if (!c.parentId || !ids.has(c.parentId)) continue;
-    const list = childrenByParent.get(c.parentId) ?? [];
-    list.push(c);
-    childrenByParent.set(c.parentId, list);
-  }
-
-  const chip = (c: Category, sub: boolean) => {
-    const selected = selectedId === c.id;
-    return (
-      <Chip
-        key={c.id}
-        label={sub ? `↳ ${c.name}` : c.name}
-        color={c.color}
-        selected={selected}
-        icon={selected || sub ? undefined : <Dot color={c.color} size={8} />}
-        onPress={() => onSelect(c.id)}
-      />
-    );
-  };
-  const addChip = onAddNew ? (
-    <Chip key="new" label="New category" icon={<Plus size={13} color={colors.brand600} />} onPress={onAddNew} />
-  ) : null;
-
-  if (parents.length === 0 && !lowerSearch) {
-    return (
-      <View style={{ gap: 10 }}>
-        <Text style={{ color: colors.inkSubtle, fontSize: 13 }}>No categories yet.</Text>
-        {addChip && <View style={{ flexDirection: "row" }}>{addChip}</View>}
-      </View>
-    );
-  }
+  const options = useMemo<SelectOption[]>(() => {
+    const ids = new Set(categories.map((c) => c.id));
+    const byId = new Map(categories.map((c) => [c.id, c]));
+    // A subcategory whose parent isn't offered here (another type, or not visible) stands on its own.
+    const parents = categories.filter((c) => c.parentId === null || !ids.has(c.parentId));
+    const childrenByParent = new Map<string, Category[]>();
+    for (const c of categories) {
+      if (!c.parentId || !ids.has(c.parentId)) continue;
+      const list = childrenByParent.get(c.parentId) ?? [];
+      list.push(c);
+      childrenByParent.set(c.parentId, list);
+    }
+    return parents.flatMap((parent) => [
+      { id: parent.id, label: parent.name, color: parent.color },
+      ...(childrenByParent.get(parent.id) ?? []).map((child) => ({
+        id: child.id,
+        label: child.name,
+        color: child.color,
+        indent: true,
+        // Searching "food" also finds Food's subcategories.
+        keywords: byId.get(parent.id)?.name,
+      })),
+    ]);
+  }, [categories]);
 
   return (
-    <View style={{ gap: 12 }}>
-      <Input
-        placeholder="Search..."
-        value={search}
-        onChangeText={setSearch}
-      />
-      {/* Its own keyboardShouldPersistTaps: without it, with the amount keyboard up, the first tap on a
-      // chip only closes the keyboard instead of choosing the category. */}
-      <ScrollView style={{ maxHeight }} nestedScrollEnabled keyboardShouldPersistTaps="handled">
-        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-          {parents.map((parent) => {
-            const children = childrenByParent.get(parent.id) ?? [];
-            if (children.length === 0) return chip(parent, false);
-            // A parent with subcategories takes a full row so they read as one group.
-            return (
-              <View key={parent.id} style={{ width: "100%", flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-                {chip(parent, false)}
-                {children.map((child) => chip(child, true))}
-              </View>
-            );
-          })}
-          {addChip}
-        </View>
-      </ScrollView>
-    </View>
+    <SelectField
+      title="Category"
+      options={options}
+      selectedId={selectedId}
+      onSelect={onSelect}
+      placeholder={categories.length === 0 ? "No categories yet" : placeholder}
+      clearLabel={clearLabel}
+      searchPlaceholder="Search categories"
+      emptyText="No category matches."
+      onAddNew={onAddNew}
+      addNewLabel="New category"
+    />
   );
 }

@@ -8,6 +8,7 @@ import { MONTH_LABELS } from "../../lib/dateUtils";
 import type { WeekStart } from "../../context/PrefsContext";
 import { weekBucketsForMonth } from "../../lib/weeks";
 import { CarryOverRow } from "./CarryOverRow";
+import { totalsContribution } from "../../lib/transactionTotals";
 
 interface Totals {
   income: number;
@@ -19,8 +20,11 @@ function emptyTotals(): Totals {
 }
 
 function addTransaction(totals: Totals, t: Transaction) {
-  if (t.type === "INCOME") totals.income += t.amount;
-  else if (t.type === "EXPENSE") totals.expense += t.amount;
+  {
+    const counted = totalsContribution(t);
+    totals.income += counted.income;
+    totals.expense += counted.expense;
+  }
 }
 
 function TotalsRow({ label, totals, currency, bold, colors }: { label: string; totals: Totals; currency: string; bold?: boolean; colors: ReturnType<typeof useTheme>["colors"] }) {

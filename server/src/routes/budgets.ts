@@ -57,25 +57,30 @@ function countsInPeriod(period: BudgetPeriod, frequency: RecurringFrequency) {
 }
 
 async function computeSpent(familyId: string, requesterId: string, categoryIds: string[], period: BudgetPeriod, start: Date, end: Date) {
-  const spentAgg = await prisma.transaction.aggregate({
-    where: {
-      familyId,
-      categoryId: { in: categoryIds },
-      type: TransactionType.EXPENSE,
-      isDeleted: false,
-      ...COUNTED,
-      // A refunded expense counts as never spent — the entry that reverses it is kept out of income
-      // totals the same way (see resolveRefunds in routes/transactions.ts).
-      refundedBy: { none: { isDeleted: false, ...COUNTED } },
-      date: { gte: start, lt: end },
-      account: { OR: [{ ownerId: null }, { ownerId: requesterId }] },
-      ...(period === BudgetPeriod.ANNUAL
-        ? {}
-        : { OR: [{ recurringId: null }, { recurring: { frequency: { not: RecurringFrequency.YEARLY } } }] }),
-    },
-    _sum: { amount: true },
-  });
-  return Number(spentAgg._sum.amount ?? 0);
+  const expenses: Prisma.TransactionWhereInput = {
+    familyId,
+    categoryId: { in: categoryIds },
+    type: TransactionType.EXPENSE,
+    isDeleted: false,
+    ...COUNTED,
+    // Money handed back (an expense that returns an income) isn't spending.
+    refundsId: null,
+    date: { gte: start, lt: end },
+    account: { OR: [{ ownerId: null }, { ownerId: requesterId }] },
+    ...(period === BudgetPeriod.ANNUAL
+      ? {}
+      : { OR: [{ recurringId: null }, { recurring: { frequency: { not: RecurringFrequency.YEARLY } } }] }),
+  };
+  const [spentAgg, refundedAgg] = await Promise.all([
+    prisma.transaction.aggregate({ where: expenses, _sum: { amount: true } }),
+    // A refund takes its amount off the expense it reverses — all of it for a full refund, part of
+    // it for a partial one — in that expense's budget and period (see resolveRefunds).
+    prisma.transaction.aggregate({
+      where: { isDeleted: false, ...COUNTED, type: TransactionType.INCOME, refunds: { is: expenses } },
+      _sum: { amount: true },
+    }),
+  ]);
+  return Math.max(0, Number(spentAgg._sum.amount ?? 0) - Number(refundedAgg._sum.amount ?? 0));
 }
 
 type ExpenseRule = Prisma.RecurringTransactionGetPayload<object>;

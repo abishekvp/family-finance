@@ -26,6 +26,10 @@ export function CategoryBadge({ color, label, size = 38 }: { color: string; labe
   );
 }
 
+function isFullyRefunded(t: Transaction) {
+  return (t.refundedAmount ?? t.amount) >= t.amount - 0.005;
+}
+
 export function TransactionRow({ transaction, onPress }: { transaction: Transaction; onPress?: () => void }) {
   const { colors } = useTheme();
   const t = transaction;
@@ -66,6 +70,8 @@ export function TransactionRow({ transaction, onPress }: { transaction: Transact
           {formatDate(t.date)} · {t.account.name}
           {isTransfer && t.transferToAccount ? ` → ${t.transferToAccount.name}` : ""}
           {t.recurringId ? " · Repeating" : ""}
+          {t.refundsId ? (t.type === "INCOME" ? " · Refund" : " · Returned") : ""}
+          {!t.refundsId && t.isRefunded ? (isFullyRefunded(t) ? " · Refunded" : " · Part refunded") : ""}
         </Text>
       </View>
       <Money

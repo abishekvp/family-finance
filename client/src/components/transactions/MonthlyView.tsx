@@ -9,7 +9,7 @@ import { weekBucketsForMonth } from "../../lib/weeks";
 import type { WeekStart } from "../../lib/prefs";
 import { MONTH_LABELS } from "../../lib/dateUtils";
 import { safePercent } from "../../lib/format";
-import { countsTowardTotals } from "../../lib/transactionTotals";
+import { countedAmount, countsTowardTotals } from "../../lib/transactionTotals";
 
 interface Totals {
   income: number;
@@ -20,8 +20,8 @@ function sumTotals(list: Transaction[]): Totals {
   return list.reduce<Totals>(
     (acc, t) => {
       if (!countsTowardTotals(t)) return acc;
-      if (t.type === "INCOME") acc.income += t.amount;
-      else if (t.type === "EXPENSE") acc.expense += t.amount;
+      if (t.type === "INCOME") acc.income += countedAmount(t);
+      else if (t.type === "EXPENSE") acc.expense += countedAmount(t);
       return acc;
     },
     { income: 0, expense: 0 }

@@ -3,6 +3,7 @@ import type { Transaction } from "../api/types";
 import { clearTodaySnapshot, setTodaySnapshot, type TodayWidgetItem } from "../../modules/home-widgets";
 import { localDateInput } from "./dateUtils";
 import { formatCurrency } from "./format";
+import { totalsContribution } from "./transactionTotals";
 
 interface Job {
   familyId: string;
@@ -39,8 +40,9 @@ async function build({ familyId, currency }: Job) {
   let spent = 0;
   let income = 0;
   for (const t of res.data) {
-    if (t.type === "EXPENSE") spent += t.amount;
-    else if (t.type === "INCOME") income += t.amount;
+    const counted = totalsContribution(t);
+    spent += counted.expense;
+    income += counted.income;
   }
 
   if (generation !== startGeneration) return;

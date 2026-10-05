@@ -7,7 +7,8 @@ import { Button, Card, Dot, ErrorText, ProgressBar, SkeletonRows } from "../ui";
 import { EmptyOrCarryOver } from "./EmptyOrCarryOver";
 import { api } from "../../api/client";
 import { getErrorMessage } from "../../api/errors";
-import { countsTowardTotals } from "../../lib/transactionTotals";
+import { localDateInput } from "../../lib/dateUtils";
+import { countedAmount, countsTowardTotals } from "../../lib/transactionTotals";
 
 export function TotalView({
   familyId,
@@ -61,8 +62,8 @@ export function TotalView({
   }, [familyId, periodYear, periodMonth, transactions]);
 
   const countedTransactions = transactions.filter(countsTowardTotals);
-  const income = countedTransactions.filter((t) => t.type === "INCOME").reduce((s, t) => s + t.amount, 0);
-  const expense = countedTransactions.filter((t) => t.type === "EXPENSE").reduce((s, t) => s + t.amount, 0);
+  const income = countedTransactions.filter((t) => t.type === "INCOME").reduce((s, t) => s + countedAmount(t), 0);
+  const expense = countedTransactions.filter((t) => t.type === "EXPENSE").reduce((s, t) => s + countedAmount(t), 0);
 
   const accountTotals = accounts
     .filter((a) => accountIds.has(a.id))
@@ -70,15 +71,15 @@ export function TotalView({
       const accTx = countedTransactions.filter((t) => t.accountId === account.id);
       return {
         account,
-        income: accTx.filter((t) => t.type === "INCOME").reduce((s, t) => s + t.amount, 0),
-        expense: accTx.filter((t) => t.type === "EXPENSE").reduce((s, t) => s + t.amount, 0),
+        income: accTx.filter((t) => t.type === "INCOME").reduce((s, t) => s + countedAmount(t), 0),
+        expense: accTx.filter((t) => t.type === "EXPENSE").reduce((s, t) => s + countedAmount(t), 0),
       };
     });
 
   function handleExport() {
     const header = ["Date", "Type", "Account", "Category", "Payee", "Notes", "Amount"];
     const rows = transactions.map((t) => [
-      t.date.slice(0, 10),
+      localDateInput(new Date(t.date)),
       t.type,
       t.account.name,
       t.category?.name ?? "",

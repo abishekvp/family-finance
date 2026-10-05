@@ -46,6 +46,18 @@ export async function requestSmsPermission() {
   return true;
 }
 
+/**
+ * RECEIVE_SMS is what lets the SMS wake-up run while the app is closed. Builds before that existed
+ * only asked for READ_SMS, so a phone that turned import on back then never got it: ask once more.
+ * The two share a permission group, so this is normally granted without a dialog.
+ */
+export async function ensureReceiveSmsPermission() {
+  if (!native) return false;
+  if (await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.RECEIVE_SMS)) return true;
+  if (!(await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.READ_SMS))) return false;
+  return (await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.RECEIVE_SMS)) === PermissionsAndroid.RESULTS.GRANTED;
+}
+
 /** Messages received after `sinceMs`, oldest first. */
 export async function readInbox(sinceMs: number, limit = 500): Promise<InboxSms[]> {
   if (!native) throw new Error("SMS reading isn't available on this device");

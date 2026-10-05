@@ -16,7 +16,7 @@ import { MonthlyView } from "../components/transactions/MonthlyView";
 import { TotalView } from "../components/transactions/TotalView";
 import { FilterPanel } from "../components/transactions/FilterPanel";
 import { TransactionFormModal } from "../components/transactions/TransactionFormModal";
-import { countsTowardTotals } from "../lib/transactionTotals";
+import { countedAmount, countsTowardTotals } from "../lib/transactionTotals";
 import { useFamilyData, useYearTransactions } from "../context/FamilyDataContext";
 
 type SubView = "Daily" | "Calendar" | "Monthly" | "Total";
@@ -140,8 +140,8 @@ export function Transactions() {
     let expense = 0;
     for (const t of visibleTransactions) {
       if (!countsTowardTotals(t)) continue;
-      if (t.type === "INCOME") income += t.amount;
-      else if (t.type === "EXPENSE") expense += t.amount;
+      if (t.type === "INCOME") income += countedAmount(t);
+      else if (t.type === "EXPENSE") expense += countedAmount(t);
     }
     return { income, expense, net: income - expense };
   }, [visibleTransactions]);

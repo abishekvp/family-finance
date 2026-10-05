@@ -84,6 +84,8 @@ export interface Transaction {
   refundsId?: string | null;
   /** True once a refund has been recorded against this entry. */
   isRefunded?: boolean;
+  /** How much of this entry has come back through refunds (may be partial). */
+  refundedAmount?: number;
   approvalStatus?: ApprovalStatus;
   reviewedById?: string | null;
   reviewedAt?: string | null;

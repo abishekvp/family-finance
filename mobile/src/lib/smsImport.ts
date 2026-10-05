@@ -37,6 +37,8 @@ export interface SmsImportSettings {
 
 export interface SmsSyncResult {
   imported: number;
+  /** Inbox messages read past the watermark, bank alerts or not. */
+  scanned?: number;
   error: string | null;
 }
 
@@ -90,6 +92,57 @@ export async function loadSmsSettings(familyId: string): Promise<SmsImportSettin
 
 export async function saveSmsSettings(settings: SmsImportSettings) {
   await SecureStore.setItemAsync(SETTINGS_KEY, JSON.stringify(settings)).catch(() => undefined);
+}
+
+/**
+ * Changes the user's choices on top of what's stored now — never on top of a copy held in memory,
+ * whose watermark a background scan may have moved on since (writing it back would re-import).
+ */
+export async function patchSmsSettings(familyId: string, patch: Partial<SmsImportSettings>): Promise<SmsImportSettings> {
+  const next = { ...(await loadSmsSettings(familyId)), ...patch, familyId };
+  await saveSmsSettings(next);
+  return next;
+}
+
+// Scans move the watermarks, so only one runs at a time in this JS runtime: the app's own scans, the
+// SMS wake-up task and the periodic background sync all run here when the app is alive.
+let scanLock: Promise<unknown> = Promise.resolve();
+function exclusive<T>(run: () => Promise<T>): Promise<T> {
+  const next = scanLock.then(run, run);
+  scanLock = next.catch(() => undefined);
+  return next;
+}
+
+/** Keeps choices the user made while a scan was running (they're stored straight away, see patchSmsSettings). */
+async function saveScanResult(familyId: string, scanned: SmsImportSettings) {
+  const latest = await loadSmsSettings(familyId);
+  const merged = { ...scanned, enabled: latest.enabled, defaultAccountId: latest.defaultAccountId, accountMap: latest.accountMap };
+  await saveSmsSettings(merged);
+  return merged;
+}
+
+/**
+ * Records new bank alerts: loads the stored settings, scans past the watermark and saves, as one
+ * step. Every caller goes through here, so each scan starts from the latest watermark and no alert
+ * is recorded twice, whichever of the app, the SMS wake-up or the background sync gets to it first.
+ */
+export function runSmsSync(familyId: string): Promise<{ settings: SmsImportSettings; result: SmsSyncResult }> {
+  return exclusive(async () => {
+    const settings = await loadSmsSettings(familyId);
+    if (!settings.enabled) return { settings, result: { imported: 0, scanned: 0, error: null } };
+    const { settings: next, result } = await syncSmsTransactions(familyId, settings);
+    return { settings: await saveScanResult(familyId, next), result };
+  });
+}
+
+/** The optional past-message import, under the same lock and rules as runSmsSync. */
+export function runSmsHistoryImport(familyId: string, days: number): Promise<{ settings: SmsImportSettings; result: SmsHistoryResult }> {
+  return exclusive(async () => {
+    const settings = await loadSmsSettings(familyId);
+    if (!settings.enabled) return { settings, result: { imported: 0, error: null, complete: true } };
+    const { settings: next, result } = await importSmsHistory(familyId, settings, days);
+    return { settings: await saveScanResult(familyId, next), result };
+  });
 }
 
 function isDuplicate(recent: RecentImport[], candidate: RecentImport) {
@@ -189,9 +242,11 @@ export async function syncSmsTransactions(
   if (problem) return { settings: state.settings, result: { imported: 0, error: problem } };
 
   let error: string | null = null;
+  let scanned = 0;
   try {
     for (let page = 0; page < MAX_PAGES; page++) {
       const messages = await readInbox(state.settings.since, PAGE_SIZE);
+      scanned += messages.length;
       for (const sms of messages) {
         state = await handleMessage(familyId, state, sms);
         state = { ...state, settings: { ...state.settings, since: Math.max(state.settings.since, sms.date) } };
@@ -202,7 +257,7 @@ export async function syncSmsTransactions(
     error = getErrorMessage(err, "Couldn't record SMS transactions");
   }
 
-  return { settings: { ...state.settings, recent: state.recent }, result: { imported: state.imported, error } };
+  return { settings: { ...state.settings, recent: state.recent }, result: { imported: state.imported, scanned, error } };
 }
 
 /**

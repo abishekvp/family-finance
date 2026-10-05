@@ -1,11 +1,11 @@
 import { useState } from "react";
-import { KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, View } from "react-native";
+import { Pressable, ScrollView, Text, View } from "react-native";
 import { Link, useRouter } from "expo-router";
 import { Eye, EyeOff } from "lucide-react-native";
 import { useAuth } from "../src/context/AuthContext";
 import { useTheme } from "../src/context/ThemeContext";
 import { getErrorMessage } from "../src/api/errors";
-import { Button, ErrorText, Field, IconButton, Input } from "../src/components/ui";
+import { Button, ErrorText, Field, IconButton, Input, FormScrollView } from "../src/components/ui";
 import { Logo } from "../src/components/Logo";
 import { SocialSignIn } from "../src/components/SocialSignIn";
 import { href } from "../src/lib/nav";
@@ -35,8 +35,7 @@ export default function Login() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.canvas }}>
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-        <ScrollView contentContainerStyle={{ flexGrow: 1, justifyContent: "center", padding: 24, paddingBottom: 64 }} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets={true}>
+      <FormScrollView contentContainerStyle={{ flexGrow: 1, justifyContent: "center", padding: 24, paddingBottom: 64 }}>
           <Logo size={56} style={{ alignSelf: "center", marginBottom: 24 }} />
           <Text style={{ fontSize: 24, fontWeight: "900", color: colors.ink, textAlign: "center" }}>Welcome back</Text>
           <Text style={{ color: colors.inkMuted, textAlign: "center", marginTop: 6, marginBottom: 28 }}>
@@ -80,8 +79,7 @@ export default function Login() {
               Create one
             </Link>
           </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
+        </FormScrollView>
     </View>
   );
 }

@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useState } from "react";
-import { KeyboardAvoidingView, Platform, ScrollView, Text, View } from "react-native";
+import { ScrollView, Text, View } from "react-native";
 import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
 import { Trash2 } from "lucide-react-native";
 import { api } from "../../src/api/client";
@@ -8,7 +8,7 @@ import type { Account, Budget, Category, RecurringFrequency, RecurringTransactio
 import { useAuth } from "../../src/context/AuthContext";
 import { useTheme } from "../../src/context/ThemeContext";
 import { getErrorMessage } from "../../src/api/errors";
-import { Button, Chip, ErrorText, Field, Input, Segmented, SkeletonRows, Toggle } from "../../src/components/ui";
+import { Button, Chip, ErrorText, Field, Input, Segmented, SkeletonRows, Toggle, FormScrollView } from "../../src/components/ui";
 import { CategoryPicker } from "../../src/components/CategoryPicker";
 import { NewCategoryForm } from "../../src/components/NewCategoryForm";
 import { currencySymbol } from "../../src/lib/format";
@@ -194,8 +194,8 @@ export default function RecurringForm() {
         : "Recorded on each date and counted in your monthly budget for its category.";
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1, backgroundColor: colors.canvas }} behavior={Platform.OS === "ios" ? "padding" : undefined} keyboardVerticalOffset={Platform.OS === "ios" ? 100 : 0}>
-      <ScrollView contentContainerStyle={{ padding: 16, gap: 18, paddingBottom: 64 }} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets={true}>
+    <View style={{ flex: 1, backgroundColor: colors.canvas }}>
+      <FormScrollView contentContainerStyle={{ padding: 16, gap: 18, paddingBottom: 64 }}>
         <ErrorText>{loadError}</ErrorText>
 
         <Segmented
@@ -296,12 +296,13 @@ export default function RecurringForm() {
           </Field>
         )}
 
-        <Field label="Category" hint={type === "EXPENSE" ? "Its budget is where this counts. Tap again to clear." : "Tap again to clear."}>
+        <Field label="Category" hint={type === "EXPENSE" ? "Its budget is where this counts." : undefined}>
           <View style={{ gap: 12 }}>
             <CategoryPicker
               categories={categoriesForType}
               selectedId={categoryId}
-              onSelect={(id) => setCategoryId(id === categoryId ? null : id)}
+              onSelect={setCategoryId}
+              clearLabel="No category"
               onAddNew={canEdit && !addingCategory ? () => setAddingCategory(true) : undefined}
             />
             {addingCategory && (
@@ -357,7 +358,7 @@ export default function RecurringForm() {
           ) : (
             <Button title="Delete repeating payment" variant="ghost" icon={<Trash2 size={16} color={colors.expense} />} onPress={() => setConfirmDelete(true)} />
           ))}
-      </ScrollView>
-    </KeyboardAvoidingView>
+      </FormScrollView>
+    </View>
   );
 }

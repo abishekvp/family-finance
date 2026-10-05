@@ -648,7 +648,7 @@ function BudgetForm({
           <CategoryPicker
             categories={choices}
             selectedId={categoryId}
-            onSelect={selectCategory}
+            onSelect={(id) => id && selectCategory(id)}
             onAddNew={addingCategory ? undefined : () => setAddingCategory(true)}
           />
           {addingCategory && (

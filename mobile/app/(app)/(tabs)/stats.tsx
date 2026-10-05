@@ -13,6 +13,7 @@ import { monthRange, yearRange } from "../../../src/lib/dateUtils";
 import { CHART_SWATCHES } from "../../../src/theme";
 import { DonutChart } from "../../../src/components/DonutChart";
 import { useTransactions } from "../../../src/lib/transactionStore";
+import { countedAmount } from "../../../src/lib/transactionTotals";
 
 type TypeFilter = "EXPENSE" | "INCOME";
 type PeriodMode = "monthly" | "yearly";
@@ -72,12 +73,15 @@ export default function Stats() {
   const slices = useMemo<CategorySlice[]>(() => {
     const map = new Map<string, CategorySlice>();
     for (const t of transactions) {
+      // After refunds: a fully refunded charge (or a refund itself) adds nothing.
+      const amount = countedAmount(t);
+      if (amount <= 0) continue;
       const key = t.category?.id ?? "uncategorized";
       const existing = map.get(key);
       if (existing) {
-        existing.amount += t.amount;
+        existing.amount += amount;
       } else {
-        map.set(key, { key, name: t.category?.name ?? "Uncategorized", color: t.category?.color ?? colors.inkSubtle, amount: t.amount });
+        map.set(key, { key, name: t.category?.name ?? "Uncategorized", color: t.category?.color ?? colors.inkSubtle, amount });
       }
     }
     // Categories left on the default colour get distinct chart colours, so slices stay apart.

@@ -2,6 +2,7 @@ import { ScrollView, Text, View } from "react-native";
 import type { Account, Transaction } from "../../api/types";
 import { useTheme } from "../../context/ThemeContext";
 import { Button, Checkbox, Money, Sheet } from "../ui";
+import { totalsContribution } from "../../lib/transactionTotals";
 
 /**
  * Lets the user check which accounts to include; each row shows that account's income/expense

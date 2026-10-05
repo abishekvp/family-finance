@@ -40,11 +40,14 @@ export async function issueSession(res: Response, userId: string) {
 }
 
 /**
+ * `res` is null for native clients, which send their token in the body and keep it in secure
+ * storage: they get no cookie (see /auth/refresh).
+ *
  * Swaps a refresh token for its successor in one transaction: the old one is revoked and the new
  * one exists together or not at all. Returns null when the old token was no longer live (another
  * request rotated it first) — the caller then looks for the successor that request created.
  */
-export async function rotateSession(res: Response, tokenId: string, userId: string, oldToken: string) {
+export async function rotateSession(res: Response | null, tokenId: string, userId: string, oldToken: string) {
   const { token, tokenHash, expiresAt } = successorRefreshToken(oldToken);
   const rotated = await prisma.$transaction(async (tx) => {
     const { count } = await tx.refreshToken.updateMany({
@@ -56,7 +59,7 @@ export async function rotateSession(res: Response, tokenId: string, userId: stri
     return true;
   });
   if (!rotated) return null;
-  res.cookie(REFRESH_COOKIE, token, REFRESH_COOKIE_OPTIONS);
+  res?.cookie(REFRESH_COOKIE, token, REFRESH_COOKIE_OPTIONS);
   return { accessToken: signAccessToken(userId), refreshToken: token };
 }
 
@@ -65,11 +68,11 @@ export async function rotateSession(res: Response, tokenId: string, userId: stri
  * used itself. That is exactly the state a client is in when it never received the rotation's
  * response, so it gets the same successor back (with a fresh access token) instead of a 401.
  */
-export async function replaySession(res: Response, oldToken: string) {
+export async function replaySession(res: Response | null, oldToken: string) {
   const { token, tokenHash } = successorRefreshToken(oldToken);
   const successor = await prisma.refreshToken.findUnique({ where: { tokenHash } });
   if (!successor || successor.revokedAt || successor.expiresAt < new Date()) return null;
-  res.cookie(REFRESH_COOKIE, token, REFRESH_COOKIE_OPTIONS);
+  res?.cookie(REFRESH_COOKIE, token, REFRESH_COOKIE_OPTIONS);
   return { accessToken: signAccessToken(successor.userId), refreshToken: token };
 }
 

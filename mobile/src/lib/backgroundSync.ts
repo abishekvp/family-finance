@@ -2,7 +2,7 @@ import * as BackgroundTask from "expo-background-task";
 import * as TaskManager from "expo-task-manager";
 import { api, refreshAccessToken } from "../api/client";
 import { isSmsReaderAvailable } from "../../modules/sms-reader";
-import { loadSmsSettings, saveSmsSettings, syncSmsTransactions } from "./smsImport";
+import { runSmsSync } from "./smsImport";
 import { syncTransactions } from "./transactionStore";
 import { runRecurring } from "./recurring";
 
@@ -26,13 +26,7 @@ TaskManager.defineTask(BACKGROUND_SYNC_TASK, async ({ error }) => {
     // last and wrapped by the outer try/catch.
     await runRecurring(family.id, { force: true });
 
-    if (isSmsReaderAvailable()) {
-      const settings = await loadSmsSettings(family.id);
-      if (settings.enabled) {
-        const { settings: next } = await syncSmsTransactions(family.id, settings);
-        await saveSmsSettings(next);
-      }
-    }
+    if (isSmsReaderAvailable()) await runSmsSync(family.id);
 
     await syncTransactions(userId, family.id, { force: true });
     return BackgroundTask.BackgroundTaskResult.Success;

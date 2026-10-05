@@ -11,8 +11,13 @@ class SmsHeadlessTaskService : HeadlessJsTaskService() {
     return HeadlessJsTaskConfig(
       "SmsSyncTask",
       Arguments.createMap(),
-      20000, // ms — one network round trip to sync, generous but bounded
-      false // not allowed to promote itself to a foreground service
+      // ms. The task waits for the messaging app to write the SMS to the inbox (it's broadcast
+      // before that happens), then refreshes the session and records it: allow for a cold start.
+      60000,
+      // Must be true: with false, an SMS arriving while the app is open made the task refuse to
+      // start (HeadlessJsTaskContext throws when the app is in the foreground). The task shares its
+      // scan lock with the app's own scans, so running alongside them records nothing twice.
+      true
     )
   }
 }

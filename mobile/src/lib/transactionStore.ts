@@ -201,8 +201,28 @@ onTransactionWrite((write) => {
     cache.localWrites?.set(id, row);
     notify(cache);
     persistSoon(cache);
+    followUpSoon(cache);
   }
 });
+
+/**
+ * A save can change other rows on the server too — the expense a refund points at gets a new
+ * refunded amount — which the response doesn't carry. Sync shortly after (once per burst of saves)
+ * so they arrive without waiting for the next screen visit.
+ */
+const followUps = new WeakMap<FamilyCache, ReturnType<typeof setTimeout>>();
+function followUpSoon(cache: FamilyCache) {
+  if (!cache.ready) return;
+  const pending = followUps.get(cache);
+  if (pending) clearTimeout(pending);
+  followUps.set(
+    cache,
+    setTimeout(() => {
+      followUps.delete(cache);
+      if (caches.get(key(cache.userId, cache.familyId)) === cache) startSync(cache).catch(() => undefined);
+    }, 1500)
+  );
+}
 
 // ---- sync ----------------------------------------------------------------------------------
 

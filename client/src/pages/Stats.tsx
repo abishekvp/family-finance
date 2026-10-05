@@ -10,7 +10,7 @@ import type { Transaction } from "../api/types";
 import { monthRange, yearRange } from "../lib/dateUtils";
 import { formatPercent } from "../lib/format";
 import { CategoryPie, type CategorySlice } from "../components/stats/CategoryPie";
-import { countsTowardTotals } from "../lib/transactionTotals";
+import { countedAmount, countsTowardTotals } from "../lib/transactionTotals";
 import { useFamilyData, useYearTransactions } from "../context/FamilyDataContext";
 
 type Metric = "Income" | "Expenses";
@@ -21,7 +21,7 @@ const UNCATEGORIZED_COLOR = "#94A3B8";
 function totalFor(transactions: Transaction[], accountIds: Set<string>, type: Transaction["type"]) {
   return transactions
     .filter((t) => t.type === type && accountIds.has(t.accountId) && countsTowardTotals(t))
-    .reduce((s, t) => s + t.amount, 0);
+    .reduce((s, t) => s + countedAmount(t), 0);
 }
 
 function inRange(transactions: Transaction[], from: Date, to: Date) {
@@ -79,7 +79,7 @@ export function Stats() {
         color: t.category?.color ?? UNCATEGORIZED_COLOR,
         amount: 0,
       };
-      entry.amount += t.amount;
+      entry.amount += countedAmount(t);
       totals.set(key, entry);
     }
     const total = Array.from(totals.values()).reduce((s, v) => s + v.amount, 0);

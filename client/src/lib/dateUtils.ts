@@ -29,3 +29,8 @@ export const MONTH_LABELS = [
   "November",
   "December",
 ];
+
+/** The local calendar day of `date` as YYYY-MM-DD (not the UTC day toISOString() would give). */
+export function localDateInput(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}

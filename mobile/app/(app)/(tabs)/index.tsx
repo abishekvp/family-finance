@@ -21,6 +21,7 @@ import { MonthlyView } from "../../../src/components/transactions/MonthlyView";
 import { TotalView } from "../../../src/components/transactions/TotalView";
 import { FilterModal } from "../../../src/components/transactions/FilterModal";
 import * as Haptics from "expo-haptics";
+import { totalsContribution } from "../../../src/lib/transactionTotals";
 
 type SubView = "daily" | "calendar" | "monthly" | "total";
 
@@ -157,13 +158,9 @@ export default function TransactionsHub() {
     let income = 0;
     let expense = 0;
     for (const t of filteredTransactions) {
-      if (t.type === "EXPENSE" && t.isRefunded) continue;
-      if (t.type === "INCOME" && t.refundsId) continue;
-      const catName = t.category?.name?.toLowerCase() || "";
-      if (catName.includes("return") || catName.includes("refund")) continue;
-
-      if (t.type === "INCOME") income += t.amount;
-      else if (t.type === "EXPENSE") expense += t.amount;
+      const counted = totalsContribution(t);
+      income += counted.income;
+      expense += counted.expense;
     }
     return { income, expense, net: income - expense };
   }, [filteredTransactions]);

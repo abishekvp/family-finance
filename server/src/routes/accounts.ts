@@ -5,6 +5,7 @@ import { prisma } from "../lib/prisma";
 import { asyncHandler, AppError } from "../middleware/errorHandler";
 import { requireAuth, requireFamilyRole } from "../middleware/auth";
 import { COUNTED } from "../lib/approval";
+import { recalculateBalancesNow } from "../lib/balances";
 
 export const accountsRouter = Router({ mergeParams: true });
 accountsRouter.use(requireAuth);
@@ -77,6 +78,8 @@ accountsRouter.post(
         creditLimit: data.creditLimit,
         color: data.color,
         icon: data.icon,
+        // Nothing has been recorded on it yet, so it starts at its opening balance.
+        currentBalance: data.openingBalance,
       },
     });
 
@@ -147,8 +150,13 @@ accountsRouter.patch(
       },
     });
 
-    // Client refetches the account list (which recomputes balance) after a save,
-    // so the raw updated row is returned here rather than duplicating that calc.
+    // The balance is the opening balance plus everything recorded since, so it moves with it.
+    if (data.openingBalance !== undefined && Number(existing.openingBalance) !== data.openingBalance) {
+      await recalculateBalancesNow([existing.id]);
+    }
+
+    // Client refetches the account list (which reads the balance) after a save,
+    // so the raw updated row is returned here.
     res.json(updated);
   })
 );

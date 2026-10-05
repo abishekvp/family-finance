@@ -22,7 +22,7 @@ import type { Budget, Goal, Transaction } from "../api/types";
 import { formatPercent, safePercent } from "../lib/format";
 import { monthRange } from "../lib/dateUtils";
 import { TransactionFormModal } from "../components/transactions/TransactionFormModal";
-import { countsTowardTotals } from "../lib/transactionTotals";
+import { countedAmount, countsTowardTotals } from "../lib/transactionTotals";
 import { useFamilyData, useYearTransactions } from "../context/FamilyDataContext";
 
 // A genuine at-a-glance overview. Full account management lives on Accounts.tsx and the full
@@ -108,8 +108,8 @@ export function Dashboard() {
     let expense = 0;
     for (const t of transactions) {
       if (!visibleAccountIds.has(t.accountId) || !countsTowardTotals(t)) continue;
-      if (t.type === "INCOME") income += t.amount;
-      else if (t.type === "EXPENSE") expense += t.amount;
+      if (t.type === "INCOME") income += countedAmount(t);
+      else if (t.type === "EXPENSE") expense += countedAmount(t);
     }
     return { income, expense, net: income - expense };
   }

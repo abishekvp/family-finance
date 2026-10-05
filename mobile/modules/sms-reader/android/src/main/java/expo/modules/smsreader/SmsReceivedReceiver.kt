@@ -20,6 +20,12 @@ class SmsReceivedReceiver : BroadcastReceiver() {
     // could otherwise fall asleep in the moment between startService() returning here and the
     // service actually starting the task.
     HeadlessJsTaskService.acquireWakeLockNow(context)
-    context.startService(Intent(context, SmsHeadlessTaskService::class.java))
+    try {
+      context.startService(Intent(context, SmsHeadlessTaskService::class.java))
+    } catch (e: IllegalStateException) {
+      // Some OEM builds refuse background service starts even for SMS broadcasts. Nothing is lost:
+      // the next app open or periodic background sync scans past the same watermark.
+    } catch (e: SecurityException) {
+    }
   }
 }

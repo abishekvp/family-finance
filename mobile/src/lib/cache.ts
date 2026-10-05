@@ -23,9 +23,11 @@ export async function fetchWithCache<T>(
       const cached = JSON.parse(file.textSync());
       onCacheHit({ data: cached as T });
       if (maxAgeMs !== undefined) {
-        const stat = file.getInfo();
+        // getInfo() doesn't exist on the new File API (it threw, so the cache was never "fresh").
+        // info().modificationTime is already in milliseconds.
+        const stat = file.info();
         if (stat.exists && stat.modificationTime) {
-          const ageMs = Date.now() - (stat.modificationTime * 1000);
+          const ageMs = Date.now() - stat.modificationTime;
           if (ageMs < maxAgeMs) isFresh = true;
         }
       }

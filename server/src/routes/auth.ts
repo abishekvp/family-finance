@@ -122,9 +122,11 @@ async function currentUser(userId: string) {
 const REUSE_GRACE_MS = 10_000;
 // A rotated token whose successor was never used is honored again for this long: the client most
 // likely never received the rotation's response (a phone dropping its connection mid-request, a
-// timeout, the app killed) and is retrying. It gets the same successor back. Beyond this, or once
-// the successor has itself been used, a replay is treated as theft.
-const REPLAY_WINDOW_MS = 15 * 60_000;
+// timeout, the app killed before secure storage was written) and is retrying, possibly only the
+// next time the app is opened, days later. It gets the same successor back. Once the successor has
+// itself been used, a replay is treated as theft — that check is what catches a stolen token, so
+// the window can be long without weakening it.
+const REPLAY_WINDOW_MS = 30 * 24 * 60 * 60_000;
 
 // An app opening with a stored session needs a token and then the user. `?include=user` returns
 // both at once, saving a sequential round trip on every page load.
@@ -135,21 +137,28 @@ async function withUser<T extends object>(req: Request, session: T, userId: stri
 authRouter.post(
   "/refresh",
   asyncHandler(async (req, res) => {
-    const token = req.cookies?.[REFRESH_COOKIE] ?? req.body?.refreshToken;
+    // The apps send their token in the body. That must win over a cookie: React Native's HTTP
+    // client keeps cookies too, but writes them to disk lazily, so after the app is killed the
+    // cookie can hold a token that has since been rotated away — and presenting that one looks like
+    // theft and signed the whole account out. Web clients send no body token, only the cookie.
+    const bodyToken = typeof req.body?.refreshToken === "string" && req.body.refreshToken ? (req.body.refreshToken as string) : null;
+    const token = bodyToken ?? req.cookies?.[REFRESH_COOKIE];
     if (!token) throw new AppError(401, "Missing refresh token");
+    // Native clients get no cookie, so there is never a second, stale copy of their token.
+    const cookieRes = bodyToken ? null : res;
 
     const tokenHash = hashRefreshToken(token);
     const existing = await prisma.refreshToken.findUnique({ where: { tokenHash } });
 
     if (!existing || existing.expiresAt < new Date()) {
-      res.clearCookie(REFRESH_COOKIE, { path: "/api/auth" });
+      if (!bodyToken) res.clearCookie(REFRESH_COOKIE, { path: "/api/auth" });
       throw new AppError(401, "Refresh token is invalid or expired");
     }
 
     if (existing.revokedAt) {
       const revokedAgo = Date.now() - existing.revokedAt.getTime();
       if (revokedAgo < REPLAY_WINDOW_MS) {
-        const replayed = await replaySession(res, token);
+        const replayed = await replaySession(cookieRes, token);
         if (replayed) {
           res.json(await withUser(req, replayed, existing.userId));
           return;
@@ -162,7 +171,7 @@ authRouter.post(
       }
       // This token was already rotated away. Presenting it again means it leaked (someone else
       // has it, or it was replayed) — burn every session for the account rather than honoring it.
-      res.clearCookie(REFRESH_COOKIE, { path: "/api/auth" });
+      if (!bodyToken) res.clearCookie(REFRESH_COOKIE, { path: "/api/auth" });
       await revokeAllSessions(existing.userId);
       throw new AppError(401, "Refresh token is invalid or expired");
     }
@@ -170,7 +179,8 @@ authRouter.post(
     // Conditioned on still being unrevoked, so two concurrent refreshes of the same token can't
     // both rotate it — only the first wins. The loser raced it within the same instant and gets
     // the successor the winner created, so both callers end up holding the same live token.
-    const session = (await rotateSession(res, existing.id, existing.userId, token)) ?? (await replaySession(res, token));
+    const session =
+      (await rotateSession(cookieRes, existing.id, existing.userId, token)) ?? (await replaySession(cookieRes, token));
     if (!session) {
       throw new AppError(401, "Refresh token is invalid or expired");
     }
@@ -181,7 +191,7 @@ authRouter.post(
 authRouter.post(
   "/logout",
   asyncHandler(async (req, res) => {
-    const token = req.cookies?.[REFRESH_COOKIE] ?? req.body?.refreshToken;
+    const token = req.body?.refreshToken || req.cookies?.[REFRESH_COOKIE];
     if (token) {
       const tokenHash = hashRefreshToken(token);
       await prisma.refreshToken

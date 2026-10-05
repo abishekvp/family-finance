@@ -11,6 +11,7 @@ import { localDateInput } from "../../lib/dateUtils";
 import { getErrorMessage } from "../../api/errors";
 import { CarryOverRow } from "./CarryOverRow";
 import { budgetName } from "../../lib/budgets";
+import { totalsContribution } from "../../lib/transactionTotals";
 
 export function TotalView({
   transactions,

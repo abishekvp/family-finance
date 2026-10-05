@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, View } from "react-native";
+import { ScrollView, Text, View } from "react-native";
 import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
 import { ArrowRight, Plus, Repeat, Trash2 } from "lucide-react-native";
 import { api } from "../../src/api/client";
@@ -8,7 +8,7 @@ import type { Account, Budget, Category, RecurringFrequency, Transaction, Transa
 import { useAuth } from "../../src/context/AuthContext";
 import { useTheme } from "../../src/context/ThemeContext";
 import { ClientError, getErrorMessage } from "../../src/api/errors";
-import { Button, Chip, ErrorText, Field, Input, Segmented, SkeletonRows, Toggle } from "../../src/components/ui";
+import { Button, Chip, ErrorText, Field, Input, Segmented, SkeletonRows, Toggle, FormScrollView } from "../../src/components/ui";
 import { CategoryPicker } from "../../src/components/CategoryPicker";
 import { RefundsPicker } from "../../src/components/RefundsPicker";
 import { NewCategoryForm } from "../../src/components/NewCategoryForm";
@@ -228,10 +228,13 @@ export default function TransactionForm() {
   }, [repaying, person, personHistory, initial?.id, repaysId]);
   const linkedLoan = openLoans.find((l) => l.transaction!.id === repaysId) ?? null;
   
-  const expenseFilter = useMemo(() => (type === "INCOME" ? { type: "EXPENSE" as const } : null), [type]);
-  const { transactions: expenses } = useTransactions(user!.id, family.id, expenseFilter);
-  const recentExpenses = useMemo(() => expenses.filter((t) => !t.isDeleted && !t.isRefunded && t.id !== initial?.id).slice(0, 30), [expenses, initial?.id]);
-  const linkedRefund = recentExpenses.find((t) => t.id === refundsId) || (initial?.refundsId ? { id: initial.refundsId, payee: "an expense", amount: 0, date: "" } as any : null);
+  // A refund (income) gives back an expense; a return (expense) gives back an income.
+  const refundable = type === "INCOME" || type === "EXPENSE" ? type : null;
+  const refundFilter = useMemo(
+    () => (refundable ? { type: refundable === "INCOME" ? ("EXPENSE" as const) : ("INCOME" as const) } : null),
+    [refundable]
+  );
+  const { transactions: refundCandidates } = useTransactions(user!.id, family.id, refundFilter);
 
   // New categories are income or expense; for Lend/Borrow, by which way the money went.
   const newCategoryType = isLending ? (moneyGoesOut(kind) ? "EXPENSE" : "INCOME") : type === "INCOME" ? "INCOME" : "EXPENSE";
@@ -314,13 +317,12 @@ export default function TransactionForm() {
    * into a Lend/Borrow return so it settles the loan instead of counting as income or spending.
    */
   const canBeLoanReturn = (type === "INCOME" || type === "EXPENSE") && !paidByPerson && !initial?.recurringId;
-  function recordAsLoanReturn() {
-    const nextKind: LendingKind = type === "INCOME" ? "got-back" : "paid-back";
+  function recordAsLending(nextKind: LendingKind) {
     const typedName = payee.trim().toLowerCase();
     const match = typedName ? people.find((p) => p.name.trim().toLowerCase() === typedName) : undefined;
     handleSelectType("LENDING");
     setKind(nextKind);
-    setRepaysId(null); setRefundsId(null);
+    setRepaysId(null);
     if (match) {
       setAddingPerson(false);
       setPersonId(match.id);
@@ -328,6 +330,8 @@ export default function TransactionForm() {
   }
 
   function handleSelectType(next: FormType) {
+    // A refund links to the opposite kind of entry, so the link can't survive a change of type.
+    if (next !== type) setRefundsId(null);
     setType(next);
     if (next === "TRANSFER") setCategoryId(null);
     else if (next !== "LENDING") {
@@ -397,9 +401,9 @@ export default function TransactionForm() {
       transferToAccountId: type === "TRANSFER" ? transferToAccountId : null,
       payee: payee.trim() || null,
       notes: notes.trim() || null,
-      refundsId: type === "INCOME" ? refundsId : null,
+      refundsId: type === "INCOME" || type === "EXPENSE" ? refundsId : null,
       // An entry turned from Lend/Borrow into something else stops being a loan.
-      ...(initial ? { tags: withoutKindTag(initial.tags), dueDate: null, repaysId: null, ...(type !== "INCOME" ? { refundsId: null } : {}) } : {}),
+      ...(initial ? { tags: withoutKindTag(initial.tags ?? []), dueDate: null, repaysId: null } : {}),
     };
   }
 
@@ -456,7 +460,7 @@ export default function TransactionForm() {
         setPayee("");
         setNotes("");
         setDueDate("");
-        setRepaysId(null); setRefundsId(null);
+        setRepaysId(null);
         setRefundsId(null);
         setRepeat(null);
         setDate(todayIso());
@@ -519,31 +523,28 @@ export default function TransactionForm() {
     type === "INCOME" || (isLending && !moneyGoesOut(kind)) ? colors.income : type === "EXPENSE" || isLending ? colors.expense : colors.brand600;
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1, backgroundColor: colors.canvas }} behavior={Platform.OS === "ios" ? "padding" : undefined} keyboardVerticalOffset={Platform.OS === "ios" ? 100 : 0}>
-      <ScrollView contentContainerStyle={{ padding: 16, gap: 18, paddingBottom: 64 }} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets={true}>
+    <View style={{ flex: 1, backgroundColor: colors.canvas }}>
+      <FormScrollView contentContainerStyle={{ padding: 16, gap: 18, paddingBottom: 64 }}>
         <ErrorText>{loadError}</ErrorText>
 
         <Segmented fullWidth value={type} onChange={handleSelectType} options={TYPE_OPTIONS} />
 
         {canBeLoanReturn && (
-          <Pressable
-            onPress={recordAsLoanReturn}
-            style={({ pressed }) => ({
-              flexDirection: "row",
-              alignItems: "center",
-              gap: 10,
-              padding: 12,
-              borderRadius: 14,
-              backgroundColor: colors.surfaceSunken,
-              opacity: pressed ? 0.7 : 1,
-            })}
-          >
-            <Text style={{ flex: 1, fontSize: 12.5, color: colors.inkMuted }}>
-              {type === "INCOME" ? "Money someone returned? " : "Paying back money you borrowed? "}
-              <Text style={{ fontWeight: "700", color: colors.brand600 }}>{type === "INCOME" ? "Record it as a loan return" : "Record it as a loan payback"}</Text>
+          <View style={{ gap: 8, padding: 12, borderRadius: 14, backgroundColor: colors.surfaceSunken }}>
+            <Text style={{ fontSize: 12.5, color: colors.inkMuted }}>
+              {type === "INCOME" ? "Money from a person, not income? Record it as:" : "Money to a person, not spending? Record it as:"}
             </Text>
-            <ArrowRight size={15} color={colors.brand600} />
-          </Pressable>
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+              {(type === "INCOME" ? (["got-back", "borrowed"] as const) : (["lent", "paid-back"] as const)).map((k) => (
+                <Chip
+                  key={k}
+                  label={LENDING_KINDS.find((x) => x.value === k)!.label}
+                  icon={<ArrowRight size={13} color={colors.brand600} />}
+                  onPress={() => recordAsLending(k)}
+                />
+              ))}
+            </View>
+          </View>
         )}
 
         {isLending && (
@@ -556,7 +557,7 @@ export default function TransactionForm() {
                   selected={kind === k.value}
                   onPress={() => {
                     setKind(k.value);
-                    setRepaysId(null); setRefundsId(null);
+                    setRepaysId(null);
                   }}
                 />
               ))}
@@ -606,7 +607,7 @@ export default function TransactionForm() {
                   selected={!addingPerson && personId === p.id}
                   onPress={() => {
                     setAddingPerson(false);
-                    if (p.id !== personId) setRepaysId(null); setRefundsId(null);
+                    if (p.id !== personId) setRepaysId(null);
                     setPersonId(p.id);
                   }}
                 />
@@ -618,7 +619,7 @@ export default function TransactionForm() {
                   selected={addingPerson}
                   onPress={() => {
                     setAddingPerson(true);
-                    setRepaysId(null); setRefundsId(null);
+                    setRepaysId(null);
                   }}
                 />
               )}
@@ -664,25 +665,29 @@ export default function TransactionForm() {
           </Field>
         )}
 
-        {type === "INCOME" && recentExpenses.length > 0 && (
+        {refundable && !paidByPerson && (refundCandidates.length > 0 || refundsId) && (
           <Field
-            label="Refunds Expense"
+            label={refundable === "INCOME" ? "Refund of" : "Return of"}
             hint={
-              linkedRefund
-                ? "This income will cancel out the selected expense in your budgets."
-                : "Select an expense to mark this income as a refund."
+              refundsId
+                ? refundable === "INCOME"
+                  ? "Money back for that expense: it comes off what the expense counts for, and isn't counted as income."
+                  : "Money handed back out of that income: it comes off the income, and isn't counted as spending."
+                : refundable === "INCOME"
+                  ? "Money back for something you paid — a cancelled order, a reversed verification charge? Pick the expense."
+                  : "Handing back money you received — a wrong transfer, a deposit? Pick the income."
             }
           >
             <RefundsPicker
-              expenses={recentExpenses}
+              type={refundable}
+              candidates={refundCandidates}
+              self={initial}
               selectedId={refundsId}
-              familyCurrency={family.currency}
-              onSelect={(id) => {
+              amount={amountValue}
+              date={dateDay}
+              onSelect={(id, left) => {
                 setRefundsId(id);
-                if (id) {
-                  const expense = recentExpenses.find((e) => e.id === id);
-                  if (expense && !amount.trim()) setAmount(String(expense.amount));
-                }
+                if (id && left && left > 0 && (!amount.trim() || amountValue > left)) setAmount(String(Number(left.toFixed(2))));
               }}
             />
           </Field>
@@ -765,12 +770,13 @@ export default function TransactionForm() {
                 </View>
               </Field>
             )}
-            <Field label="Category" hint={isLending ? "Optional — what it was for. Tap again to clear." : "Tap again to clear."}>
+            <Field label="Category" hint={isLending ? "Optional — what it was for." : undefined}>
               <View style={{ gap: 12 }}>
                 <CategoryPicker
                   categories={categoriesForType}
                   selectedId={categoryId}
-                  onSelect={(id) => setCategoryId(id === categoryId ? null : id)}
+                  onSelect={setCategoryId}
+                  clearLabel="No category"
                   onAddNew={family.role !== "VIEWER" && !addingCategory ? () => setAddingCategory(true) : undefined}
                 />
                 {addingCategory && (
@@ -858,7 +864,7 @@ export default function TransactionForm() {
               onPress={() => setConfirmDelete(true)}
             />
           ))}
-      </ScrollView>
-    </KeyboardAvoidingView>
+      </FormScrollView>
+    </View>
   );
 }

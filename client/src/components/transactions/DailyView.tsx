@@ -6,6 +6,7 @@ import { EmptyOrCarryOver } from "./EmptyOrCarryOver";
 import { Money } from "../figures";
 import { cumulativeBalance } from "../../lib/carryOver";
 import { SkeletonRows } from "../ui";
+import { countedAmount } from "../../lib/transactionTotals";
 
 interface DailyGroup {
   key: string;
@@ -47,8 +48,8 @@ export function DailyView({
         map.set(key, group);
       }
       group.transactions.push(t);
-      if (t.type === "INCOME") group.income += t.amount;
-      else if (t.type === "EXPENSE") group.expense += t.amount;
+      if (t.type === "INCOME") group.income += countedAmount(t);
+      else if (t.type === "EXPENSE") group.expense += countedAmount(t);
     }
     return Array.from(map.values()).sort((a, b) => b.date.getTime() - a.date.getTime());
   }, [transactions]);

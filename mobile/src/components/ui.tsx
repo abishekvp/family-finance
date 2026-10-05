@@ -1,8 +1,10 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import {
   ActivityIndicator,
   Animated,
   Easing,
+  Keyboard,
+  Platform,
   Modal as RNModal,
   Pressable,
   ScrollView,
@@ -11,7 +13,9 @@ import {
   TextInput,
   View,
   type GestureResponderEvent,
+  type KeyboardEvent,
   type PressableProps,
+  type ScrollViewProps,
   type StyleProp,
   type TextInputProps,
   type TextStyle,
@@ -59,6 +63,77 @@ export function Screen({
           <View style={[{ flex: 1, padding: SPACE.lg }, contentStyle]}>{children}</View>
         )}
       </SafeAreaView>
+    </View>
+  );
+}
+
+/* ---------------------------------------------------------------- keyboard */
+
+const KEYBOARD_SHOW = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+const KEYBOARD_HIDE = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+
+/**
+ * How much of `container` the on-screen keyboard covers, kept up to date as it opens, changes size
+ * and closes. Android draws edge-to-edge (mandatory since Expo 54), so the window no longer shrinks
+ * for the keyboard and fields near the bottom end up behind it. Measuring the actual overlap rather
+ * than taking the keyboard's height also stays right on a device that does still resize the window
+ * (the overlap is then zero).
+ */
+function useKeyboardOverlap(container: RefObject<View | null>, onShown?: (keyboardTop: number) => void) {
+  const [overlap, setOverlap] = useState(0);
+  const shownRef = useRef(onShown);
+  shownRef.current = onShown;
+  useEffect(() => {
+    const show = Keyboard.addListener(KEYBOARD_SHOW, (e: KeyboardEvent) => {
+      const keyboardTop = e.endCoordinates.screenY;
+      container.current?.measureInWindow((_x, y, _w, h) => {
+        setOverlap(Math.max(0, y + h - keyboardTop));
+        shownRef.current?.(keyboardTop);
+      });
+    });
+    const hide = Keyboard.addListener(KEYBOARD_HIDE, () => setOverlap(0));
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, [container]);
+  return overlap;
+}
+
+/**
+ * A ScrollView for forms: it shrinks above the keyboard and scrolls the focused field into view, so
+ * a Notes field at the bottom of a long form is never hidden behind the keyboard.
+ */
+export function FormScrollView({ children, onScroll, style, ...props }: ScrollViewProps & { children: ReactNode }) {
+  const wrapper = useRef<View>(null);
+  const scroll = useRef<ScrollView>(null);
+  const offset = useRef(0);
+  const revealFocused = useCallback((keyboardTop: number) => {
+    // After the padding below has been laid out.
+    setTimeout(() => {
+      const input = TextInput.State.currentlyFocusedInput() as unknown as View | null;
+      input?.measureInWindow?.((_x, y, _w, h) => {
+        const visibleBottom = keyboardTop - 16;
+        if (y + h > visibleBottom) scroll.current?.scrollTo({ y: offset.current + (y + h - visibleBottom), animated: true });
+      });
+    }, 60);
+  }, []);
+  const overlap = useKeyboardOverlap(wrapper, revealFocused);
+  return (
+    <View ref={wrapper} collapsable={false} style={{ flex: 1, paddingBottom: overlap }}>
+      <ScrollView
+        ref={scroll}
+        keyboardShouldPersistTaps="handled"
+        scrollEventThrottle={16}
+        {...props}
+        style={style}
+        onScroll={(e) => {
+          offset.current = e.nativeEvent.contentOffset.y;
+          onScroll?.(e);
+        }}
+      >
+        {children}
+      </ScrollView>
     </View>
   );
 }
@@ -683,9 +758,16 @@ export function Sheet({
   footer?: ReactNode;
 }) {
   const { colors } = useTheme();
+  const backdrop = useRef<View>(null);
+  // A field in the sheet would otherwise open the keyboard right over itself.
+  const keyboardOverlap = useKeyboardOverlap(backdrop);
   return (
     <RNModal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={{ flex: 1, backgroundColor: colors.overlay, justifyContent: "flex-end" }}>
+      <View
+        ref={backdrop}
+        collapsable={false}
+        style={{ flex: 1, backgroundColor: colors.overlay, justifyContent: "flex-end", paddingBottom: keyboardOverlap }}
+      >
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
         <SafeAreaView edges={["bottom"]} style={{ backgroundColor: colors.surface, borderTopLeftRadius: 28, borderTopRightRadius: 28, maxHeight: "92%" }}>
           <View style={{ alignSelf: "center", width: 36, height: 4, borderRadius: 999, backgroundColor: colors.lineStrong, marginTop: 10 }} />

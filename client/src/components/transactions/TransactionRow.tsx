@@ -39,14 +39,14 @@ export function TransactionRow({
         <div className="min-w-0">
           <p className="flex items-center gap-1.5 truncate text-sm font-semibold text-ink">
             {description}
-            {transaction.isRefunded && (
+            {transaction.isRefunded && !transaction.refundsId && (
               <span className="shrink-0 rounded-full bg-surface-sunken px-1.5 py-0.5 text-2xs font-semibold text-ink-subtle">
-                Refunded
+                {(transaction.refundedAmount ?? transaction.amount) >= transaction.amount - 0.005 ? "Refunded" : "Part refunded"}
               </span>
             )}
             {transaction.refundsId && (
               <span className="shrink-0 rounded-full bg-surface-sunken px-1.5 py-0.5 text-2xs font-semibold text-ink-subtle">
-                Refund
+                {transaction.type === "INCOME" ? "Refund" : "Returned"}
               </span>
             )}
           </p>

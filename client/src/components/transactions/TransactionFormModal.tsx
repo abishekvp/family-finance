@@ -2,9 +2,10 @@ import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "re
 import { ArrowRightLeft, HandCoins, Landmark, MinusCircle, PlusCircle, Repeat } from "lucide-react";
 import { api } from "../../api/client";
 import { getErrorMessage } from "../../api/errors";
-import { Button, Checkbox, Chip, ErrorText, Field, Input, Label, Modal, Segmented, Select, useToast } from "../ui";
+import { Button, Chip, ErrorText, Field, Input, Label, Modal, Segmented, Select, useToast } from "../ui";
+import { SearchSelect, type SearchSelectOption } from "../SearchSelect";
 import type { Account, Category, Transaction, TransactionType } from "../../api/types";
-import { currencySymbol } from "../../lib/format";
+import { currencySymbol, formatCurrency } from "../../lib/format";
 import {
   LENDING_KIND_LABELS,
   entryLabel,
@@ -54,9 +55,29 @@ const TYPE_TONE: Record<TransactionType, string> = {
   TRANSFER: "text-brand-600",
 };
 
+/**
+ * The local calendar day (YYYY-MM-DD). Not toISOString().slice(0, 10): that is the UTC day, so east
+ * of UTC an entry made after midnight showed the day before, and saving it moved it there.
+ */
 function toDateInputValue(iso: string | undefined) {
   const d = iso ? new Date(iso) : new Date();
-  return d.toISOString().slice(0, 10);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/** The instant to save for a picked day: the original time if the day didn't change, else local midnight (now for today). */
+function dateForSave(day: string, original: Transaction | null | undefined): string | undefined {
+  if (!day) return undefined;
+  if (original && day === toDateInputValue(original.date)) return original.date;
+  if (!original && day === toDateInputValue(undefined)) return new Date().toISOString();
+  return new Date(`${day}T00:00:00`).toISOString();
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** What's still left to refund on `original`, not counting `self`'s own earlier link to it. */
+function refundableLeft(original: Transaction, self: Transaction | null | undefined) {
+  const own = self && self.refundsId === original.id ? self.amount : 0;
+  return Math.max(0, original.amount - (original.refundedAmount ?? (original.isRefunded ? original.amount : 0)) + own);
 }
 
 interface FormState {
@@ -133,9 +154,8 @@ export function TransactionFormModal({
   );
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isRefund, setIsRefund] = useState(Boolean(transaction?.refundsId));
-  const [refundableExpenses, setRefundableExpenses] = useState<Transaction[] | null>(null);
-  const [isLoadingRefundables, setIsLoadingRefundables] = useState(false);
+  // Entries of the opposite type this one could give back: expenses for a refund, incomes for a return.
+  const [refundCandidates, setRefundCandidates] = useState<{ type: TransactionType; rows: Transaction[] } | null>(null);
   const toast = useToast();
   // Which way a transfer with a person runs decides its options; "kind" says if it starts or returns a loan.
   const [kindChoice, setKindChoice] = useState<LendingKind | null>(() => {
@@ -152,15 +172,41 @@ export function TransactionFormModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accounts]);
 
+  const refundable = form.type === "INCOME" || form.type === "EXPENSE";
+  const candidateType: TransactionType = form.type === "INCOME" ? "EXPENSE" : "INCOME";
   useEffect(() => {
-    if (!isRefund || refundableExpenses !== null) return;
-    setIsLoadingRefundables(true);
+    if (!refundable || refundCandidates?.type === candidateType) return;
+    let cancelled = false;
     api
-      .get<Transaction[]>(`/families/${familyId}/transactions`, { params: { type: "EXPENSE", limit: 100 } })
-      .then((res) => setRefundableExpenses(res.data))
-      .catch(() => setRefundableExpenses([]))
-      .finally(() => setIsLoadingRefundables(false));
-  }, [isRefund, refundableExpenses, familyId]);
+      .get<Transaction[]>(`/families/${familyId}/transactions`, { params: { type: candidateType, limit: 500 } })
+      .then((res) => !cancelled && setRefundCandidates({ type: candidateType, rows: res.data }))
+      .catch(() => !cancelled && setRefundCandidates({ type: candidateType, rows: [] }));
+    return () => {
+      cancelled = true;
+    };
+  }, [refundable, candidateType, refundCandidates?.type, familyId]);
+
+  const refundOptions = useMemo<SearchSelectOption[]>(() => {
+    if (!refundable || refundCandidates?.type !== candidateType) return [];
+    const amount = Number(form.amount) || 0;
+    const at = form.date ? new Date(`${form.date}T00:00:00`).getTime() : Date.now();
+    // Same amount within ten days: almost certainly the one (a verification charge reversed, an order cancelled).
+    const suggested = (t: Transaction, left: number) => amount > 0 && Math.abs(left - amount) < 0.005 && Math.abs(new Date(t.date).getTime() - at) <= 10 * DAY_MS;
+    return refundCandidates.rows
+      .filter((t) => !t.refundsId && t.id !== transaction?.id)
+      .map((t) => ({ t, left: refundableLeft(t, transaction) }))
+      .filter(({ t, left }) => left > 0.005 || t.id === form.refundsId)
+      .sort((a, b) => Number(suggested(b.t, b.left)) - Number(suggested(a.t, a.left)) || b.t.date.localeCompare(a.t.date))
+      .map(({ t, left }) => ({
+        id: t.id,
+        label: `${t.payee || t.category?.name || (t.type === "EXPENSE" ? "Expense" : "Income")} · ${formatCurrency(t.amount, t.account.currency)}`,
+        detail: `${suggested(t, left) ? "Same amount · " : ""}${toDateInputValue(t.date)} · ${t.account.name}${
+          left < t.amount - 0.005 ? ` · ${formatCurrency(left, t.account.currency)} left` : ""
+        }`,
+        color: t.category?.color,
+        keywords: `${t.amount} ${t.notes ?? ""}`,
+      }));
+  }, [refundable, refundCandidates, candidateType, form.amount, form.date, form.refundsId, transaction]);
 
   const categoriesForType = categories.filter((c) => c.type === (form.type === "INCOME" ? "INCOME" : "EXPENSE"));
   const topLevelCategories = categoriesForType.filter((c) => !c.parentId);
@@ -172,7 +218,21 @@ export function TransactionFormModal({
       childrenByParent.set(c.parentId, list);
     }
   }
-  const flatCategoryChoices = categoriesForType.length <= 14;
+  const categoryOptions = useMemo<SearchSelectOption[]>(
+    () =>
+      topLevelCategories.flatMap((parent) => [
+        { id: parent.id, label: parent.name, color: parent.color },
+        ...(childrenByParent.get(parent.id) ?? []).map((child) => ({
+          id: child.id,
+          label: child.name,
+          color: child.color,
+          indent: true,
+          keywords: parent.name,
+        })),
+      ]),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [categories, form.type]
+  );
 
   // People (lend & borrow tabs) are transfer ends; for income and expenses they only show once
   // chosen, e.g. "a friend paid for this".
@@ -230,13 +290,13 @@ export function TransactionFormModal({
         accountId: form.accountId,
         type: form.type,
         amount: Number(form.amount) || 0,
-        date: form.date ? new Date(form.date).toISOString() : undefined,
+        date: dateForSave(form.date, transaction),
         // A transfer only keeps a category when it lends to or borrows from a person (the server drops it otherwise).
         categoryId: form.categoryId || null,
         transferToAccountId: form.type === "TRANSFER" ? form.transferToAccountId : null,
         payee: form.payee.trim() || (person && kind ? entryLabel(kind, person.name) : null),
         notes: form.notes.trim() || null,
-        refundsId: form.type === "INCOME" && isRefund ? form.refundsId || null : null,
+        refundsId: form.type === "INCOME" || form.type === "EXPENSE" ? form.refundsId || null : null,
         // A return names the loan it pays back; empty means the oldest open loans with that person.
         repaysId: repaying ? form.repaysId || null : null,
         // The kind rides along as a tag (as on mobile); other tags are left as they were.
@@ -290,8 +350,7 @@ export function TransactionFormModal({
   const canSubmit =
     Boolean(form.accountId) &&
     Number(form.amount) > 0 &&
-    (form.type !== "TRANSFER" || Boolean(form.transferToAccountId)) &&
-    (form.type !== "INCOME" || !isRefund || Boolean(form.refundsId));
+    (form.type !== "TRANSFER" || Boolean(form.transferToAccountId));
 
   const canRepeat = !isEdit && (form.type === "INCOME" || form.type === "EXPENSE") && !person;
 
@@ -324,13 +383,13 @@ export function TransactionFormModal({
         <Segmented
           value={form.type}
           onChange={(value) => {
-            if (value !== "INCOME") setIsRefund(false);
             setForm((f) => ({
               ...f,
               type: value,
               categoryId: "",
               transferToAccountId: value === "TRANSFER" ? f.transferToAccountId : "",
-              refundsId: value === "INCOME" ? f.refundsId : "",
+              // A refund links to the opposite kind of entry, so it can't survive a change of type.
+              refundsId: value === f.type ? f.refundsId : "",
             }));
           }}
           options={TRANSACTION_TYPES}
@@ -414,55 +473,19 @@ export function TransactionFormModal({
               )}
             </div>
           </div>
-        ) : flatCategoryChoices ? (
-          <div>
-            <Label>Category</Label>
-            <div className="flex flex-wrap gap-2">
-              <Chip type="button" selected={!form.categoryId} onClick={() => update("categoryId", "")}>
-                None
-              </Chip>
-              {topLevelCategories.map((parent) => {
-                const children = childrenByParent.get(parent.id) ?? [];
-                return [parent, ...children].map((c) => (
-                  <Chip
-                    key={c.id}
-                    type="button"
-                    color={c.color}
-                    selected={form.categoryId === c.id}
-                    onClick={() => update("categoryId", c.id)}
-                  >
-                    {c.id === parent.id && children.length > 0 ? `${c.name} (general)` : c.name}
-                  </Chip>
-                ));
-              })}
-            </div>
-          </div>
         ) : (
           <Field label="Category">
             {(props) => (
-              <Select {...props} value={form.categoryId} onChange={(e) => update("categoryId", e.target.value)}>
-                <option value="">No category</option>
-                {topLevelCategories.map((parent) => {
-                  const children = childrenByParent.get(parent.id) ?? [];
-                  if (children.length === 0) {
-                    return (
-                      <option key={parent.id} value={parent.id}>
-                        {parent.name}
-                      </option>
-                    );
-                  }
-                  return (
-                    <optgroup key={parent.id} label={parent.name}>
-                      <option value={parent.id}>{parent.name} (general)</option>
-                      {children.map((child) => (
-                        <option key={child.id} value={child.id}>
-                          {child.name}
-                        </option>
-                      ))}
-                    </optgroup>
-                  );
-                })}
-              </Select>
+              <SearchSelect
+                {...props}
+                options={categoryOptions}
+                value={form.categoryId || null}
+                onChange={(id) => update("categoryId", id ?? "")}
+                placeholder="No category"
+                clearLabel="No category"
+                searchPlaceholder="Search categories"
+                emptyText="No category matches."
+              />
             )}
           </Field>
         )}
@@ -504,41 +527,34 @@ export function TransactionFormModal({
           </div>
         )}
 
-        {form.type === "INCOME" && (
-          <div>
-            <Checkbox
-              label="This is a refund"
-              description="Money back for an expense you already recorded — it and the original are left out of income and spending totals."
-              checked={isRefund}
-              onChange={(e) => {
-                setIsRefund(e.target.checked);
-                if (!e.target.checked) update("refundsId", "");
-              }}
-            />
-            {isRefund && (
-              <div className="mt-3">
-                <Field label="Refund of">
-                  {(props) =>
-                    isLoadingRefundables ? (
-                      <p className="text-xs text-ink-subtle">Loading expenses…</p>
-                    ) : (
-                      <Select {...props} value={form.refundsId} onChange={(e) => update("refundsId", e.target.value)}>
-                        <option value="">Select the expense being refunded</option>
-                        {(refundableExpenses ?? []).map((t) => (
-                          <option key={t.id} value={t.id}>
-                            {toDateInputValue(t.date)} · {t.payee || t.category?.name || "Expense"} ·{" "}
-                            {currencySymbol(t.account.currency)}
-                            {t.amount.toFixed(2)}
-                            {t.isRefunded ? " (already refunded)" : ""}
-                          </option>
-                        ))}
-                      </Select>
-                    )
-                  }
-                </Field>
-              </div>
+        {refundable && (refundOptions.length > 0 || form.refundsId) && (
+          <Field
+            label={form.type === "INCOME" ? "Refund of" : "Return of"}
+            hint={
+              form.type === "INCOME"
+                ? "Money back for something you paid — a cancelled order, a reversed verification charge? It comes off that expense and isn't counted as income."
+                : "Handing back money you received — a wrong transfer, a deposit? It comes off that income and isn't counted as spending."
+            }
+          >
+            {(props) => (
+              <SearchSelect
+                {...props}
+                options={refundOptions}
+                value={form.refundsId || null}
+                onChange={(id) => {
+                  update("refundsId", id ?? "");
+                  const original = id ? refundCandidates?.rows.find((t) => t.id === id) : undefined;
+                  const left = original ? refundableLeft(original, transaction) : 0;
+                  const amount = Number(form.amount) || 0;
+                  if (left > 0 && (!amount || amount > left)) update("amount", String(Number(left.toFixed(2))));
+                }}
+                placeholder={form.type === "INCOME" ? "Not a refund" : "Not a return"}
+                clearLabel={form.type === "INCOME" ? "Not a refund" : "Not a return"}
+                searchPlaceholder="Search by payee, amount or category"
+                emptyText="No matching entries."
+              />
             )}
-          </div>
+          </Field>
         )}
 
         {canRepeat && (

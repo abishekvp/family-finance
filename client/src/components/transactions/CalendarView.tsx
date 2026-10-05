@@ -7,6 +7,7 @@ import { Money } from "../figures";
 import { cn, SkeletonRows } from "../ui";
 import { cumulativeBalance } from "../../lib/carryOver";
 import { weekStartsOn, type WeekStart } from "../../lib/prefs";
+import { countedAmount } from "../../lib/transactionTotals";
 
 const WEEKDAY_LABELS_SUNDAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const WEEKDAY_LABELS_MONDAY = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -56,8 +57,8 @@ export function CalendarView({
     for (const t of transactions) {
       const key = format(new Date(t.date), "yyyy-MM-dd");
       const entry = map.get(key) ?? { income: 0, expense: 0 };
-      if (t.type === "INCOME") entry.income += t.amount;
-      else if (t.type === "EXPENSE") entry.expense += t.amount;
+      if (t.type === "INCOME") entry.income += countedAmount(t);
+      else if (t.type === "EXPENSE") entry.expense += countedAmount(t);
       map.set(key, entry);
     }
     return map;

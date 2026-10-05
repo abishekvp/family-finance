@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Linking, Platform, ScrollView, Text, View } from "react-native";
 import { format, formatDistanceToNow } from "date-fns";
+import { ActivityAction, startActivityAsync } from "expo-intent-launcher";
 import { CreditCard, History, MessageSquareText, RefreshCw, ShieldCheck, Wallet } from "lucide-react-native";
 import { api } from "../../src/api/client";
 import type { Account } from "../../src/api/types";
@@ -160,6 +161,22 @@ export default function SmsImport() {
               icon={<RefreshCw size={16} color={colors.ink} />}
               onPress={() => sms.syncNow()}
             />
+            {Platform.OS === "android" && (
+              <View style={{ gap: 8, padding: 12, borderRadius: 14, backgroundColor: colors.surfaceSunken }}>
+                <Text style={{ color: colors.inkMuted, fontSize: 12.5 }}>
+                  New alerts are recorded as they arrive, even with the app closed. If they only show up when you open the app,
+                  your phone's battery saver is stopping it: set Family Finance to "Unrestricted" / "Don't optimise" (and allow
+                  auto-start on Xiaomi, Oppo, Vivo or Realme phones).
+                </Text>
+                <Button
+                  title="Battery settings"
+                  variant="ghost"
+                  onPress={() =>
+                    startActivityAsync(ActivityAction.IGNORE_BATTERY_OPTIMIZATION_SETTINGS).catch(() => Linking.openSettings())
+                  }
+                />
+              </View>
+            )}
           </View>
         )}
       </Card>

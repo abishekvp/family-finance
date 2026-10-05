@@ -25,6 +25,25 @@ interface FamilyDataValue {
 
 const FamilyDataContext = createContext<FamilyDataValue | null>(null);
 
+const REVALIDATE_ON_FOCUS_MS = 15_000;
+const REVALIDATE_INTERVAL_MS = 2 * 60_000;
+
+/**
+ * One calendar year of transactions, by local time: a year's views filter by local dates, and with
+ * UTC bounds an entry made just after midnight on 1 January east of UTC (before 05:30 in India) was
+ * cached with the previous year and missing from January.
+ */
+async function fetchYear(familyId: string, year: number) {
+  const res = await api.get<Transaction[]>(`/families/${familyId}/transactions`, {
+    params: {
+      from: new Date(year, 0, 1).toISOString(),
+      to: new Date(year + 1, 0, 1).toISOString(),
+      limit: 5000,
+    },
+  });
+  return res.data;
+}
+
 /**
  * Fetches accounts, categories and transactions (cached a calendar year at a time) once per family
  * and shares them across every page — the Transactions hub's sub-views, Dashboard and Insights all
@@ -39,6 +58,10 @@ export function FamilyDataProvider({ familyId, children }: { familyId: string; c
   const [years, setYears] = useState<Record<number, Transaction[]>>({});
   const [loadingYears, setLoadingYears] = useState<Record<number, boolean>>({});
   const inFlight = useRef<Map<number, Promise<Transaction[]>>>(new Map());
+  // Bumped when the family changes, so a response for the previous family can't land in this cache.
+  const generation = useRef(0);
+  const yearsRef = useRef(years);
+  yearsRef.current = years;
 
   const refreshAccounts = useCallback(async () => {
     const res = await api.get<Account[]>(`/families/${familyId}/accounts`);
@@ -57,6 +80,7 @@ export function FamilyDataProvider({ familyId, children }: { familyId: string; c
     setStaticError(null);
     setYears({});
     inFlight.current.clear();
+    generation.current++;
     Promise.all([refreshAccounts(), refreshCategories()])
       .catch((err) => {
         if (!cancelled) setStaticError(getErrorMessage(err, "Unable to load accounts or categories"));
@@ -95,17 +119,11 @@ export function FamilyDataProvider({ familyId, children }: { familyId: string; c
       if (existing) return existing;
 
       setLoadingYears((prev) => ({ ...prev, [year]: true }));
-      const promise = api
-        .get<Transaction[]>(`/families/${familyId}/transactions`, {
-          params: {
-            from: new Date(Date.UTC(year, 0, 1)).toISOString(),
-            to: new Date(Date.UTC(year + 1, 0, 1)).toISOString(),
-            limit: 5000,
-          },
-        })
-        .then((res) => {
-          setYears((prev) => ({ ...prev, [year]: res.data }));
-          return res.data;
+      const startGeneration = generation.current;
+      const promise = fetchYear(familyId, year)
+        .then((rows) => {
+          if (generation.current === startGeneration) setYears((prev) => ({ ...prev, [year]: rows }));
+          return rows;
         })
         .finally(() => {
           inFlight.current.delete(year);
@@ -120,6 +138,42 @@ export function FamilyDataProvider({ familyId, children }: { familyId: string; c
     },
     [familyId, years]
   );
+
+  // Changes made on another device (the phone app, SMS imports, another member) arrive here without
+  // a reload: whenever the tab comes back into view, and every couple of minutes while it's open.
+  // Cached years are refetched in place, so nothing on screen blanks out while that happens.
+  const lastRevalidated = useRef(Date.now());
+  const revalidate = useCallback(async () => {
+    lastRevalidated.current = Date.now();
+    const startGeneration = generation.current;
+    const cachedYears = Object.keys(yearsRef.current).map(Number);
+    await Promise.all([
+      refreshAccounts().catch(() => undefined),
+      ...cachedYears.map((year) =>
+        fetchYear(familyId, year)
+          .then((rows) => {
+            if (generation.current === startGeneration && !inFlight.current.has(year)) setYears((prev) => (year in prev ? { ...prev, [year]: rows } : prev));
+          })
+          .catch(() => undefined)
+      ),
+    ]);
+  }, [familyId, refreshAccounts]);
+
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === "visible" && Date.now() - lastRevalidated.current > REVALIDATE_ON_FOCUS_MS) revalidate();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") revalidate();
+    }, REVALIDATE_INTERVAL_MS);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
+      window.clearInterval(timer);
+    };
+  }, [revalidate]);
 
   const value: FamilyDataValue = {
     accounts,

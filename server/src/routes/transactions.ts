@@ -6,7 +6,7 @@ import { asyncHandler, AppError } from "../middleware/errorHandler";
 import { requireAuth, requireFamilyRole } from "../middleware/auth";
 import { assertEncryptionPolicy, maybeEncryptedText } from "../lib/encryption";
 import { initialApprovalStatus } from "../lib/approval";
-import { recalculateAccountBalances } from "../lib/balances";
+import { BALANCE_TX_OPTIONS, lockAccounts, recalculateAccountBalances } from "../lib/balances";
 
 export const transactionsRouter = Router({ mergeParams: true });
 transactionsRouter.use(requireAuth);
@@ -16,7 +16,7 @@ const TRANSACTION_INCLUDE = {
   transferToAccount: { select: { id: true, name: true } },
   category: { select: { id: true, name: true, color: true, icon: true, type: true } },
   // Only entries whose refund still counts mark this one as refunded (see COUNTED in lib/approval).
-  refundedBy: { where: { isDeleted: false, approvalStatus: ApprovalStatus.APPROVED }, select: { id: true } },
+  refundedBy: { where: { isDeleted: false, approvalStatus: ApprovalStatus.APPROVED }, select: { id: true, amount: true } },
 } satisfies Prisma.TransactionInclude;
 
 type TransactionWithRelations = Prisma.TransactionGetPayload<{ include: typeof TRANSACTION_INCLUDE }>;
@@ -39,11 +39,14 @@ function serializeTransaction(t: TransactionWithRelations) {
     dueDate: t.dueDate ? t.dueDate.toISOString() : null,
     recurringId: t.recurringId,
     repaysId: t.repaysId,
-    // Non-null when this entry is the refund of an expense — it and that expense are both left out
-    // of spending/income totals. Present only when the refund itself still counts (see resolveRefunds).
+    // Non-null when this entry gives back another one: a refund (income) of an expense, or money
+    // returned (an expense) out of an income. It never counts in income/spending totals itself;
+    // instead it takes its amount off the entry it reverses (see resolveRefunds).
     refundsId: t.refundsId,
-    // True once a live refund points back at this entry, so clients can grey it out of totals too.
+    // True once a live refund points back at this entry; `refundedAmount` is how much of it came
+    // back, so a partial refund only takes that much off what the entry counts for.
     isRefunded: t.refundedBy.length > 0,
+    refundedAmount: t.refundedBy.reduce((sum, r) => sum + Number(r.amount), 0),
     approvalStatus: t.approvalStatus,
     reviewedById: t.reviewedById,
     reviewedAt: t.reviewedAt ? t.reviewedAt.toISOString() : null,
@@ -176,33 +179,67 @@ async function resolveRepays(
 }
 
 /**
- * Checks that a refund reverses an expense with the same family, and returns the link to persist.
- * Only an INCOME entry can carry the link — money coming back is a credit, whatever the transaction
- * being refunded looked like.
+ * Checks that a refund or return reverses an entry of the opposite kind in the same family, and
+ * returns the link to persist:
+ *  - money coming back (INCOME) can refund an EXPENSE — a cancelled order, a card verification
+ *    charge reversed straight away, a subscription refunded;
+ *  - money handed back (EXPENSE) can return an INCOME — a payment received by mistake, a deposit
+ *    returned.
+ * Partial refunds are allowed, but all of an entry's refunds together can't exceed it.
  */
 async function resolveRefunds(
   familyId: string,
   transactionId: string | null,
   type: TransactionType,
+  amount: number,
   refundsIdInput: string | null,
-  // False when the link is the one already saved: an expense deleted since just drops it.
+  // False when the link is the one already saved: an original deleted since just drops it.
   requested = true
 ): Promise<string | null> {
   if (!refundsIdInput) return null;
   if (refundsIdInput === transactionId) throw new AppError(400, "An entry can't refund itself");
-  if (type !== TransactionType.INCOME) {
+  if (type === TransactionType.TRANSFER) {
     if (!requested) return null;
-    throw new AppError(400, "Only an income entry can be marked as a refund");
+    throw new AppError(400, "Only an income or an expense can be marked as a refund or return");
   }
+  const originalType = type === TransactionType.INCOME ? TransactionType.EXPENSE : TransactionType.INCOME;
 
   const original = await prisma.transaction.findFirst({
-    where: { id: refundsIdInput, familyId, isDeleted: false, type: TransactionType.EXPENSE },
+    where: { id: refundsIdInput, familyId, isDeleted: false, type: originalType },
+    include: {
+      refundedBy: {
+        where: { isDeleted: false, approvalStatus: ApprovalStatus.APPROVED, ...(transactionId ? { id: { not: transactionId } } : {}) },
+        select: { amount: true },
+      },
+    },
   });
   if (!original) {
     if (!requested) return null;
-    throw new AppError(404, "The transaction being refunded was not found");
+    throw new AppError(404, type === TransactionType.INCOME ? "The expense being refunded was not found" : "The income being returned was not found");
+  }
+  if (original.refundsId) {
+    if (!requested) return null;
+    throw new AppError(400, "That entry is itself a refund or return");
+  }
+  if (requested) {
+    const alreadyBack = original.refundedBy.reduce((sum, r) => sum + Number(r.amount), 0);
+    const left = Number(original.amount) - alreadyBack;
+    if (amount > left + 0.005) {
+      throw new AppError(400, left > 0.005 ? `Only ${left.toFixed(2)} of that entry is left to refund` : "That entry has already been fully refunded");
+    }
   }
   return original.id;
+}
+
+/**
+ * Bumps updatedAt on entries whose refunded amount just changed (a refund pointing at them was
+ * added, edited, moved, deleted or restored). Their own row didn't change, so without this the
+ * delta sync would never send them again and other devices would keep counting them in full.
+ */
+async function touchRefunded(tx: Prisma.TransactionClient, ids: (string | null | undefined)[]) {
+  const unique = Array.from(new Set(ids.filter((id): id is string => !!id)));
+  if (unique.length === 0) return;
+  await tx.transaction.updateMany({ where: { id: { in: unique } }, data: { updatedAt: new Date() } });
 }
 
 const transactionTypeSchema = z.nativeEnum(TransactionType);
@@ -433,11 +470,12 @@ transactionsRouter.post(
     );
 
     const repaysId = await resolveRepays(familyId, null, parsed.type, parsed.accountId, transferToAccountId, parsed.repaysId ?? null);
-    const refundsId = await resolveRefunds(familyId, null, parsed.type, parsed.refundsId ?? null);
+    const refundsId = await resolveRefunds(familyId, null, parsed.type, parsed.amount, parsed.refundsId ?? null);
     // Saved either way, so nothing is lost; with approvals on, a member's entry waits for an admin.
     const approvalStatus = await initialApprovalStatus(familyId, requesterId, [parsed.accountId, transferToAccountId], req.familyMembership!.role);
 
     const transaction = await prisma.$transaction(async (tx) => {
+      await lockAccounts(tx, [parsed.accountId, transferToAccountId]);
       const created = await tx.transaction.create({
         data: {
           id: parsed.id,
@@ -461,8 +499,9 @@ transactionsRouter.post(
         include: TRANSACTION_INCLUDE,
       });
       await recalculateAccountBalances(tx, [parsed.accountId, transferToAccountId]);
+      await touchRefunded(tx, [refundsId]);
       return created;
-    });
+    }, BALANCE_TX_OPTIONS);
 
     res.status(201).json(serializeTransaction(transaction));
   })
@@ -513,15 +552,15 @@ transactionsRouter.patch(
       "repaysId" in req.body
     );
 
+    const mergedAmount = parsed.amount ?? Number(existing.amount);
     const refundsId = await resolveRefunds(
       familyId,
       existing.id,
       mergedType,
+      mergedAmount,
       "refundsId" in req.body ? parsed.refundsId ?? null : existing.refundsId,
       "refundsId" in req.body
     );
-
-    const mergedAmount = parsed.amount ?? Number(existing.amount);
     const mergedDate = parsed.date ? new Date(parsed.date) : existing.date;
     const mergedPayee = "payee" in req.body ? parsed.payee ?? null : existing.payee;
     const mergedNotes = "notes" in req.body ? parsed.notes ?? null : existing.notes;
@@ -536,7 +575,9 @@ transactionsRouter.patch(
         ? await initialApprovalStatus(familyId, requesterId, [mergedAccountId, transferToAccountId], req.familyMembership!.role)
         : null;
 
+    const touchedAccounts = [existing.accountId, existing.transferToAccountId, mergedAccountId, transferToAccountId];
     const updated = await prisma.$transaction(async (tx) => {
+      await lockAccounts(tx, touchedAccounts);
       const updatedTx = await tx.transaction.update({
         where: { id: existing.id },
         data: {
@@ -557,14 +598,10 @@ transactionsRouter.patch(
         },
         include: TRANSACTION_INCLUDE,
       });
-      await recalculateAccountBalances(tx, [
-        existing.accountId,
-        existing.transferToAccountId,
-        mergedAccountId,
-        transferToAccountId,
-      ]);
+      await recalculateAccountBalances(tx, touchedAccounts);
+      await touchRefunded(tx, [existing.refundsId, refundsId]);
       return updatedTx;
-    });
+    }, BALANCE_TX_OPTIONS);
 
     res.json(serializeTransaction(updated));
   })
@@ -585,12 +622,14 @@ transactionsRouter.delete(
     assertCanModify(existing.userId, requesterId, req.familyMembership!.role);
 
     await prisma.$transaction(async (tx) => {
+      await lockAccounts(tx, [existing.accountId, existing.transferToAccountId]);
       await tx.transaction.update({
         where: { id: existing.id },
         data: { isDeleted: true, deletedAt: new Date() },
       });
       await recalculateAccountBalances(tx, [existing.accountId, existing.transferToAccountId]);
-    });
+      await touchRefunded(tx, [existing.refundsId]);
+    }, BALANCE_TX_OPTIONS);
 
     res.status(204).send();
   })
@@ -637,7 +676,7 @@ transactionsRouter.post(
       // Find which accounts are affected
       const affected = await tx.transaction.findMany({
         where: whereClause,
-        select: { accountId: true, transferToAccountId: true },
+        select: { accountId: true, transferToAccountId: true, refundsId: true },
       });
       const accountIds = new Set<string>();
       for (const t of affected) {
@@ -651,8 +690,9 @@ transactionsRouter.post(
       });
 
       await recalculateAccountBalances(tx, Array.from(accountIds));
+      await touchRefunded(tx, affected.map((t) => t.refundsId));
       return updateResult;
-    });
+    }, BALANCE_TX_OPTIONS);
 
     res.json({ deletedCount: result.count });
   })
@@ -673,14 +713,16 @@ transactionsRouter.post(
     assertCanModify(existing.userId, requesterId, req.familyMembership!.role);
 
     const restored = await prisma.$transaction(async (tx) => {
+      await lockAccounts(tx, [existing.accountId, existing.transferToAccountId]);
       const updated = await tx.transaction.update({
         where: { id: existing.id },
         data: { isDeleted: false, deletedAt: null },
         include: TRANSACTION_INCLUDE,
       });
       await recalculateAccountBalances(tx, [updated.accountId, updated.transferToAccountId]);
+      await touchRefunded(tx, [updated.refundsId]);
       return updated;
-    });
+    }, BALANCE_TX_OPTIONS);
 
     res.json(serializeTransaction(restored));
   })
@@ -742,7 +784,7 @@ transactionsRouter.post(
           account: visible,
           ...(hasDateFilter ? { date: dateFilter } : {}),
         },
-        select: { accountId: true, transferToAccountId: true },
+        select: { accountId: true, transferToAccountId: true, refundsId: true },
       });
       const accountIds = new Set<string>();
       for (const t of affected) {
@@ -769,9 +811,10 @@ transactionsRouter.post(
       }
 
       await recalculateAccountBalances(tx, Array.from(accountIds));
+      await touchRefunded(tx, affected.map((t) => t.refundsId));
 
       return { transactions: txResult, accounts: accountsResult };
-    });
+    }, BALANCE_TX_OPTIONS);
 
     res.json({ transactionsCleared: transactions.count, accountsReset: accounts ? accounts.count : 0 });
   })
@@ -824,7 +867,7 @@ transactionsRouter.post(
     const result = await prisma.$transaction(async (tx) => {
       const affected = await tx.transaction.findMany({
         where: whereClause,
-        select: { accountId: true, transferToAccountId: true },
+        select: { accountId: true, transferToAccountId: true, refundsId: true },
       });
       const accountIds = new Set<string>();
       for (const t of affected) {
@@ -842,9 +885,10 @@ transactionsRouter.post(
       });
 
       await recalculateAccountBalances(tx, Array.from(accountIds));
+      await touchRefunded(tx, affected.map((t) => t.refundsId));
 
       return updateResult;
-    });
+    }, BALANCE_TX_OPTIONS);
 
     res.json({ updated: result.count });
   })

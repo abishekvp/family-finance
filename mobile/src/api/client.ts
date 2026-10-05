@@ -110,6 +110,10 @@ async function refreshAccessToken(): Promise<string | null> {
             // The background sync / SMS task run in their own JS context and may have rotated the
             // token under us. If the stored token changed, that's not a rejection — retry with it.
             if ((await getStoredRefreshToken().catch(() => storedRefreshToken)) !== storedRefreshToken) continue;
+            // That task may have the new token in hand but not yet written it: look once more
+            // before treating this as the server ending the session.
+            await sleep(1500);
+            if ((await getStoredRefreshToken().catch(() => storedRefreshToken)) !== storedRefreshToken) continue;
             sessionRejected = true;
             setAccessToken(null);
             await setStoredRefreshToken(null);
