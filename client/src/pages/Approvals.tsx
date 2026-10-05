@@ -94,7 +94,7 @@ export function Approvals() {
   const list = transactions ?? [];
 
   return (
-    <div className="mx-auto max-w-3xl space-y-5">
+    <div className="space-y-5">
       {!family.requireApproval && (
         <p className="rounded-2xl border border-line bg-surface-sunken/60 px-4 py-3 text-sm text-ink-muted">
           Approvals are off, so new transactions count straight away.{" "}

@@ -650,6 +650,7 @@ export function Modal({
   children,
   className = "",
   footer,
+  size = "md",
 }: {
   title: string;
   description?: string;
@@ -657,6 +658,8 @@ export function Modal({
   children: ReactNode;
   className?: string;
   footer?: ReactNode;
+  /** md for short dialogs; lg and xl for forms that lay out in columns on a wide screen. */
+  size?: "md" | "lg" | "xl";
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
   const openerRef = useRef<HTMLElement | null>(null);
@@ -683,7 +686,7 @@ export function Modal({
   }, [onClose]);
 
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-start sm:p-6 sm:pt-[8vh]">
+    <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-start sm:p-6 sm:pt-[6vh]">
       <div
         className="absolute inset-0 animate-fade-in bg-slate-950/40 backdrop-blur-sm dark:bg-slate-950/65"
         onClick={onClose}
@@ -695,7 +698,8 @@ export function Modal({
         aria-modal="true"
         aria-label={title}
         className={cn(
-          "glass glass-solid relative z-10 flex max-h-[92dvh] w-full flex-col rounded-t-3xl sm:max-w-lg sm:rounded-3xl",
+          "glass glass-solid relative z-10 flex max-h-[92dvh] w-full flex-col rounded-t-3xl sm:rounded-3xl",
+          size === "xl" ? "sm:max-w-2xl lg:max-w-5xl" : size === "lg" ? "sm:max-w-2xl lg:max-w-3xl" : "sm:max-w-lg",
           "animate-sheet-up shadow-float sm:animate-scale-in",
           className
         )}

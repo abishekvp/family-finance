@@ -115,9 +115,9 @@ export function CategoryManager({ familyId, role }: { familyId: string; role: Fa
       ) : topLevel.length === 0 ? (
         <EmptyState title="No categories yet" description="Add a category to start organizing transactions." icon={<Tag size={18} />} />
       ) : (
-        <ul className="divide-y divide-line">
+        <ul className="columns-1 gap-8 lg:columns-2 2xl:columns-3">
           {topLevel.map((category) => (
-            <li key={category.id}>
+            <li key={category.id} className="break-inside-avoid border-b border-line py-1">
               <CategoryRow
                 category={category}
                 editable={canModify(category, role)}

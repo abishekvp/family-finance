@@ -16,6 +16,7 @@ import { MonthlyView } from "../components/transactions/MonthlyView";
 import { TotalView } from "../components/transactions/TotalView";
 import { FilterPanel } from "../components/transactions/FilterPanel";
 import { TransactionFormModal } from "../components/transactions/TransactionFormModal";
+import { PeriodRail } from "../components/transactions/PeriodRail";
 import { countedAmount, countsTowardTotals } from "../lib/transactionTotals";
 import { useFamilyData, useYearTransactions } from "../context/FamilyDataContext";
 
@@ -217,7 +218,8 @@ export function Transactions() {
         </div>
       </div>
 
-      <Card>
+      <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
+      <Card className="min-w-0">
         <div className="mb-4 flex items-center justify-between gap-2">
           <Button
             variant="ghost"
@@ -331,6 +333,17 @@ export function Transactions() {
           />
         )}
       </Card>
+      <div className="hidden xl:block">
+        <PeriodRail
+          transactions={visibleTransactions}
+          accounts={scopedAccounts}
+          accountIds={accountIds}
+          currency={family.currency}
+          periodLabel={periodLabel}
+          isLoading={isLoading}
+        />
+      </div>
+      </div>
 
       {(showAddForm || formTransaction) && (
         <TransactionFormModal

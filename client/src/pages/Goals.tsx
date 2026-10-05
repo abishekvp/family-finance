@@ -5,7 +5,7 @@ import { GoalManager } from "../components/settings/GoalManager";
 export function Goals() {
   const { family } = useOutletContext<LayoutContext>();
   return (
-    <div className="mx-auto max-w-3xl">
+    <div>
       <GoalManager familyId={family.id} currency={family.currency} />
     </div>
   );

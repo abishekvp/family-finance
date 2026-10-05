@@ -3,6 +3,7 @@ import { api, refreshSession } from "../api/client";
 import { setAccessToken, setOnAuthExpired } from "../api/tokenStore";
 import { clearVaultSession } from "../api/vaultSession";
 import { applyServerPrefs, type ServerPrefs } from "../lib/prefs";
+import { clearSessionCache } from "../lib/sessionCache";
 
 export interface FamilySummary {
   id: string;
@@ -64,7 +65,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [loadMe]);
 
   useEffect(() => {
-    setOnAuthExpired(() => setUser(null));
+    setOnAuthExpired(() => {
+      clearSessionCache();
+      setUser(null);
+    });
 
     (async () => {
       // One round trip: the refreshed token and the user together.
@@ -113,6 +117,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await api.post("/auth/logout").catch(() => undefined);
     setAccessToken(null);
     clearVaultSession();
+    clearSessionCache();
     setUser(null);
   }, []);
 

@@ -119,7 +119,8 @@ export function PayeeRules() {
   }
 
   return (
-    <div ref={topRef} className="mx-auto max-w-3xl scroll-mt-24 space-y-5">
+    <div ref={topRef} className="grid grid-cols-1 scroll-mt-24 items-start gap-5 xl:grid-cols-2">
+      <div className="space-y-5">
       {draft ? (
         <RuleEditor
           familyId={family.id}
@@ -191,6 +192,8 @@ export function PayeeRules() {
         </Card>
       )}
 
+      </div>
+      <div className="space-y-5">
       <Card>
         <CardHeader title="Your rules" subtitle="Shared with your family." />
         {sealedRules && <p className="mb-3 text-xs text-ink-subtle">Unlock your vault to read encrypted rules.</p>}
@@ -264,6 +267,7 @@ export function PayeeRules() {
           </ul>
         )}
       </Card>
+      </div>
     </div>
   );
 }

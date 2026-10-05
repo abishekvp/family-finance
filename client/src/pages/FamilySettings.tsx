@@ -124,7 +124,7 @@ export function FamilySettings() {
   }
 
   return (
-    <div className="mx-auto max-w-3xl space-y-5">
+    <div className="columns-1 gap-5 xl:columns-2 [&>*]:mb-5 [&>*]:break-inside-avoid">
       <Card>
         <CardHeader title="Members" subtitle={`${members.length} in ${family.name}`} icon={<Users size={17} />} />
         <ul className="divide-y divide-line">

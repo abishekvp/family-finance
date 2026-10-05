@@ -63,7 +63,7 @@ export function GetTheApp() {
   }
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
+    <div className="mx-auto max-w-5xl space-y-6">
       <div className="text-center">
         <Logo size={44} className="mx-auto mb-3" />
         <h2 className="text-xl font-extrabold tracking-tight text-ink sm:text-2xl">

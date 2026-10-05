@@ -15,6 +15,7 @@ import { formatCurrency, safePercent } from "../lib/format";
 import { MONTH_LABELS } from "../lib/dateUtils";
 import { formatDayShort } from "../lib/recurring";
 import { budgetName } from "../lib/budgets";
+import { cacheKey, readCache, writeCache } from "../lib/sessionCache";
 
 type Mode = "monthly" | "yearly";
 
@@ -64,11 +65,19 @@ export function Budgets() {
         mode === "monthly"
           ? { year: anchor.year, month: anchor.month, includeProjected: "1", tzOffset }
           : { year: anchor.year, period: "ANNUAL", includeProjected: "1", tzOffset };
+      // Paint this period's last copy from the session at once; the fresh one replaces it below.
+      const key = cacheKey(`/families/${family.id}/budgets`, params);
+      const cached = readCache<Budget[]>(key);
+      if (cached) {
+        setBudgets(cached.data);
+        setIsLoading(false);
+      }
       const [budgetsRes, rulesRes] = await Promise.all([
         api.get<Budget[]>(`/families/${family.id}/budgets`, { params }),
         api.get<RecurringTransaction[]>(`/families/${family.id}/recurring`),
       ]);
       setBudgets(budgetsRes.data);
+      writeCache(key, budgetsRes.data);
       setRules(rulesRes.data);
       setError(null);
     } catch (err) {
@@ -149,7 +158,7 @@ export function Budgets() {
   const mappableBudgets = budgets.filter((b) => !b.projected);
 
   return (
-    <div className="mx-auto max-w-3xl space-y-5">
+    <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <Segmented
           value={mode}
@@ -229,7 +238,7 @@ export function Budgets() {
       ) : budgets.length === 0 ? (
         <EmptyState icon={<PiggyBank size={20} />} title="No budgets set" description={`Nothing budgeted for ${periodLabel} yet.`} />
       ) : (
-        <div className="space-y-3">
+        <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-2 2xl:grid-cols-3">
           {budgets.map((b) => {
             if (editing?.id === b.id) {
               return (

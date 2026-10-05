@@ -62,8 +62,8 @@ export function Lending() {
   const settled = people.filter((p) => isSettled(p.balance ?? 0));
 
   return (
-    <div className="mx-auto max-w-3xl space-y-5">
-      <div className="grid grid-cols-2 gap-4">
+    <div className="space-y-5">
+      <div className="grid grid-cols-2 gap-4 xl:max-w-3xl">
         <StatTile label="Owed to you" value={owedToYou} currency={family.currency} accent="income" tone="income" loading={isLoadingStatic} />
         <StatTile label="You owe" value={youOwe} currency={family.currency} accent="expense" tone="expense" loading={isLoadingStatic} />
       </div>
@@ -97,10 +97,10 @@ export function Lending() {
           icon={<HandCoins size={20} />}
         />
       ) : (
-        <>
+        <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-2">
           {open.length > 0 && <PeopleList title="Open" people={open} dues={dues} />}
           {settled.length > 0 && <PeopleList title="Settled up" people={settled} dues={dues} />}
-        </>
+        </div>
       )}
 
       {preset && (

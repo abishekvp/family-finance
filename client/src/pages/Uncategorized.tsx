@@ -123,7 +123,7 @@ export function Uncategorized() {
   const shown = pending.slice(0, MAX_SHOWN);
 
   return (
-    <div className="mx-auto max-w-3xl space-y-5">
+    <div className="space-y-5">
       <Card>
         <CardHeader
           title={isLoading ? "Uncategorised" : pending.length === 0 ? "All sorted" : `${pending.length} to sort out`}
@@ -172,7 +172,7 @@ export function Uncategorized() {
       ) : pending.length === 0 ? (
         <EmptyState title="Nothing to sort out" description="Every recent expense and income has a category." icon={<Check size={22} />} />
       ) : (
-        <div className="space-y-3">
+        <div className="grid grid-cols-1 items-start gap-3 lg:grid-cols-2 2xl:grid-cols-3">
           {shown.map((t) => {
             const match = matchCategory(t.payee, t.type, rules, learned);
             const matchCategoryLive = match?.categoryId ? categories.some((c) => c.id === match.categoryId) : true;

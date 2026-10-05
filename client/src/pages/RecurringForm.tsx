@@ -185,7 +185,7 @@ export function RecurringForm() {
         : "Recorded on each date and counted in your monthly budget for its category.";
 
   return (
-    <div className="mx-auto max-w-2xl space-y-4">
+    <div className="mx-auto max-w-4xl space-y-4">
       <Link to="/recurring" className="inline-flex items-center gap-1.5 text-sm font-semibold text-brand-600 hover:underline">
         <ArrowLeft size={15} />
         Repeating payments

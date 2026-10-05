@@ -143,14 +143,14 @@ export function Layout() {
   );
 
   return (
-    <FamilyDataProvider familyId={family.id}>
+    <FamilyDataProvider familyId={family.id} persistTransactions={!family.encryptionEnabled}>
       <div className="flex min-h-dvh">
         <DesktopSidebar family={family} items={navItems} />
 
         <div className="flex min-w-0 flex-1 flex-col">
           <TopBar title={title} family={family} scope={scope} onScopeChange={setScope} onLogout={logout} />
 
-          <main className="mx-auto w-full max-w-6xl flex-1 px-4 pb-28 pt-5 sm:px-6 sm:pb-10 lg:px-8">
+          <main className="w-full min-w-0 flex-1 px-4 pb-28 pt-5 sm:px-6 sm:pb-10 lg:px-8 2xl:px-10">
             <div key={location.pathname} className="animate-rise-in">
               <Outlet context={{ family, scope } satisfies LayoutContext} />
             </div>
@@ -263,7 +263,7 @@ function TopBar({
 }) {
   return (
     <header className="sticky top-0 z-30 border-b border-line bg-canvas/80 backdrop-blur-glass transform-gpu">
-      <div className="mx-auto flex w-full max-w-6xl items-center gap-3 px-4 py-3 sm:px-6 lg:px-8">
+      <div className="flex w-full items-center gap-3 px-4 py-3 sm:px-6 lg:px-8 2xl:px-10">
         <div className="flex min-w-0 items-center gap-2.5">
           <span className="lg:hidden">
             <Logo size={30} />

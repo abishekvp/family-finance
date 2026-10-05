@@ -39,8 +39,8 @@ export function Recurring() {
   const yearlyOut = expenses.filter((r) => r.frequency === "YEARLY").reduce((sum, r) => sum + r.amount, 0);
 
   return (
-    <div className="mx-auto max-w-3xl space-y-5">
-      <div className="grid grid-cols-2 gap-4">
+    <div className="space-y-5">
+      <div className="grid grid-cols-2 gap-4 xl:max-w-3xl">
         <StatTile label="Every month" value={monthlyOut} currency={family.currency} accent="expense" tone="expense" loading={isLoading} />
         <StatTile label="Every year" value={yearlyOut} currency={family.currency} accent="expense" tone="expense" loading={isLoading} />
       </div>
@@ -69,13 +69,13 @@ export function Recurring() {
           icon={<Repeat size={20} />}
         />
       ) : (
-        <>
+        <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-2">
           {SECTIONS.map((section) => {
             const list = active.filter((r) => r.frequency === section.frequency);
             return list.length === 0 ? null : <RuleList key={section.frequency} title={section.title} rules={list} />;
           })}
           {stopped.length > 0 && <RuleList title="Paused or ended" rules={stopped} />}
-        </>
+        </div>
       )}
     </div>
   );

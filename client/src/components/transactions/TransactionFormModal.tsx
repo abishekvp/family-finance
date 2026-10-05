@@ -641,6 +641,7 @@ export function TransactionFormModal({
     <Modal
       title={isEdit ? "Edit transaction" : "Add transaction"}
       onClose={onClose}
+      size="xl"
       footer={
         <div className="flex flex-wrap justify-end gap-2">
           <Button type="button" variant="ghost" onClick={onClose}>
@@ -664,6 +665,10 @@ export function TransactionFormModal({
           options={TYPE_OPTIONS}
           className="w-full text-xs sm:text-sm [&>button]:flex-1 [&>button]:!px-1.5 sm:[&>button]:!px-3"
         />
+
+        {/* Two columns on a wide screen: what moved and where on the left, how it's filed on the right. */}
+        <div className="grid gap-x-8 gap-y-5 lg:grid-cols-2">
+        <div className="min-w-0 space-y-5">
 
         {canBeLoanReturn && (
           <div className="space-y-2 rounded-2xl bg-surface-sunken/70 p-3">
@@ -800,39 +805,6 @@ export function TransactionFormModal({
           </div>
         )}
 
-        {refundable && !paidByPerson && (refundOptions.length > 0 || refundsId) && (
-          <Field
-            label={refundable === "INCOME" ? "Refund of" : "Return of"}
-            hint={
-              refundsId
-                ? refundable === "INCOME"
-                  ? "Money back for that expense: it comes off what the expense counts for, and isn't counted as income."
-                  : "Money handed back out of that income: it comes off the income, and isn't counted as spending."
-                : refundable === "INCOME"
-                  ? "Money back for something you paid — a cancelled order, a reversed verification charge? Pick the expense."
-                  : "Handing back money you received — a wrong transfer, a deposit? Pick the income."
-            }
-          >
-            {(props) => (
-              <SearchSelect
-                {...props}
-                options={refundOptions}
-                value={refundsId}
-                onChange={(id) => {
-                  setRefundsId(id);
-                  const original = id ? refundCandidates?.rows.find((t) => t.id === id) : undefined;
-                  const left = original ? refundableLeft(original, initial) : 0;
-                  if (left > 0 && (!amount.trim() || amountValue > left)) setAmount(String(Number(left.toFixed(2))));
-                }}
-                placeholder={refundable === "INCOME" ? "Not a refund" : "Not a return"}
-                clearLabel={refundable === "INCOME" ? "Not a refund" : "Not a return"}
-                searchPlaceholder="Search by payee, amount or category"
-                emptyText="No matching entries."
-              />
-            )}
-          </Field>
-        )}
-
         <div className="grid grid-cols-2 gap-3">
           <Field label="Date">
             {(props) => <Input {...props} type="date" required value={date} onChange={(e) => setDate(e.target.value)} />}
@@ -875,7 +847,7 @@ export function TransactionFormModal({
           )}
         </div>
 
-        {type === "TRANSFER" ? (
+        {type === "TRANSFER" && (
           <div>
             <Label>Transfer to</Label>
             {transferTargets.length === 0 ? (
@@ -890,7 +862,44 @@ export function TransactionFormModal({
               </div>
             )}
           </div>
-        ) : (
+        )}
+        </div>
+
+        <div className="min-w-0 space-y-5">
+        {refundable && !paidByPerson && (refundOptions.length > 0 || refundsId) && (
+          <Field
+            label={refundable === "INCOME" ? "Refund of" : "Return of"}
+            hint={
+              refundsId
+                ? refundable === "INCOME"
+                  ? "Money back for that expense: it comes off what the expense counts for, and isn't counted as income."
+                  : "Money handed back out of that income: it comes off the income, and isn't counted as spending."
+                : refundable === "INCOME"
+                  ? "Money back for something you paid — a cancelled order, a reversed verification charge? Pick the expense."
+                  : "Handing back money you received — a wrong transfer, a deposit? Pick the income."
+            }
+          >
+            {(props) => (
+              <SearchSelect
+                {...props}
+                options={refundOptions}
+                value={refundsId}
+                onChange={(id) => {
+                  setRefundsId(id);
+                  const original = id ? refundCandidates?.rows.find((t) => t.id === id) : undefined;
+                  const left = original ? refundableLeft(original, initial) : 0;
+                  if (left > 0 && (!amount.trim() || amountValue > left)) setAmount(String(Number(left.toFixed(2))));
+                }}
+                placeholder={refundable === "INCOME" ? "Not a refund" : "Not a return"}
+                clearLabel={refundable === "INCOME" ? "Not a refund" : "Not a return"}
+                searchPlaceholder="Search by payee, amount or category"
+                emptyText="No matching entries."
+              />
+            )}
+          </Field>
+        )}
+
+        {type !== "TRANSFER" && (
           <>
             {wantsBudgets && budgetChoices.length > 0 && (
               <div>
@@ -1022,6 +1031,8 @@ export function TransactionFormModal({
               Delete transaction
             </Button>
           ))}
+        </div>
+        </div>
       </form>
     </Modal>
   );

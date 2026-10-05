@@ -76,7 +76,7 @@ export function LendingPerson() {
 
   if (isLoadingStatic || !historyLoaded) {
     return (
-      <Card className="mx-auto max-w-3xl">
+      <Card>
         <SkeletonRows rows={5} />
       </Card>
     );
@@ -84,7 +84,7 @@ export function LendingPerson() {
 
   if (!person) {
     return (
-      <div className="mx-auto max-w-3xl space-y-4">
+      <div className="space-y-4">
         <BackLink />
         <ErrorText>{error ?? "This person was removed."}</ErrorText>
       </div>
@@ -97,8 +97,10 @@ export function LendingPerson() {
   const overdue = openLoans.filter((l) => l.overdue).reduce((sum, l) => sum + l.remaining, 0);
 
   return (
-    <div className="mx-auto max-w-3xl space-y-5">
+    <div className="space-y-5">
       <BackLink />
+      <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
+      <div className="space-y-5">
 
       <Card className="flex flex-col items-center gap-2.5 text-center">
         <Avatar name={person.name} size={52} />
@@ -171,6 +173,8 @@ export function LendingPerson() {
         </Section>
       )}
 
+      </div>
+      <div className="space-y-5">
       <Section title="History">
         {history.length === 0 ? (
           <p className="px-0.5 text-sm text-ink-subtle">Nothing recorded yet.</p>
@@ -219,6 +223,9 @@ export function LendingPerson() {
           )}
         </div>
       )}
+
+      </div>
+      </div>
 
       {renaming && (
         <RenameModal

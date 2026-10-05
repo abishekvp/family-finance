@@ -82,7 +82,7 @@ export function StatTile({
   }[accent];
 
   return (
-    <div className={cn("glass relative overflow-hidden rounded-2xl p-5", className)}>
+    <div className={cn("glass relative min-w-0 overflow-hidden rounded-2xl p-4 sm:p-5", className)}>
       <div
         aria-hidden
         className={cn("pointer-events-none absolute -right-8 -top-10 h-32 w-32 rounded-full bg-gradient-to-br to-transparent blur-2xl", accents.wash)}
@@ -97,7 +97,7 @@ export function StatTile({
       {loading ? (
         <Skeleton className="relative mt-3 h-8 w-32" />
       ) : (
-        <p className="relative mt-2.5 text-[1.75rem] font-bold leading-none">
+        <p className="relative mt-2.5 truncate text-xl font-bold leading-tight sm:text-2xl xl:text-[1.75rem] xl:leading-none">
           <Money amount={value} currency={currency} compact={compact} tone={tone} />
         </p>
       )}

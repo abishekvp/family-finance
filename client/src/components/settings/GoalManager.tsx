@@ -18,6 +18,7 @@ import {
 } from "../ui";
 import { Money } from "../figures";
 import type { Goal } from "../../api/types";
+import { readCache, writeCache } from "../../lib/sessionCache";
 
 export function GoalManager({ familyId, currency }: { familyId: string; currency: string }) {
   const [goals, setGoals] = useState<Goal[]>([]);
@@ -29,11 +30,15 @@ export function GoalManager({ familyId, currency }: { familyId: string; currency
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
   async function load() {
-    setIsLoading(true);
+    const key = `/families/${familyId}/goals`;
+    const cached = readCache<Goal[]>(key);
+    if (cached) setGoals(cached.data);
+    setIsLoading(!cached);
     setError(null);
     try {
-      const res = await api.get<Goal[]>(`/families/${familyId}/goals`);
+      const res = await api.get<Goal[]>(key);
       setGoals(res.data);
+      writeCache(key, res.data);
     } catch (err) {
       setError(getErrorMessage(err, "Unable to load goals"));
     } finally {
@@ -81,9 +86,9 @@ export function GoalManager({ familyId, currency }: { familyId: string; currency
           icon={<PiggyBank size={18} />}
         />
       ) : (
-        <ul className="divide-y divide-line">
+        <ul className="grid grid-cols-1 gap-4 md:grid-cols-2 2xl:grid-cols-3">
           {goals.map((goal) => (
-            <li key={goal.id} className="py-3.5">
+            <li key={goal.id} className="rounded-2xl border border-line bg-surface-sunken/40 p-4">
               <div className="mb-2 flex items-center justify-between gap-3">
                 <span className="flex min-w-0 items-center gap-2 text-sm font-semibold text-ink">
                   {goal.isCompleted && <CheckCircle2 size={15} className="shrink-0 text-income" />}
