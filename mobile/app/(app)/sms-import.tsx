@@ -10,7 +10,9 @@ import { useTheme } from "../../src/context/ThemeContext";
 import { useSmsImport } from "../../src/context/SmsImportContext";
 import { getErrorMessage } from "../../src/api/errors";
 import { isPerson } from "../../src/lib/lending";
-import { Button, Card, CardHeader, Chip, ErrorText, Field, SkeletonRows, SuccessText, Toggle, Input } from "../../src/components/ui";
+import { Button, Card, CardHeader, Chip, ErrorText, Field, Sheet, SkeletonRows, SuccessText, Toggle } from "../../src/components/ui";
+import { DateField } from "../../src/components/DateTimeField";
+import { SMS_FEATURE } from "../../src/lib/distribution";
 
 const HISTORY_OPTIONS: { days: number; label: string }[] = [
   { days: 7, label: "7 days" },
@@ -34,6 +36,7 @@ export default function SmsImport() {
   const [historyDays, setHistoryDays] = useState(7);
   const [permissionDenied, setPermissionDenied] = useState(false);
   const [enabling, setEnabling] = useState(false);
+  const [disclosureOpen, setDisclosureOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -60,6 +63,13 @@ export default function SmsImport() {
       return;
     }
     if (!setupAccountId) return;
+    // What is read and why comes first, and only an explicit "Agree" leads to Android's permission prompt.
+    setDisclosureOpen(true);
+  }
+
+  async function handleConsent() {
+    setDisclosureOpen(false);
+    if (!setupAccountId) return;
     setEnabling(true);
     try {
       const granted = await sms.enable({ defaultAccountId: setupAccountId });
@@ -82,9 +92,11 @@ export default function SmsImport() {
         <Card>
           <CardHeader title="SMS transactions" icon={<MessageSquareText size={16} color={colors.brand600} />} />
           <Text style={{ color: colors.inkMuted, fontSize: 13, lineHeight: 19 }}>
-            {Platform.OS === "android"
-              ? "This build of the app can't read SMS. Install the latest version from Settings → App updates to use it."
-              : "Recording transactions from bank SMS is only available in the Android app."}
+            {Platform.OS !== "android"
+              ? "Recording transactions from bank SMS is only available in the Android app."
+              : !SMS_FEATURE
+                ? "Recording transactions from bank SMS isn't part of this version of the app."
+                : "This build of the app can't read SMS. Install the latest version from Settings → App updates to use it."}
           </Text>
         </Card>
       </ScrollView>
@@ -220,6 +232,43 @@ export default function SmsImport() {
           </Text>
         </View>
       </Card>
+
+      <Sheet
+        visible={disclosureOpen}
+        onClose={() => setDisclosureOpen(false)}
+        title="Allow reading bank SMS?"
+        footer={
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            <View style={{ flex: 1 }}>
+              <Button title="Not now" variant="secondary" onPress={() => setDisclosureOpen(false)} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Button title="Agree & continue" onPress={handleConsent} />
+            </View>
+          </View>
+        }
+      >
+        <ScrollView style={{ maxHeight: 420 }} contentContainerStyle={{ gap: 10, paddingBottom: 4 }}>
+          <Text style={{ fontSize: 13.5, color: colors.ink, lineHeight: 20 }}>
+            Family Finance will read the SMS messages on this phone to find bank, card and UPI transaction alerts, and record each one
+            as a transaction in your Family Finance account.
+          </Text>
+          {[
+            "Messages are read on this phone. From a transaction alert, only the amount, payee, date, the sender (e.g. your bank) and the card's last digits are kept — the message text is never stored or uploaded.",
+            "OTPs, personal messages, reminders and promotions are skipped.",
+            "Recorded transactions are saved to your account like ones you add yourself, so family members who can see that account see them too.",
+            "New alerts are recorded when they arrive, even while the app is closed. Turn this off here at any time.",
+          ].map((line) => (
+            <View key={line} style={{ flexDirection: "row", gap: 8 }}>
+              <Text style={{ color: colors.brand600, fontWeight: "800" }}>•</Text>
+              <Text style={{ flex: 1, fontSize: 12.5, color: colors.inkMuted, lineHeight: 18 }}>{line}</Text>
+            </View>
+          ))}
+          <Text style={{ fontSize: 12, color: colors.inkSubtle, lineHeight: 17 }}>
+            Next, Android asks you to allow SMS access. You can say no and still add transactions yourself.
+          </Text>
+        </ScrollView>
+      </Sheet>
     </ScrollView>
   );
 }
@@ -229,7 +278,9 @@ function PastMessagesCard({ historyDays, onHistoryDaysChange }: { historyDays: n
   const { colors } = useTheme();
   const sms = useSmsImport();
   const [customDate, setCustomDate] = useState("");
-  const isValidCustomDate = customDate.trim().length === 10 && !Number.isNaN(new Date(customDate).getTime());
+  // Local midnight of the picked day (a bare YYYY-MM-DD would parse as UTC midnight).
+  const customStart = customDate ? new Date(`${customDate}T00:00:00`) : null;
+  const isValidCustomDate = !!customStart && !Number.isNaN(customStart.getTime());
   
   const { historyFrom, since } = sms.settings;
   const coveredFrom = historyFrom ?? since;
@@ -263,13 +314,8 @@ function PastMessagesCard({ historyDays, onHistoryDaysChange }: { historyDays: n
           <Chip label="Custom" selected={historyDays === -1} onPress={() => onHistoryDaysChange(-1)} />
         </View>
         {historyDays === -1 && (
-          <Field label="Import from date (YYYY-MM-DD)">
-            <Input 
-              value={customDate} 
-              onChangeText={setCustomDate} 
-              placeholder="YYYY-MM-DD" 
-              autoCapitalize="none"
-            />
+          <Field label="Import from">
+            <DateField value={customDate} onChange={setCustomDate} placeholder="Pick a date" maximumDate={new Date()} />
           </Field>
         )}
         {importedSome && (
@@ -293,7 +339,7 @@ function PastMessagesCard({ historyDays, onHistoryDaysChange }: { historyDays: n
           icon={<History size={16} color={colors.ink} />}
           onPress={() => {
             if (historyDays === -1) {
-              const diffMs = Date.now() - new Date(customDate).getTime();
+              const diffMs = Date.now() - customStart!.getTime();
               sms.importHistory(Math.max(1, Math.ceil(diffMs / DAY_MS)));
             } else {
               sms.importHistory(historyDays);

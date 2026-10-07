@@ -6,12 +6,13 @@ import { api } from "../../api/client";
 import type { Account, Budget, Transaction } from "../../api/types";
 import { useTheme } from "../../context/ThemeContext";
 import { Button, Card, CardHeader, Dot, ErrorText, Money, ProgressBar } from "../ui";
-import { safePercent } from "../../lib/format";
+import { formatCurrency, safePercent } from "../../lib/format";
 import { localDateInput } from "../../lib/dateUtils";
 import { getErrorMessage } from "../../api/errors";
 import { CarryOverRow } from "./CarryOverRow";
 import { budgetName } from "../../lib/budgets";
 import { totalsContribution } from "../../lib/transactionTotals";
+import { isPerson, lendingTotals } from "../../lib/lending";
 
 export function TotalView({
   transactions,
@@ -41,12 +42,26 @@ export function TotalView({
   const year = anchorMonth.getFullYear();
   const month = anchorMonth.getMonth() + 1;
 
+  const totals = useMemo(() => {
+    let income = 0;
+    let expense = 0;
+    for (const t of transactions) {
+      const counted = totalsContribution(t);
+      income += counted.income;
+      expense += counted.expense;
+    }
+    return { income, expense, net: income - expense };
+  }, [transactions]);
+
+  // Budgets only move when spending does: refetched when the period's spending changes, not on every
+  // sync that hands back a new (but equal) list.
+  const spentKey = Math.round(totals.expense * 100);
   useEffect(() => {
     let cancelled = false;
     setIsLoadingBudgets(true);
     setBudgetsError(null);
     api
-      .get<Budget[]>(`/families/${familyId}/budgets`, { params: { year, month } })
+      .get<Budget[]>(`/families/${familyId}/budgets`, { params: { year, month, tzOffset: new Date().getTimezoneOffset() } })
       .then((res) => {
         if (!cancelled) setBudgets(res.data);
       })
@@ -59,23 +74,14 @@ export function TotalView({
     return () => {
       cancelled = true;
     };
-  }, [familyId, year, month, transactions]);
+  }, [familyId, year, month, spentKey]);
 
-  const totals = useMemo(() => {
-    let income = 0;
-    let expense = 0;
-    for (const t of transactions) {
-      const counted = totalsContribution(t);
-      income += counted.income;
-      expense += counted.expense;
-    }
-    return { income, expense, net: income - expense };
-  }, [transactions]);
-
+  // Your own accounts; what's owed between you and people you lend to is summed up separately.
   const visibleAccounts = useMemo(
-    () => (selectedAccountIds === null ? accounts : accounts.filter((a) => selectedAccountIds.has(a.id))),
+    () => accounts.filter((a) => !isPerson(a) && (selectedAccountIds === null || selectedAccountIds.has(a.id))),
     [accounts, selectedAccountIds]
   );
+  const lending = useMemo(() => lendingTotals(accounts.filter(isPerson)), [accounts]);
 
   async function handleExport() {
     const header = "date,type,account,category,payee,amount,notes";
@@ -151,6 +157,14 @@ export function TotalView({
                 <Money amount={a.balance} currency={a.currency || currency} tone={a.balance < 0 ? "expense" : undefined} style={{ fontSize: 13, fontWeight: "700" }} />
               </View>
             ))}
+            {(lending.owedToYou > 0 || lending.youOwe > 0) && (
+              <View style={{ flexDirection: "row", justifyContent: "space-between", borderTopWidth: 1, borderTopColor: colors.line, paddingTop: 10 }}>
+                <Text style={{ fontSize: 13, color: colors.inkMuted, fontWeight: "600" }}>Lend & borrow</Text>
+                <Text style={{ fontSize: 12.5, color: colors.inkMuted }}>
+                  {`${formatCurrency(lending.owedToYou, currency)} owed to you · ${formatCurrency(lending.youOwe, currency)} you owe`}
+                </Text>
+              </View>
+            )}
           </View>
         )}
       </Card>

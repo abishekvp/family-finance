@@ -137,7 +137,7 @@ export default function Goals() {
               <ProgressBar value={g.progress} tone={g.isCompleted ? "income" : "brand"} />
               {g.targetDate && (
                 <Text style={{ fontSize: 11, color: colors.inkSubtle }}>
-                  Target date {new Date(g.targetDate).toLocaleDateString()}
+                  Target date {new Date(g.targetDate).toLocaleDateString(undefined, { timeZone: "UTC" })}
                 </Text>
               )}
             </Card>

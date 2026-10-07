@@ -10,6 +10,7 @@ import { useTheme } from "../../src/context/ThemeContext";
 import { getErrorMessage } from "../../src/api/errors";
 import { Button, Chip, ErrorText, Field, Input, Segmented, SkeletonRows, Toggle, FormScrollView } from "../../src/components/ui";
 import { CategoryPicker } from "../../src/components/CategoryPicker";
+import { DateField } from "../../src/components/DateTimeField";
 import { NewCategoryForm } from "../../src/components/NewCategoryForm";
 import { currencySymbol } from "../../src/lib/format";
 import { localDateInput } from "../../src/lib/dateUtils";
@@ -130,8 +131,8 @@ export default function RecurringForm() {
 
   async function handleSave() {
     setError(null);
-    if (!isDay(day)) return setError("Enter the date as YYYY-MM-DD");
-    if (endDate.trim() && !isDay(endDate)) return setError("Enter the end date as YYYY-MM-DD");
+    if (!isDay(day)) return setError("Pick the payment date");
+    if (endDate.trim() && !isDay(endDate)) return setError("Pick a valid end date");
     if (endDate.trim() && endDate.trim() < day.trim()) return setError("The end date is before the payment date");
 
     setIsSaving(true);
@@ -249,12 +250,12 @@ export default function RecurringForm() {
         <View style={{ flexDirection: "row", gap: 12 }}>
           <View style={{ flex: 1 }}>
             <Field label={isEdit ? "Next payment" : "First payment"}>
-              <Input value={day} onChangeText={setDay} placeholder="YYYY-MM-DD" autoCapitalize="none" />
+              <DateField value={day} onChange={setDay} />
             </Field>
           </View>
           <View style={{ flex: 1 }}>
             <Field label="Ends on" hint="Optional">
-              <Input value={endDate} onChangeText={setEndDate} placeholder="YYYY-MM-DD" autoCapitalize="none" />
+              <DateField value={endDate} onChange={setEndDate} placeholder="Never" clearable minimumDate={isDay(day) ? new Date(`${day.trim()}T00:00:00`) : undefined} />
             </Field>
           </View>
         </View>

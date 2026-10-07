@@ -13,7 +13,7 @@
  * Bump CACHE_VERSION whenever the precache list changes.
  */
 
-const CACHE_VERSION = "ff-v1";
+const CACHE_VERSION = "ff-v2";
 const SHELL_CACHE = `${CACHE_VERSION}-shell`;
 const ASSET_CACHE = `${CACHE_VERSION}-assets`;
 
@@ -70,8 +70,8 @@ self.addEventListener("fetch", (event) => {
 
   const url = new URL(request.url);
 
-  // Live data and the APK download are never served from cache.
-  if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/downloads/")) return;
+  // Live data is never served from cache.
+  if (url.pathname.startsWith("/api/")) return;
 
   if (request.mode === "navigate") {
     event.respondWith(

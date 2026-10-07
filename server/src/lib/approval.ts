@@ -12,15 +12,19 @@ export const COUNTED: Prisma.TransactionWhereInput = { approvalStatus: ApprovalS
  * setting on, an entry touching a shared account waits for an admin unless an admin recorded it.
  * Entries that stay inside the member's own private accounts count straight away: admins can't see
  * those accounts, so nobody could approve them.
+ *
+ * Pass `requireApproval` when the family's setting is already known, to skip reading it again.
  */
 export async function initialApprovalStatus(
   familyId: string,
   userId: string,
   accountIds: (string | null | undefined)[],
-  role?: Role
+  role?: Role,
+  requireApproval?: boolean
 ): Promise<ApprovalStatus> {
-  const family = await prisma.family.findUnique({ where: { id: familyId }, select: { requireApproval: true } });
-  if (!family?.requireApproval) return ApprovalStatus.APPROVED;
+  const required =
+    requireApproval ?? (await prisma.family.findUnique({ where: { id: familyId }, select: { requireApproval: true } }))?.requireApproval;
+  if (!required) return ApprovalStatus.APPROVED;
   const memberRole =
     role ??
     (await prisma.familyMembership.findUnique({ where: { userId_familyId: { userId, familyId } }, select: { role: true } }))?.role;

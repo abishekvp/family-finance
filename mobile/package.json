@@ -6,6 +6,7 @@
     "@noble/ciphers": "^2.4.0",
     "@noble/curves": "^2.4.0",
     "@noble/hashes": "^2.4.0",
+    "@react-native-community/datetimepicker": "9.1.0",
     "axios": "^1.20.0",
     "date-fns": "^4.4.0",
     "expo": "~57.0.23",
@@ -47,7 +48,8 @@
     "web": "expo start --web",
     "build:android": "npx expo prebuild --platform android --clean && npm run build:android:release",
     "build:android:release": "cd android && gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a",
-    "postbuild:android:release": "node scripts/upload-apk.js release"
+    "postbuild:android:release": "node scripts/upload-apk.js release",
+    "build:android:play": "node -e \"if (process.env.APP_CHANNEL !== 'play') { console.error('Run npm run build:play from the repo root: it sets the Play channel and your upload key.'); process.exit(1) }\" && npx expo prebuild --platform android --clean && cd android && gradlew bundleRelease"
   },
   "private": true
 }

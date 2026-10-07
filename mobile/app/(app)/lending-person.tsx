@@ -1,17 +1,37 @@
 import { useCallback, useLayoutEffect, useMemo, useState, type ReactNode } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { useFocusEffect, useLocalSearchParams, useNavigation, useRouter } from "expo-router";
-import { ArrowDownLeft, ArrowUpRight, CheckCircle2, Pencil, ShoppingBag, Trash2, Undo2 } from "lucide-react-native";
+import { ArrowDownLeft, ArrowUpRight, Ban, CheckCircle2, Pencil, Plus, ShoppingBag, Trash2, Undo2, Users } from "lucide-react-native";
 import { api } from "../../src/api/client";
-import type { Account, Transaction } from "../../src/api/types";
+import { ClientError } from "../../src/api/errors";
+import { encryptOutgoing, hasFamilyKey } from "../../src/api/vaultSession";
+import type { Account, Category, Transaction } from "../../src/api/types";
 import { useAuth } from "../../src/context/AuthContext";
 import { useTheme } from "../../src/context/ThemeContext";
 import { getErrorMessage } from "../../src/api/errors";
-import { Avatar, Badge, Button, Card, ErrorText, Field, Input, ProgressBar, Sheet, SkeletonRows } from "../../src/components/ui";
+import { Avatar, Badge, Button, Card, Chip, ErrorText, Field, Input, ProgressBar, Sheet, SkeletonRows, Toggle } from "../../src/components/ui";
+import { DateField, TimeField } from "../../src/components/DateTimeField";
+import { CategoryPicker } from "../../src/components/CategoryPicker";
+import { fetchWithCache } from "../../src/lib/cache";
+import { combineDateTime, localDateInput, localTimeInput } from "../../src/lib/dateUtils";
 import { formatCurrency } from "../../src/lib/format";
 import { href } from "../../src/lib/nav";
-import { describeBalance, describeEntry, isSettled, trackLoans, type LendingKind, type Loan } from "../../src/lib/lending";
-import { useTransactions } from "../../src/lib/transactionStore";
+import {
+  describeBalance,
+  describeEntry,
+  isPerson,
+  isSettled,
+  isWriteOff,
+  loanStatus,
+  trackLoans,
+  withNameInNotes,
+  writeOffPayload,
+  type LendingKind,
+  type Loan,
+} from "../../src/lib/lending";
+import { refreshTodayWidget } from "../../src/lib/todayWidget";
+import { syncTransactions, useTransactions } from "../../src/lib/transactionStore";
+import { LOCKED_PLACEHOLDER } from "../../src/lib/vaultCrypto";
 
 function formatDay(date: Date) {
   return date.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
@@ -26,22 +46,30 @@ export default function LendingPerson() {
   const navigation = useNavigation();
   const { id } = useLocalSearchParams<{ id: string }>();
 
-  const [person, setPerson] = useState<Account | null>(null);
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const person = accounts.find((a) => a.id === id) ?? null;
   const historyFilter = useMemo(() => ({ accountId: id }), [id]);
   const { transactions: history, ready: historyReady, sync } = useTransactions(user!.id, family.id, historyFilter);
   const [accountsLoaded, setAccountsLoaded] = useState(false);
   const isLoading = !accountsLoaded || !historyReady;
   const [error, setError] = useState<string | null>(null);
-  const [renaming, setRenaming] = useState(false);
-  const [confirmRemove, setConfirmRemove] = useState(false);
-  const [isRemoving, setIsRemoving] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [writingOff, setWritingOff] = useState<Loan | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const [accountsRes] = await Promise.all([api.get<Account[]>(`/families/${family.id}/accounts`), sync()]);
-      const found = accountsRes.data.find((a) => a.id === id) ?? null;
-      setPerson(found);
-      setError(found ? null : "This person was removed.");
+      const [accountsRes] = await Promise.all([
+        api.get<Account[]>(`/families/${family.id}/accounts`),
+        sync(),
+        fetchWithCache<Category[]>(`/families/${family.id}/categories`, undefined, (cached) => setCategories(cached.data)).then(
+          (res) => setCategories(res.data),
+          () => undefined
+        ),
+      ]);
+      setAccounts(accountsRes.data);
+      setError(accountsRes.data.some((a) => a.id === id) ? null : "This person was removed.");
     } catch (err) {
       setError(getErrorMessage(err, "Unable to load"));
     } finally {
@@ -62,6 +90,8 @@ export default function LendingPerson() {
   const loans = useMemo(() => (person ? trackLoans(history, person) : []), [history, person]);
   const openLoans = loans.filter((l) => !l.settled);
   const returnedLoans = loans.filter((l) => l.settled);
+  // A shared person is the family's: only an admin manages them. A personal one, only its owner.
+  const canManage = !!person && canRecord && (person.owner === null ? family.role === "ADMIN" : person.owner.id === user!.id);
 
   function record(kind: LendingKind, amount?: number, repaysId?: string) {
     router.push(
@@ -79,16 +109,10 @@ export default function LendingPerson() {
     router.push(href("/transaction-form", { id: t.id, transaction: JSON.stringify(t) }));
   }
 
-  async function handleRemove() {
-    setIsRemoving(true);
-    try {
-      await api.delete(`/families/${family.id}/accounts/${id}`);
-      router.back();
-    } catch (err) {
-      setError(getErrorMessage(err, "Unable to remove"));
-      setConfirmRemove(false);
-      setIsRemoving(false);
-    }
+  /** After money was written off, merged or deleted: everything showing balances catches up. */
+  async function afterChange() {
+    await syncTransactions(user!.id, family.id, { force: true }).catch(() => undefined);
+    refreshTodayWidget(family.id, family.currency);
   }
 
   if (isLoading) {
@@ -180,6 +204,7 @@ export default function LendingPerson() {
                     ? () => record(loan.direction === "lent" ? "got-back" : "paid-back", loan.remaining, loan.transaction?.id)
                     : undefined
                 }
+                onWriteOff={canRecord ? () => setWritingOff(loan) : undefined}
               />
             ))}
           </Card>
@@ -187,7 +212,7 @@ export default function LendingPerson() {
       )}
 
       {returnedLoans.length > 0 && (
-        <Section title="Returned">
+        <Section title="Closed">
           <Card style={{ padding: 0 }}>
             {returnedLoans.map((loan, i) => (
               <LoanRow
@@ -222,41 +247,55 @@ export default function LendingPerson() {
         )}
       </Section>
 
-      {canRecord && (
+      {canManage && (
         <View style={{ gap: 10, marginTop: 8 }}>
-          <Button title="Rename" variant="secondary" icon={<Pencil size={15} color={colors.ink} />} onPress={() => setRenaming(true)} />
-          {confirmRemove ? (
-            <View style={{ gap: 10, padding: 14, borderRadius: 16, backgroundColor: colors.expenseSoft }}>
-              <Text style={{ color: colors.ink, fontSize: 13, fontWeight: "600" }}>
-                {settled
-                  ? `Remove ${person.name}? Their history stays in your transactions.`
-                  : `Remove ${person.name}? ${describeBalance(person.name, balance, person.currency)}, which will no longer be tracked here.`}
-              </Text>
-              <View style={{ flexDirection: "row", gap: 8 }}>
-                <View style={{ flex: 1 }}>
-                  <Button title="Remove" variant="danger" loading={isRemoving} onPress={handleRemove} />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Button title="Cancel" variant="secondary" disabled={isRemoving} onPress={() => setConfirmRemove(false)} />
-                </View>
-              </View>
-            </View>
-          ) : (
-            <Button title="Remove person" variant="ghost" icon={<Trash2 size={15} color={colors.expense} />} onPress={() => setConfirmRemove(true)} />
-          )}
+          <Button title="Edit" variant="secondary" icon={<Pencil size={15} color={colors.ink} />} onPress={() => setEditing(true)} />
+          <Button title="Delete person" variant="ghost" icon={<Trash2 size={15} color={colors.expense} />} onPress={() => setDeleting(true)} />
         </View>
       )}
 
-      <RenameSheet
-        visible={renaming}
+      <EditPersonSheet
+        visible={editing}
         familyId={family.id}
         person={person}
-        onClose={() => setRenaming(false)}
+        onClose={() => setEditing(false)}
         onSaved={() => {
-          setRenaming(false);
+          setEditing(false);
           load();
         }}
       />
+
+      {writingOff && (
+        <WriteOffSheet
+          familyId={family.id}
+          person={person}
+          loan={writingOff}
+          categories={categories}
+          onClose={() => setWritingOff(null)}
+          onSaved={async () => {
+            setWritingOff(null);
+            await afterChange();
+            load();
+          }}
+        />
+      )}
+
+      {deleting && (
+        <DeletePersonSheet
+          familyId={family.id}
+          encrypted={family.encryptionEnabled}
+          person={person}
+          people={accounts.filter((a) => isPerson(a) && a.id !== person.id)}
+          history={history}
+          onClose={() => setDeleting(false)}
+          onDone={async (movedTo) => {
+            setDeleting(false);
+            await afterChange();
+            if (movedTo) router.replace(href("/lending-person", { id: movedTo }));
+            else router.back();
+          }}
+        />
+      )}
     </ScrollView>
   );
 }
@@ -289,7 +328,7 @@ function ButtonPair({ primary, secondary }: { primary: PairButton; secondary: Pa
   );
 }
 
-/** One loan, how much of it has come back and which entries returned it. */
+/** One loan, how much of it has come back (or was written off) and which entries closed it. */
 function LoanRow({
   loan,
   currency,
@@ -297,6 +336,7 @@ function LoanRow({
   onPress,
   onOpenRepayment,
   onRecordReturn,
+  onWriteOff,
 }: {
   loan: Loan;
   currency: string;
@@ -304,6 +344,7 @@ function LoanRow({
   onPress?: () => void;
   onOpenRepayment: (t: Transaction) => void;
   onRecordReturn?: () => void;
+  onWriteOff?: () => void;
 }) {
   const { colors } = useTheme();
   const lent = loan.direction === "lent";
@@ -311,11 +352,7 @@ function LoanRow({
     ? `${lent ? "You lent" : "You borrowed"} ${formatCurrency(loan.amount, currency)}`
     : `${lent ? "They owed you" : "You owed"} ${formatCurrency(loan.amount, currency)} to start`;
   const detail = [formatDay(loan.date), loan.transaction?.category?.name, loan.transaction?.notes].filter(Boolean).join(" · ");
-
-  let status: string;
-  if (loan.settled) status = "Fully returned";
-  else if (loan.returned > 0) status = `${formatCurrency(loan.returned, currency)} returned · ${formatCurrency(loan.remaining, currency)} left`;
-  else status = `${formatCurrency(loan.remaining, currency)} left`;
+  const closedByWriteOff = loan.settled && loan.writtenOff > 0 && loan.returned === 0;
 
   return (
     <Pressable
@@ -327,7 +364,9 @@ function LoanRow({
       ]}
     >
       <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-        {loan.settled ? (
+        {closedByWriteOff ? (
+          <Ban size={18} color={colors.inkMuted} />
+        ) : loan.settled ? (
           <CheckCircle2 size={18} color={colors.income} />
         ) : lent ? (
           <ArrowUpRight size={18} color={colors.inkMuted} />
@@ -345,9 +384,11 @@ function LoanRow({
           ) : null}
         </View>
       </View>
-      {!loan.settled && <ProgressBar value={loan.returned / loan.amount} tone={lent ? "income" : "expense"} />}
+      {!loan.settled && <ProgressBar value={(loan.returned + loan.writtenOff) / loan.amount} tone={lent ? "income" : "expense"} />}
       <View style={{ flexDirection: "row", justifyContent: "space-between", gap: 8 }}>
-        <Text style={{ fontSize: 12, color: loan.settled ? colors.income : colors.inkMuted, fontWeight: "600" }}>{status}</Text>
+        <Text style={{ flex: 1, fontSize: 12, color: loan.settled && !closedByWriteOff ? colors.income : colors.inkMuted, fontWeight: "600" }}>
+          {loanStatus(loan, currency)}
+        </Text>
         {!loan.settled && loan.dueDate && (
           <Text style={{ fontSize: 12, fontWeight: "700", color: loan.overdue ? colors.expense : colors.inkMuted }}>
             {loan.overdue ? `Overdue since ${formatDay(loan.dueDate)}` : `Return by ${formatDay(loan.dueDate)}`}
@@ -358,21 +399,28 @@ function LoanRow({
         <View style={{ gap: 6, paddingLeft: 28 }}>
           {loan.repayments.map((r, i) => (
             <Pressable key={`${r.transaction.id}-${i}`} onPress={() => onOpenRepayment(r.transaction)} hitSlop={4} style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-              <Undo2 size={13} color={colors.inkSubtle} />
+              {r.writtenOff ? <Ban size={13} color={colors.inkSubtle} /> : <Undo2 size={13} color={colors.inkSubtle} />}
               <Text style={{ flex: 1, fontSize: 12, color: colors.inkMuted }} numberOfLines={1}>
-                {`${formatCurrency(r.amount, currency)} returned ${formatDay(new Date(r.transaction.date))}`}
+                {`${formatCurrency(r.amount, currency)} ${r.writtenOff ? "written off" : "returned"} ${formatDay(new Date(r.transaction.date))}`}
                 {r.transaction.repaysId === loan.transaction?.id ? "" : " · matched automatically"}
               </Text>
             </Pressable>
           ))}
         </View>
       )}
-      {onRecordReturn && !loan.settled && (
-        <Pressable onPress={onRecordReturn} hitSlop={6} style={{ alignSelf: "flex-start", paddingLeft: 28 }}>
-          <Text style={{ fontSize: 12.5, fontWeight: "700", color: colors.brand600 }}>
-            {loan.direction === "lent" ? "Record money got back" : "Record paying back"}
-          </Text>
-        </Pressable>
+      {(onRecordReturn || onWriteOff) && !loan.settled && (
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 18, paddingLeft: 28 }}>
+          {onRecordReturn && (
+            <Pressable onPress={onRecordReturn} hitSlop={6}>
+              <Text style={{ fontSize: 12.5, fontWeight: "700", color: colors.brand600 }}>{lent ? "Record money got back" : "Record paying back"}</Text>
+            </Pressable>
+          )}
+          {onWriteOff && (
+            <Pressable onPress={onWriteOff} hitSlop={6}>
+              <Text style={{ fontSize: 12.5, fontWeight: "700", color: colors.inkMuted }}>{lent ? "Won't be returned" : "No need to repay"}</Text>
+            </Pressable>
+          )}
+        </View>
       )}
     </Pressable>
   );
@@ -387,15 +435,21 @@ function HistoryRow({
 }: {
   transaction: Transaction;
   personId: string;
-  /** The loan this entry pays back, when it was linked to one. */
+  /** The loan this entry pays back (or writes off), when it was linked to one. */
   repays: Transaction | null;
   first: boolean;
   onPress: () => void;
 }) {
   const { colors } = useTheme();
   const { effect, label, detail } = describeEntry(transaction, personId);
-  const isExpense = transaction.type === "EXPENSE";
-  const Icon = isExpense ? ShoppingBag : transaction.type === "TRANSFER" && transaction.transferToAccountId === personId ? ArrowUpRight : ArrowDownLeft;
+  const writtenOff = isWriteOff(transaction);
+  const Icon = writtenOff
+    ? Ban
+    : transaction.type === "EXPENSE"
+      ? ShoppingBag
+      : transaction.type === "TRANSFER" && transaction.transferToAccountId === personId
+        ? ArrowUpRight
+        : ArrowDownLeft;
   const date = formatDay(new Date(transaction.date));
 
   return (
@@ -418,7 +472,7 @@ function HistoryRow({
         </Text>
         {repays ? (
           <Text style={{ fontSize: 12, color: colors.brand600, marginTop: 2 }} numberOfLines={1}>
-            {`Pays back “${repays.payee || "loan"}” · ${formatDay(new Date(repays.date))}`}
+            {`${writtenOff ? "Writes off" : "Pays back"} “${repays.payee || "loan"}” · ${formatDay(new Date(repays.date))}`}
           </Text>
         ) : null}
         {transaction.notes ? (
@@ -435,7 +489,8 @@ function HistoryRow({
   );
 }
 
-function RenameSheet({
+/** Rename, and share with (or keep from) the family. */
+function EditPersonSheet({
   visible,
   familyId,
   person,
@@ -448,18 +503,24 @@ function RenameSheet({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const { colors } = useTheme();
   const [name, setName] = useState(person.name);
+  const [shared, setShared] = useState(person.owner === null);
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const changed = name.trim() !== person.name || shared !== (person.owner === null);
 
   async function handleSave() {
     setError(null);
     setIsSaving(true);
     try {
-      await api.patch(`/families/${familyId}/accounts/${person.id}`, { name: name.trim() });
+      await api.patch(`/families/${familyId}/accounts/${person.id}`, {
+        name: name.trim(),
+        ...(shared !== (person.owner === null) ? { isCommon: shared } : {}),
+      });
       onSaved();
     } catch (err) {
-      setError(getErrorMessage(err, "Unable to rename"));
+      setError(getErrorMessage(err, "Unable to save"));
     } finally {
       setIsSaving(false);
     }
@@ -469,15 +530,260 @@ function RenameSheet({
     <Sheet
       visible={visible}
       onClose={onClose}
-      title="Rename"
-      footer={<Button title="Save" loading={isSaving} disabled={!name.trim() || name.trim() === person.name} onPress={handleSave} />}
+      title="Edit person"
+      footer={<Button title="Save" loading={isSaving} disabled={!name.trim() || !changed} onPress={handleSave} />}
     >
-      <View style={{ gap: 12 }}>
+      <View style={{ gap: 16 }}>
         <Field label="Name">
-          <Input value={name} onChangeText={setName} autoCapitalize="words" autoFocus />
+          <Input value={name} onChangeText={setName} autoCapitalize="words" />
         </Field>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontSize: 13, fontWeight: "600", color: colors.ink }}>Share with family</Text>
+            <Text style={{ fontSize: 12, color: colors.inkSubtle, marginTop: 2 }}>
+              {shared ? "Everyone in the family sees them and what's owed." : "Only you see them and what's owed."}
+            </Text>
+          </View>
+          <Toggle value={shared} onChange={setShared} />
+        </View>
         <ErrorText>{error}</ErrorText>
       </View>
+    </Sheet>
+  );
+}
+
+/** Closes (part of) a loan as money that won't come back. */
+function WriteOffSheet({
+  familyId,
+  person,
+  loan,
+  categories,
+  onClose,
+  onSaved,
+}: {
+  familyId: string;
+  person: Account;
+  loan: Loan;
+  categories: Category[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const { colors } = useTheme();
+  const lent = loan.direction === "lent";
+  const [amount, setAmount] = useState(String(Number(loan.remaining.toFixed(2))));
+  const [date, setDate] = useState(() => localDateInput(new Date()));
+  const [time, setTime] = useState(() => localTimeInput(new Date()));
+  const [counted, setCounted] = useState(false);
+  const [categoryId, setCategoryId] = useState<string | null>(null);
+  const [notes, setNotes] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const amountValue = Number(amount);
+  const when = combineDateTime(date, time);
+  const tooMuch = amountValue > loan.remaining + 0.005;
+
+  async function handleSave() {
+    setError(null);
+    setIsSaving(true);
+    try {
+      await api.post(
+        `/families/${familyId}/transactions`,
+        writeOffPayload({ person, loan, amount: amountValue, date: when!.toISOString(), counted, categoryId, notes })
+      );
+      onSaved();
+    } catch (err) {
+      setError(getErrorMessage(err, "Unable to write it off"));
+      setIsSaving(false);
+    }
+  }
+
+  return (
+    <Sheet
+      visible
+      onClose={onClose}
+      title={lent ? "Won't be returned" : "No need to repay"}
+      footer={
+        <Button
+          title={`Write off ${amountValue > 0 ? formatCurrency(amountValue, person.currency) : ""}`.trim()}
+          variant="danger"
+          loading={isSaving}
+          disabled={!(amountValue > 0) || tooMuch || !when}
+          onPress={handleSave}
+        />
+      }
+    >
+      <ScrollView style={{ maxHeight: 460 }} keyboardShouldPersistTaps="handled" contentContainerStyle={{ gap: 14, paddingBottom: 4 }}>
+        <Text style={{ fontSize: 13, color: colors.inkMuted, lineHeight: 19 }}>
+          {lent
+            ? `${person.name} won't owe you this any more. Your accounts don't change — the money already left them when you lent it.`
+            : `You won't owe ${person.name} this any more. Your accounts don't change — the money already came in when you borrowed it.`}
+        </Text>
+        <Field label="Amount" error={tooMuch ? `Only ${formatCurrency(loan.remaining, person.currency)} is left on this loan` : null}>
+          <Input keyboardType="decimal-pad" value={amount} onChangeText={setAmount} />
+        </Field>
+        <View style={{ flexDirection: "row", gap: 12 }}>
+          <View style={{ flex: 4 }}>
+            <Field label="Date">
+              <DateField value={date} onChange={setDate} />
+            </Field>
+          </View>
+          <View style={{ flex: 3 }}>
+            <Field label="Time">
+              <TimeField value={time} onChange={setTime} />
+            </Field>
+          </View>
+        </View>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontSize: 13, fontWeight: "600", color: colors.ink }}>{lent ? "Count it as spending" : "Count it as income"}</Text>
+            <Text style={{ fontSize: 12, color: colors.inkSubtle, marginTop: 2 }}>
+              {counted
+                ? lent
+                  ? "Shows up as an expense on this date, in the category you pick."
+                  : "Shows up as income on this date, in the category you pick."
+                : "Off: kept out of income, spending and budgets."}
+            </Text>
+          </View>
+          <Toggle value={counted} onChange={setCounted} />
+        </View>
+        {counted && (
+          <Field label="Category" hint="Optional">
+            <CategoryPicker
+              categories={categories.filter((c) => c.type === (lent ? "EXPENSE" : "INCOME"))}
+              selectedId={categoryId}
+              onSelect={setCategoryId}
+              clearLabel="No category"
+            />
+          </Field>
+        )}
+        <Field label="Notes" hint="Optional">
+          <Input value={notes} onChangeText={setNotes} placeholder="Why it won't come back" />
+        </Field>
+        <ErrorText>{error}</ErrorText>
+      </ScrollView>
+    </Sheet>
+  );
+}
+
+/**
+ * Deletes a person: their entries either move to someone else (or a new group like "Friends"),
+ * each keeping the name in its notes, or go to the bin with them.
+ */
+function DeletePersonSheet({
+  familyId,
+  encrypted,
+  person,
+  people,
+  history,
+  onClose,
+  onDone,
+}: {
+  familyId: string;
+  encrypted: boolean;
+  person: Account;
+  people: Account[];
+  history: Transaction[];
+  onClose: () => void;
+  /** With the person their entries moved to, if they moved. */
+  onDone: (movedTo: string | null) => void;
+}) {
+  const { colors } = useTheme();
+  const shared = person.owner === null;
+  // A shared person's entries are the family's, so they can only move to someone shared too.
+  const targets = people.filter((p) => !shared || p.owner === null);
+  const count = history.length;
+  const [mode, setMode] = useState<"move" | "delete">("move");
+  const [targetId, setTargetId] = useState<string | "new">(() => targets.find((p) => /^friends?$/i.test(p.name))?.id ?? "new");
+  const [groupName, setGroupName] = useState("Friends");
+  const [error, setError] = useState<string | null>(null);
+  const [isWorking, setIsWorking] = useState(false);
+  const target = targetId === "new" ? null : targets.find((p) => p.id === targetId) ?? null;
+  const canSubmit = count === 0 || mode === "delete" || !!target || (targetId === "new" && groupName.trim().length > 0);
+
+  /** For an end-to-end encrypted family the server can't write the name into notes; this device does. */
+  function sealedNotes() {
+    if (!encrypted) return undefined;
+    if (!hasFamilyKey(familyId)) throw new ClientError("Unlock your vault with your master password first, so their notes can keep the name.");
+    return history
+      .filter((t) => t.notes !== LOCKED_PLACEHOLDER)
+      .map((t) => ({ id: t.id, notes: encryptOutgoing(familyId, { notes: withNameInNotes(person.name, t.notes) }).notes as string }));
+  }
+
+  async function handleConfirm() {
+    setError(null);
+    setIsWorking(true);
+    try {
+      if (count > 0 && mode === "move") {
+        const res = await api.post<Account>(`/families/${familyId}/accounts/${person.id}/merge`, {
+          ...(target ? { targetId: target.id } : { newTarget: { name: groupName.trim(), isCommon: shared } }),
+          notes: sealedNotes(),
+        });
+        onDone(res.data.id);
+      } else {
+        await api.delete(`/families/${familyId}/accounts/${person.id}`, { params: count > 0 ? { entries: "delete" } : undefined });
+        onDone(null);
+      }
+    } catch (err) {
+      setError(getErrorMessage(err, "Unable to delete"));
+      setIsWorking(false);
+    }
+  }
+
+  return (
+    <Sheet
+      visible
+      onClose={onClose}
+      title={`Delete ${person.name}`}
+      footer={
+        <Button
+          title={count > 0 && mode === "move" ? `Move entries & delete ${person.name}` : `Delete ${person.name}`}
+          variant="danger"
+          loading={isWorking}
+          disabled={!canSubmit}
+          onPress={handleConfirm}
+        />
+      }
+    >
+      <ScrollView style={{ maxHeight: 460 }} keyboardShouldPersistTaps="handled" contentContainerStyle={{ gap: 14, paddingBottom: 4 }}>
+        {count === 0 ? (
+          <Text style={{ fontSize: 13, color: colors.inkMuted, lineHeight: 19 }}>{`Nothing is recorded with ${person.name}, so they're simply removed.`}</Text>
+        ) : (
+          <>
+            <Text style={{ fontSize: 13, color: colors.inkMuted, lineHeight: 19 }}>
+              {`${count} ${count === 1 ? "entry is" : "entries are"} recorded with ${person.name}. What should happen to ${count === 1 ? "it" : "them"}?`}
+            </Text>
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+              <Chip label="Move to someone else" icon={<Users size={13} color={mode === "move" ? colors.white : colors.inkMuted} />} selected={mode === "move"} onPress={() => setMode("move")} />
+              <Chip label="Delete them too" icon={<Trash2 size={13} color={mode === "delete" ? colors.white : colors.inkMuted} />} selected={mode === "delete"} onPress={() => setMode("delete")} color={colors.expense} />
+            </View>
+            {mode === "move" ? (
+              <View style={{ gap: 12 }}>
+                <Field label="Move to">
+                  <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                    {targets.map((p) => (
+                      <Chip key={p.id} label={p.name} selected={targetId === p.id} onPress={() => setTargetId(p.id)} />
+                    ))}
+                    <Chip label="New group" icon={<Plus size={13} color={targetId === "new" ? colors.white : colors.inkMuted} />} selected={targetId === "new"} onPress={() => setTargetId("new")} />
+                  </View>
+                </Field>
+                {targetId === "new" && (
+                  <Field label="Group name" hint={shared ? "Shared with the family, like them." : undefined}>
+                    <Input value={groupName} onChangeText={setGroupName} autoCapitalize="words" placeholder="Friends" />
+                  </Field>
+                )}
+                <Text style={{ fontSize: 12, color: colors.inkSubtle, lineHeight: 17 }}>
+                  {`Every entry moves to ${target?.name ?? (groupName.trim() || "the group")} with “${person.name}” written in its notes, and what's owed moves with them. Your account balances don't change.`}
+                </Text>
+              </View>
+            ) : (
+              <Text style={{ fontSize: 12, color: colors.expense, lineHeight: 17 }}>
+                {`Their entries go to the bin and your account balances change back as if they never happened. Restoring one from the bin brings ${person.name} back.`}
+              </Text>
+            )}
+          </>
+        )}
+        <ErrorText>{error}</ErrorText>
+      </ScrollView>
     </Sheet>
   );
 }

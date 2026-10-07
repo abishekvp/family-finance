@@ -392,6 +392,8 @@ model Transaction {
   @@index([repaysId])
   @@index([refundsId])
   @@index([accountId])
+  // Balance recalculation sums the transfers into an account on every save.
+  @@index([transferToAccountId])
   @@index([categoryId])
 }
 

@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AppState } from "react-native";
 import { ensureReceiveSmsPermission, isSmsReaderAvailable, requestSmsPermission } from "../../modules/sms-reader";
+import { SMS_FEATURE } from "../lib/distribution";
 import {
   DEFAULT_SMS_SETTINGS,
   loadSmsSettings,
@@ -44,7 +45,8 @@ const SmsImportContext = createContext<SmsImportContextValue | undefined>(undefi
 export function SmsImportProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   const familyId = user?.families[0]?.id ?? null;
-  const available = isSmsReaderAvailable();
+  // Off in a build made without SMS (see app.config.js), whatever the native module says.
+  const available = SMS_FEATURE && isSmsReaderAvailable();
 
   const [settings, setSettings] = useState<SmsImportSettings>(DEFAULT_SMS_SETTINGS);
   const [isLoading, setIsLoading] = useState(true);

@@ -9,6 +9,7 @@ import {
   notifyUpdateAvailable,
   type ReleaseInfo,
 } from "../lib/appUpdate";
+import { SELF_UPDATES } from "../lib/distribution";
 
 export type UpdateStatus = "idle" | "checking" | "upToDate" | "available" | "downloading" | "error";
 
@@ -55,7 +56,8 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
   const installing = useRef(false);
 
   const checkForUpdates = useCallback(async ({ manual = false }: { manual?: boolean } = {}) => {
-    if (installing.current) return;
+    // A Google Play install is updated by Play, never by the app itself.
+    if (!SELF_UPDATES || installing.current) return;
     lastCheckAt.current = Date.now();
     setError(null);
     if (manual) setStatus("checking");

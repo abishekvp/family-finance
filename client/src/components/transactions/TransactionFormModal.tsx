@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { ArrowRight, ArrowRightLeft, HandCoins, Home, Landmark, MinusCircle, Plus, PlusCircle, Repeat, Trash2 } from "lucide-react";
-import { isFamilyTransfer } from "../../lib/transactionTotals";
+import { NOT_COUNTED_TAG, isFamilyTransfer, isNotCounted } from "../../lib/transactionTotals";
 import { api } from "../../api/client";
 import { ClientError, getErrorMessage } from "../../api/errors";
 import { Button, Chip, ErrorText, Field, Input, Label, Modal, Segmented, Toggle, cn, useToast } from "../ui";
@@ -12,16 +12,18 @@ import type { Account, Budget, Category, PayeeRule, RecurringFrequency, Transact
 import { useAuth } from "../../context/AuthContext";
 import { useFamilyData, useRecentHistory } from "../../context/FamilyDataContext";
 import { currencySymbol, formatCurrency } from "../../lib/format";
-import { MONTH_LABELS, localDateInput } from "../../lib/dateUtils";
+import { MONTH_LABELS, combineDateTime, localDateInput, localTimeInput } from "../../lib/dateUtils";
 import { budgetName } from "../../lib/budgets";
 import { FREQUENCIES, describeSchedule } from "../../lib/recurring";
 import {
   LENDING_KINDS,
+  WRITE_OFF_TAG,
   balanceEffect,
   describeBalance,
   describeEntry,
   entryLabel,
   isPerson,
+  isWriteOff,
   kindOf,
   kindTag,
   loanLabel,
@@ -31,6 +33,7 @@ import {
   startsLoan,
   trackLoans,
   withoutKindTag,
+  writeOffPayload,
   type LendingKind,
 } from "../../lib/lending";
 import {
@@ -90,6 +93,11 @@ function parseDay(value: string): Date | null {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
+/** Tags without the ones that make an entry uncounted or a write-off — for an entry that stops being one. */
+function withoutCountingTags(tags: string[]) {
+  return tags.filter((t) => t !== NOT_COUNTED_TAG && t !== WRITE_OFF_TAG);
+}
+
 /** What's still left to refund on `original`, not counting `self`'s own earlier link to it. */
 function refundableLeft(original: Transaction, self: Transaction | null | undefined) {
   const own = self && self.refundsId === original.id ? self.amount : 0;
@@ -141,10 +149,16 @@ export function TransactionFormModal({
   const [rememberPayee, setRememberPayee] = useState(false);
   const [transferToAccountId, setTransferToAccountId] = useState<string | null>(initial?.transferToAccountId ?? null);
   const [amount, setAmount] = useState(initial ? String(initial.amount) : preset?.amount ? String(Number(preset.amount.toFixed(2))) : "");
-  // Local day, not initial.date.slice(0, 10): that is the UTC day, and re-saving it would shift the
-  // transaction back a day east of UTC.
+  // Local day and time, not initial.date.slice(0, 10): that is the UTC day, and re-saving it would
+  // shift the transaction back a day east of UTC. A new entry starts at the current moment.
   const [date, setDate] = useState(initial ? localDateInput(new Date(initial.date)) : todayIso());
+  const [time, setTime] = useState(() => localTimeInput(initial ? new Date(initial.date) : new Date()));
   const [payee, setPayee] = useState(initial?.payee ?? "");
+  // A write-off, or an entry kept out of totals, can be switched to count (or back).
+  const [counted, setCounted] = useState(initial ? !isNotCounted(initial) : true);
+  // Lent money that won't come back: saved as the loan plus a write-off that closes it.
+  const [notReturning, setNotReturning] = useState(false);
+  const [notReturningCounted, setNotReturningCounted] = useState(false);
   const [notes, setNotes] = useState(initial?.notes ?? "");
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -169,6 +183,8 @@ export function TransactionFormModal({
   const [repeat, setRepeat] = useState<RecurringFrequency | null>(null);
   // Saved on an attempt whose repeating schedule (or payee rule) then failed; a retry doesn't save it twice.
   const savedTransaction = useRef<Transaction | null>(null);
+  // Likewise for the write-off that follows a loan marked as not coming back.
+  const savedWriteOff = useRef(false);
   const didInitFromAccounts = useRef(false);
 
   // Once accounts are known: a transfer with a person opens as Lend/Borrow, and a new entry starts on
@@ -207,6 +223,12 @@ export function TransactionFormModal({
   const transferTargets = accounts.filter((a) => a.id !== accountId && (!isPerson(a) || a.id === transferToAccountId));
   const selectedAccount = accounts.find((a) => a.id === accountId);
   const paidByPerson = selectedAccount && isPerson(selectedAccount) && !isLending && type !== "TRANSFER" ? selectedAccount : null;
+  // A write-off stays one while it's the same kind of entry on the same person.
+  const editingWriteOff = !!initial && isWriteOff(initial) && type === initial.type && accountId === initial.accountId;
+  // Entries kept out of totals (a write-off, money moved off a member who left) can be counted again.
+  const showCounted = !!initial && (type === "INCOME" || type === "EXPENSE") && (editingWriteOff || isNotCounted(initial));
+  // Lent money that won't come back is recorded with its write-off in one go (new loans only).
+  const canMarkNotReturning = isLending && kind === "lent" && !isEdit;
   // A salary, rent or subscription can be set to repeat as it's added (not from a person's account).
   const canRepeat = !isEdit && (type === "INCOME" || type === "EXPENSE") && !paidByPerson;
   const symbol = currencySymbol(selectedAccount?.currency ?? family.currency);
@@ -258,7 +280,9 @@ export function TransactionFormModal({
   }, [candidateType, refundCandidates?.type, familyId]);
 
   const amountValue = Number(amount);
-  const dateDay = parseDay(date);
+  // The moment the entry is dated, from its day and time of day.
+  const when = combineDateTime(date, time);
+  const dateDay = when;
 
   const refundOptions = useMemo<SearchSelectOption[]>(() => {
     if (!candidateType || refundCandidates?.type !== candidateType) return [];
@@ -354,7 +378,7 @@ export function TransactionFormModal({
     !!accountId &&
     amount.trim().length > 0 &&
     amountValue > 0 &&
-    date.trim().length > 0 &&
+    !!when &&
     (type !== "TRANSFER" || (!!transferToAccountId && transferToAccountId !== accountId)) &&
     (!isLending || (hasPerson && !!selectedAccount && !isPerson(selectedAccount)));
 
@@ -365,15 +389,17 @@ export function TransactionFormModal({
     if (person && initial?.type === "TRANSFER" && (initial.accountId === person.id || initial.transferToAccountId === person.id)) {
       before -= describeEntry(initial, person.id).effect;
     }
-    return describeBalance(personName, before + balanceEffect(kind, amountValue), person?.currency ?? family.currency);
+    // Money that won't come back is written off straight away, so they don't owe it.
+    const effect = canMarkNotReturning && notReturning ? 0 : balanceEffect(kind, amountValue);
+    return describeBalance(personName, before + effect, person?.currency ?? family.currency);
   })();
 
   // The budgets an expense counts in: those for its date's month, and the yearly ones.
   const [budgets, setBudgets] = useState<Budget[]>([]);
   const budgetYear = dateDay?.getFullYear();
   const budgetMonth = dateDay ? dateDay.getMonth() + 1 : undefined;
-  // Money sent to family isn't spending, so it doesn't come out of a budget.
-  const wantsBudgets = type === "EXPENSE" && !familyTransfer;
+  // Money sent to family isn't spending, so it doesn't come out of a budget; nor does an uncounted entry.
+  const wantsBudgets = type === "EXPENSE" && !familyTransfer && (!showCounted || counted);
   useEffect(() => {
     if (!wantsBudgets || !budgetYear || !budgetMonth) return;
     let cancelled = false;
@@ -457,8 +483,8 @@ export function TransactionFormModal({
 
   /** Checks the dates before anything is saved (or a new person created). */
   function validateDates() {
-    if (!parseDay(date)) {
-      setError("Pick the transaction's date");
+    if (!when) {
+      setError("Pick the transaction's date and time");
       return false;
     }
     if (isLending && startsLoan(kind) && dueDate.trim() && !parseDay(dueDate)) {
@@ -470,16 +496,12 @@ export function TransactionFormModal({
 
   /** The request body; dates must already be valid (see validateDates). */
   function buildPayload(personAccountId: string | null): Record<string, unknown> {
-    const trimmedDate = date.trim();
-    const parsed = parseDay(trimmedDate)!;
+    const isoDate = when!.toISOString();
     const payloadRepaysId = repaying ? repaysId : null;
-    // Keep the original time (SMS imports carry the alert's) unless the day itself was changed. A new
-    // entry for today keeps the current time, so it sorts after today's earlier ones.
-    const unchangedDay = initial && trimmedDate === localDateInput(new Date(initial.date));
-    const isoDate = unchangedDay ? initial.date : !initial && trimmedDate === todayIso() ? new Date().toISOString() : parsed.toISOString();
 
     if (isLending) {
-      const due = startsLoan(kind) && dueDate.trim() ? parseDay(dueDate)!.toISOString() : null;
+      // Money that won't come back has nothing to be returned by.
+      const due = startsLoan(kind) && dueDate.trim() && !(canMarkNotReturning && notReturning) ? parseDay(dueDate)!.toISOString() : null;
       const out = moneyGoesOut(kind);
       return {
         type: "TRANSFER",
@@ -492,9 +514,16 @@ export function TransactionFormModal({
         notes: notes.trim() || null,
         dueDate: due,
         repaysId: payloadRepaysId,
-        tags: [...tagsWithTarget(withoutKindTag(initial?.tags ?? []), false), kindTag(kind)],
+        tags: [...tagsWithTarget(withoutKindTag(withoutCountingTags(initial?.tags ?? [])), false), kindTag(kind)],
       };
     }
+
+    // An entry turned from Lend/Borrow into something else stops being a loan, and one moved off a
+    // person (or turned into a transfer) stops being a write-off.
+    let tags = tagsWithTarget(withoutKindTag(initial?.tags ?? []), familyTransfer && filedByPayee);
+    if (type === "TRANSFER") tags = withoutCountingTags(tags);
+    else if (!editingWriteOff) tags = tags.filter((t) => t !== WRITE_OFF_TAG);
+    if (showCounted) tags = [...tags.filter((t) => t !== NOT_COUNTED_TAG), ...(counted ? [] : [NOT_COUNTED_TAG])];
 
     return {
       accountId,
@@ -506,9 +535,9 @@ export function TransactionFormModal({
       payee: payee.trim() || null,
       notes: notes.trim() || null,
       refundsId: type === "INCOME" || type === "EXPENSE" ? refundsId : null,
-      // An entry turned from Lend/Borrow into something else stops being a loan.
-      tags: tagsWithTarget(withoutKindTag(initial?.tags ?? []), familyTransfer && filedByPayee),
-      ...(initial ? { dueDate: null, repaysId: null } : {}),
+      tags,
+      // A write-off keeps the loan it closes.
+      ...(initial ? { dueDate: null, repaysId: editingWriteOff ? initial.repaysId : null } : {}),
     };
   }
 
@@ -534,7 +563,8 @@ export function TransactionFormModal({
 
     setIsSubmitting(true);
     try {
-      const payload = buildPayload(isLending ? await resolvePersonId() : null);
+      const personAccountId = isLending ? await resolvePersonId() : null;
+      const payload = buildPayload(personAccountId);
       if (isEdit && initial) {
         const res = await api.patch<Transaction>(`/families/${familyId}/transactions/${initial.id}`, payload);
         savedTransaction.current = res.data;
@@ -543,6 +573,27 @@ export function TransactionFormModal({
         savedTransaction.current = res.data;
       }
       const saved = savedTransaction.current!;
+      if (canMarkNotReturning && notReturning && personAccountId && !savedWriteOff.current) {
+        try {
+          // Counted as spending, it's filed under the loan's category when that's an expense one.
+          const spendingCategory = categories.find((c) => c.id === categoryId && c.type === "EXPENSE")?.id ?? null;
+          await api.post(
+            `/families/${familyId}/transactions`,
+            writeOffPayload({
+              person: { id: personAccountId, name: personName },
+              loan: { direction: "lent", transaction: { id: saved.id } },
+              amount: amountValue,
+              date: when!.toISOString(),
+              counted: notReturningCounted,
+              categoryId: spendingCategory,
+              notes: null,
+            })
+          );
+          savedWriteOff.current = true;
+        } catch (err) {
+          throw new ClientError(`Saved the loan, but couldn't mark it as not coming back: ${getErrorMessage(err, "try again")}`);
+        }
+      }
       if (rememberPayee && canRemember) {
         try {
           await savePayeeRule();
@@ -569,6 +620,7 @@ export function TransactionFormModal({
         }
       }
       savedTransaction.current = null;
+      savedWriteOff.current = false;
       // Saved, but it won't show in totals until an admin approves it.
       if (saved.approvalStatus === "PENDING") toast("Saved and sent to an admin for approval");
       onSaved(saved);
@@ -584,7 +636,10 @@ export function TransactionFormModal({
         setRefundsId(null);
         setRepeat(null);
         setTargetTouched(false);
+        setNotReturning(false);
+        setNotReturningCounted(false);
         setDate(todayIso());
+        setTime(localTimeInput(new Date()));
         if (isLending) {
           // A person just added is now one of the chips, with an up-to-date balance.
           if (createdPerson.current) setPersonId(createdPerson.current.id);
@@ -713,7 +768,10 @@ export function TransactionFormModal({
                 </Chip>
               ))}
             </div>
-            <p className="text-xs text-ink-subtle">{LENDING_KINDS.find((k) => k.value === kind)?.hint}. Never counted as income or an expense.</p>
+            <p className="text-xs text-ink-subtle">
+              {LENDING_KINDS.find((k) => k.value === kind)?.hint}. {moneyGoesOut(kind) ? "Taken from" : "Added to"} your account&apos;s balance —
+              never counted as income or spending.
+            </p>
           </div>
         )}
 
@@ -777,6 +835,29 @@ export function TransactionFormModal({
           </div>
         )}
 
+        {canMarkNotReturning && (
+          <div className="space-y-3 rounded-2xl bg-surface-sunken/70 p-3">
+            <Toggle
+              checked={notReturning}
+              onChange={setNotReturning}
+              label="Won't be returned"
+              description={
+                notReturning
+                  ? `Given for good: ${personName || "they"} won't owe it. It still leaves your account.`
+                  : "For money you don't expect back. You can also write off a loan later from their page."
+              }
+            />
+            {notReturning && (
+              <Toggle
+                checked={notReturningCounted}
+                onChange={setNotReturningCounted}
+                label="Count it as spending"
+                description={notReturningCounted ? "Counted as an expense, in the category you pick if it's an expense one." : "Kept out of spending and budgets."}
+              />
+            )}
+          </div>
+        )}
+
         {repaying && openLoans.length > 0 && (
           <div>
             <Label>Pays back</Label>
@@ -809,20 +890,22 @@ export function TransactionFormModal({
           <Field label="Date">
             {(props) => <Input {...props} type="date" required value={date} onChange={(e) => setDate(e.target.value)} />}
           </Field>
-          {isLending ? (
-            startsLoan(kind) ? (
-              <Field label="Return by" hint="Optional">
-                {(props) => <Input {...props} type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />}
-              </Field>
-            ) : (
-              <div />
-            )
-          ) : (
-            <Field label="Payee" hint="Optional">
-              {(props) => <Input {...props} value={payee} onChange={(e) => setPayee(e.target.value)} placeholder="Optional" />}
-            </Field>
-          )}
+          <Field label="Time">
+            {(props) => <Input {...props} type="time" required value={time} onChange={(e) => setTime(e.target.value)} />}
+          </Field>
         </div>
+
+        {isLending ? (
+          startsLoan(kind) && !(canMarkNotReturning && notReturning) ? (
+            <Field label="Return by" hint="Optional">
+              {(props) => <Input {...props} type="date" min={date || undefined} value={dueDate} onChange={(e) => setDueDate(e.target.value)} />}
+            </Field>
+          ) : null
+        ) : (
+          <Field label="Payee" hint="Optional">
+            {(props) => <Input {...props} value={payee} onChange={(e) => setPayee(e.target.value)} placeholder="Who was it paid to or from?" />}
+          </Field>
+        )}
 
         <div>
           <Label>{isLending ? (moneyGoesOut(kind) ? "Paid from" : "Received into") : "Account"}</Label>
@@ -840,12 +923,29 @@ export function TransactionFormModal({
           )}
           {paidByPerson && (
             <p className="mt-2 text-xs text-ink-subtle">
-              {type === "EXPENSE"
-                ? `${paidByPerson.name} paid, so this adds to what you owe them.`
-                : `${paidByPerson.name} received it for you, so this adds to what they owe you.`}
+              {editingWriteOff
+                ? type === "EXPENSE"
+                  ? `Written off: takes this off what ${paidByPerson.name} owes you, without touching your accounts.`
+                  : `Written off: takes this off what you owe ${paidByPerson.name}, without touching your accounts.`
+                : type === "EXPENSE"
+                  ? `${paidByPerson.name} paid, so this adds to what you owe them.`
+                  : `${paidByPerson.name} received it for you, so this adds to what they owe you.`}
             </p>
           )}
         </div>
+
+        {showCounted && (
+          <div className="rounded-2xl bg-surface-sunken/70 p-3">
+            <Toggle
+              checked={counted}
+              onChange={setCounted}
+              label={type === "EXPENSE" ? "Count as spending" : "Count as income"}
+              description={
+                counted ? (type === "EXPENSE" ? "Counted in spending and budgets." : "Counted in income.") : "Moves the balance, but kept out of totals and budgets."
+              }
+            />
+          </div>
+        )}
 
         {type === "TRANSFER" && (
           <div>

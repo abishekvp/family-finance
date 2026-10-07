@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { format } from "date-fns";
 import { ChevronDown, ChevronRight } from "lucide-react";
-import type { Account, Transaction } from "../../api/types";
+import type { Transaction } from "../../api/types";
 import { Money } from "../figures";
 import { cn, EmptyState, SkeletonRows } from "../ui";
 import { cumulativeBalance } from "../../lib/carryOver";
@@ -32,7 +32,7 @@ export function MonthlyView({
   year,
   transactions,
   historyForCarryOver,
-  accounts,
+  startBalances,
   accountIds,
   currency,
   carryOverEnabled,
@@ -41,8 +41,11 @@ export function MonthlyView({
 }: {
   year: number;
   transactions: Transaction[];
+  /** This year's transactions, for the carry-over. */
   historyForCarryOver: Transaction[];
-  accounts: Account[];
+  /** Each account's balance when the year began, for the carry-over. */
+  startBalances: Record<string, number> | undefined;
+  /** Whose balances the carry-over adds up. */
   accountIds: Set<string>;
   currency: string;
   carryOverEnabled: boolean;
@@ -83,7 +86,7 @@ export function MonthlyView({
         const hasActivity = month.transactions.length > 0;
         const carryOverAmount =
           !hasActivity && carryOverEnabled
-            ? cumulativeBalance(accounts, historyForCarryOver, accountIds, month.monthStart)
+            ? cumulativeBalance(startBalances, historyForCarryOver, accountIds, month.monthStart)
             : 0;
 
         return (
@@ -138,7 +141,7 @@ export function MonthlyView({
                   const weekHasActivity = weekTx.length > 0;
                   const weekCarryOver =
                     !weekHasActivity && carryOverEnabled
-                      ? cumulativeBalance(accounts, historyForCarryOver, accountIds, week.start)
+                      ? cumulativeBalance(startBalances, historyForCarryOver, accountIds, week.start)
                       : 0;
 
                   return (

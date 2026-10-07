@@ -17,6 +17,11 @@ function getTransporter(): Transporter | null {
   return transporter;
 }
 
+/** Whether this server can send email (SMTP_HOST is set). */
+export function mailConfigured() {
+  return !!process.env.SMTP_HOST?.trim();
+}
+
 export async function sendMail({ to, subject, text, html }: { to: string; subject: string; text: string; html?: string }) {
   const t = getTransporter();
   if (!t) {

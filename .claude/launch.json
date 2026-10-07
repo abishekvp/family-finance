@@ -4,21 +4,47 @@
     {
       "name": "family-finance-dev",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeArgs": [
+        "run",
+        "dev"
+      ],
       "port": 5173
     },
     {
       "name": "family-finance-client-only",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev:client"],
+      "runtimeArgs": [
+        "run",
+        "dev:client"
+      ],
       "port": 5173,
       "autoPort": true
     },
     {
       "name": "family-finance-prod",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["start"],
+      "runtimeArgs": [
+        "start"
+      ],
       "port": 4000
+    },
+    {
+      "name": "scratch-api",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": [
+        "/c",
+        "set DATABASE_URL=postgresql://postgres@localhost:5544/ff_test&& set JWT_ACCESS_SECRET=scratch-access&& set JWT_REFRESH_SECRET=scratch-refresh&& set NODE_ENV=development&& set PORT=4100&& set PUBLIC_APP_URL=http://localhost:5174&& npx tsx server/src/index.ts"
+      ],
+      "port": 4100
+    },
+    {
+      "name": "scratch-web",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": [
+        "/c",
+        "set API_PROXY_TARGET=http://localhost:4100&& set PORT=5174&& npm run dev --workspace client"
+      ],
+      "port": 5174
     }
   ]
 }

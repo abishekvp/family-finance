@@ -4,6 +4,7 @@ import { clearTodaySnapshot, setTodaySnapshot, type TodayWidgetItem } from "../.
 import { localDateInput } from "./dateUtils";
 import { formatCurrency } from "./format";
 import { totalsContribution } from "./transactionTotals";
+import { lendingFlow } from "./lending";
 
 interface Job {
   familyId: string;
@@ -15,16 +16,22 @@ let running: Promise<void> | null = null;
 // Bumped on sign-out so a refresh already in flight can't repopulate the widget afterwards.
 let generation = 0;
 
+const NO_PEOPLE: ReadonlySet<string> = new Set();
+
 function toItem(t: Transaction): TodayWidgetItem {
   const isTransfer = t.type === "TRANSFER";
   const amount = formatCurrency(t.amount, t.account.currency);
+  // Lend & borrow moves your balance, so it's signed — but in the neutral colour, like anything that
+  // isn't income or spending (family transfers, write-offs kept out of totals).
+  const lending = lendingFlow(t, NO_PEOPLE);
+  const counted = totalsContribution(t);
   return {
     title: t.payee || t.category?.name || (isTransfer ? "Transfer" : "Uncategorized"),
     subtitle: isTransfer
       ? `${t.account.name}${t.transferToAccount ? ` → ${t.transferToAccount.name}` : ""}`
       : [t.payee ? t.category?.name : null, t.account.name].filter(Boolean).join(" · "),
-    amount: t.type === "EXPENSE" ? `−${amount}` : t.type === "INCOME" ? `+${amount}` : amount,
-    kind: t.type,
+    amount: lending !== null ? `${lending < 0 ? "−" : "+"}${amount}` : t.type === "EXPENSE" ? `−${amount}` : t.type === "INCOME" ? `+${amount}` : amount,
+    kind: counted.expense > 0 ? "EXPENSE" : counted.income > 0 ? "INCOME" : "TRANSFER",
   };
 }
 

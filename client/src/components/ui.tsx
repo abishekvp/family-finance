@@ -325,16 +325,26 @@ export function Toggle({
   description?: ReactNode;
   disabled?: boolean;
 }) {
+  const id = useId();
   return (
     <div className="flex items-start justify-between gap-4">
-      <div className="min-w-0">
-        <p className="text-sm font-medium text-ink">{label}</p>
-        {description && <p className="mt-0.5 text-xs text-ink-subtle">{description}</p>}
+      {/* The label names the switch, and clicking it flips the switch too. */}
+      <div className={cn("min-w-0", !disabled && "cursor-pointer")} onClick={() => !disabled && onChange(!checked)}>
+        <p id={`${id}-label`} className="text-sm font-medium text-ink">
+          {label}
+        </p>
+        {description && (
+          <p id={`${id}-description`} className="mt-0.5 text-xs text-ink-subtle">
+            {description}
+          </p>
+        )}
       </div>
       <button
         type="button"
         role="switch"
         aria-checked={checked}
+        aria-labelledby={`${id}-label`}
+        aria-describedby={description ? `${id}-description` : undefined}
         disabled={disabled}
         onClick={() => onChange(!checked)}
         className={cn(

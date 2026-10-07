@@ -17,6 +17,7 @@ import {
 } from "../lib/session";
 import { consumeCode, createCode } from "../lib/otp";
 import { sendCodeEmail, sendMail } from "../lib/mailer";
+import { deleteUserAccount } from "../lib/accountDeletion";
 import { oauthRouter } from "./oauth";
 import { passkeysRouter } from "./passkeys";
 
@@ -261,6 +262,31 @@ authRouter.patch(
       data: { firstName, lastName, name: displayName(firstName, lastName) },
     });
     res.json(sanitizeUser(user));
+  })
+);
+
+// Deletes the account and everything that was only theirs (see lib/accountDeletion). Confirmed with the
+// password, or — for an account that signs in with Google, Microsoft or a passkey and has none — by
+// typing the account's email address.
+authRouter.delete(
+  "/me",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { password, confirmEmail } = z
+      .object({ password: z.string().optional(), confirmEmail: z.string().trim().toLowerCase().optional() })
+      .parse(req.body ?? {});
+    const user = await prisma.user.findUnique({ where: { id: req.user!.id } });
+    if (!user) throw new AppError(404, "User not found");
+
+    if (user.passwordHash) {
+      if (!password || !(await bcrypt.compare(password, user.passwordHash))) throw new AppError(400, "Incorrect password");
+    } else if (confirmEmail !== user.email.toLowerCase()) {
+      throw new AppError(400, "Type your email address to confirm");
+    }
+
+    await deleteUserAccount(user.id);
+    res.clearCookie(REFRESH_COOKIE, { path: "/api/auth" });
+    res.status(204).send();
   })
 );
 

@@ -77,22 +77,19 @@ export function Accounts() {
     [accounts, scope, user]
   );
 
-  // total/liabilities/assets formula from the shared contract — kept identical to the
-  // server and mobile implementations so every surface reports the same numbers.
+  // Friends you lend to or borrow from live on the Lend & borrow page, not in the account list.
+  const ownAccounts = useMemo(() => scopedAccounts.filter((a) => !isPersonAccount(a)), [scopedAccounts]);
+
+  // The money in your own accounts (the same formula as the mobile app). Lending moves it out of them
+  // and getting it back moves it in; what people owe you, or you owe them, is shown with Lend & borrow.
   const totals = useMemo(() => {
-    const total = scopedAccounts.reduce((s, a) => s + (a.balance ?? 0), 0);
-    const liabilities = scopedAccounts.reduce((s, a) => {
-      // Money you owe a friend is a debt like any other.
-      if (a.type === "CREDIT_CARD" || a.type === "LOAN" || a.type === "PERSON") {
-        return s + Math.max(0, -(a.balance ?? 0));
-      }
+    const total = ownAccounts.reduce((s, a) => s + (a.balance ?? 0), 0);
+    const liabilities = ownAccounts.reduce((s, a) => {
+      if (a.type === "CREDIT_CARD" || a.type === "LOAN") return s + Math.max(0, -(a.balance ?? 0));
       return s;
     }, 0);
     return { total, liabilities, assets: total + liabilities };
-  }, [scopedAccounts]);
-
-  // Friends you lend to or borrow from live on the Lend & borrow page, not in the account list.
-  const ownAccounts = useMemo(() => scopedAccounts.filter((a) => !isPersonAccount(a)), [scopedAccounts]);
+  }, [ownAccounts]);
   const people = useMemo(() => accounts.filter(isPersonAccount), [accounts]);
   const lending = lendingTotals(people);
 

@@ -5,12 +5,16 @@ import { authRouter } from "./routes/auth";
 import { familiesRouter, invitesRouter } from "./routes/families";
 import { appRouter } from "./routes/app";
 import { errorHandler } from "./middleware/errorHandler";
-import { ANDROID_PACKAGE_NAME, androidCertFingerprints } from "./lib/config";
+import { ANDROID_PACKAGE_NAMES, androidCertFingerprints } from "./lib/config";
 
 export function createApp() {
   const app = express();
+  // Behind Vercel's (or any) proxy: req.protocol and req.ip come from X-Forwarded-*.
+  app.set("trust proxy", 1);
+  app.disable("x-powered-by");
 
-  app.use(express.json());
+  // Merging a busy person sends every moved entry's notes (sealed, for an encrypted family).
+  app.use(express.json({ limit: "2mb" }));
   app.use(cookieParser());
 
   app.get("/api/health", (_req, res) => res.json({ ok: true }));
@@ -22,12 +26,10 @@ export function createApp() {
     res.json(
       fingerprints.length === 0
         ? []
-        : [
-            {
-              relation: ["delegate_permission/common.handle_all_urls", "delegate_permission/common.get_login_creds"],
-              target: { namespace: "android_app", package_name: ANDROID_PACKAGE_NAME, sha256_cert_fingerprints: fingerprints },
-            },
-          ]
+        : ANDROID_PACKAGE_NAMES.map((packageName) => ({
+            relation: ["delegate_permission/common.handle_all_urls", "delegate_permission/common.get_login_creds"],
+            target: { namespace: "android_app", package_name: packageName, sha256_cert_fingerprints: fingerprints },
+          }))
     );
   };
   app.get("/.well-known/assetlinks.json", assetLinks);

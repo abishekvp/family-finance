@@ -22,6 +22,7 @@ import { TotalView } from "../../../src/components/transactions/TotalView";
 import { FilterModal } from "../../../src/components/transactions/FilterModal";
 import * as Haptics from "expo-haptics";
 import { totalsContribution } from "../../../src/lib/transactionTotals";
+import { isPerson } from "../../../src/lib/lending";
 
 type SubView = "daily" | "calendar" | "monthly" | "total";
 
@@ -130,9 +131,12 @@ export default function TransactionsHub() {
     });
   }, [navigation, selectedAccountIds, colors]);
 
+  // Either leg: what an account paid out, and transfers (or money back from a person) that landed on it.
   const filteredTransactions = useMemo(() => {
     if (selectedAccountIds === null) return periodTransactions;
-    return periodTransactions.filter((t) => selectedAccountIds.has(t.accountId));
+    return periodTransactions.filter(
+      (t) => selectedAccountIds.has(t.accountId) || (!!t.transferToAccountId && selectedAccountIds.has(t.transferToAccountId))
+    );
   }, [periodTransactions, selectedAccountIds]);
 
   // Load on scroll: a busy month draws its first rows at once and the rest as they come into view.
@@ -152,9 +156,11 @@ export default function TransactionsHub() {
     [hasMoreDaily]
   );
 
-  const scopedAccountIds = useMemo(() => selectedAccountIds ?? new Set(accounts.map((a) => a.id)), [selectedAccountIds, accounts]);
+  // Your own accounts: people you lend to aren't part of your balance, so lending moves it.
+  const ownAccounts = useMemo(() => accounts.filter((a) => !isPerson(a)), [accounts]);
+  const scopedAccountIds = useMemo(() => selectedAccountIds ?? new Set(ownAccounts.map((a) => a.id)), [selectedAccountIds, ownAccounts]);
 
-    const periodTotals = useMemo(() => {
+  const periodTotals = useMemo(() => {
     let income = 0;
     let expense = 0;
     for (const t of filteredTransactions) {
@@ -296,7 +302,7 @@ export default function TransactionsHub() {
 
       <FilterModal
         visible={filterVisible}
-        accounts={accounts}
+        accounts={ownAccounts}
         periodTransactions={periodTransactions}
         selectedAccountIds={selectedAccountIds}
         onChange={setSelectedAccountIds}

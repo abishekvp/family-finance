@@ -9,6 +9,7 @@ import { localDateInput, weekStartsOn } from "../../lib/dateUtils";
 import { CarryOverRow } from "./CarryOverRow";
 import { TransactionRow } from "./TransactionRow";
 import { totalsContribution } from "../../lib/transactionTotals";
+import { isPerson } from "../../lib/lending";
 
 const WEEKDAY_LABELS_SUN = ["S", "M", "T", "W", "T", "F", "S"];
 const WEEKDAY_LABELS_MON = ["M", "T", "W", "T", "F", "S", "S"];
@@ -40,6 +41,7 @@ export function CalendarView({
 }) {
   const { colors } = useTheme();
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
+  const people = useMemo(() => new Set(accounts.filter(isPerson).map((a) => a.id)), [accounts]);
 
   const totalsByDay = useMemo(() => {
     const map = new Map<string, { income: number; expense: number }>();
@@ -143,7 +145,7 @@ export function CalendarView({
           {selectedTransactions.length === 0 ? (
             <Text style={{ color: colors.inkSubtle, fontSize: 13, paddingVertical: 8 }}>No transactions on this day.</Text>
           ) : (
-            selectedTransactions.map((t) => <TransactionRow key={t.id} transaction={t} onPress={() => onPressTransaction(t)} />)
+            selectedTransactions.map((t) => <TransactionRow key={t.id} transaction={t} people={people} onPress={() => onPressTransaction(t)} />)
           )}
         </View>
       )}

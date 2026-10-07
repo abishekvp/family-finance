@@ -178,7 +178,7 @@ export function Uncategorized() {
             const matchCategoryLive = match?.categoryId ? categories.some((c) => c.id === match.categoryId) : true;
             return (
               <Card key={t.id} className={cn("!py-3 transition-opacity", busyId === t.id && "pointer-events-none opacity-50")}>
-                <TransactionRow transaction={t} onClick={() => setEditing(t)} />
+                <TransactionRow transaction={t} showDate onClick={() => setEditing(t)} />
                 {canEdit && (
                   <div className="mt-2 space-y-2.5">
                     <div className="flex flex-wrap gap-2">

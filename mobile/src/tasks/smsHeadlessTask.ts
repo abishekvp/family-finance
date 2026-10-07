@@ -1,4 +1,4 @@
-import { api, refreshAccessToken } from "../api/client";
+import { api, refreshSession } from "../api/client";
 import { isSmsReaderAvailable } from "../../modules/sms-reader";
 import { runSmsSync } from "../lib/smsImport";
 import { refreshTodayWidget } from "../lib/todayWidget";
@@ -23,11 +23,14 @@ const INBOX_RETRY_MS = 2500;
 export default async function smsHeadlessTask(): Promise<void> {
   if (!isSmsReaderAvailable()) return;
   try {
-    const token = await refreshAccessToken();
-    if (!token) return;
-
-    const me = await api.get("/auth/me");
-    const family = me.data?.families?.[0] as { id: string; currency: string; encryptionEnabled?: boolean } | undefined;
+    // The token and the signed-in user in one round trip (older servers send no user: ask for it).
+    const session = await refreshSession(true);
+    if (!session) return;
+    const me = (session.user ?? (await api.get("/auth/me")).data) as {
+      id?: string;
+      families?: { id: string; currency: string; encryptionEnabled?: boolean }[];
+    };
+    const family = me?.families?.[0];
     if (!family?.id) return;
 
     for (let attempt = 0; attempt < INBOX_RETRIES; attempt++) {
@@ -36,10 +39,10 @@ export default async function smsHeadlessTask(): Promise<void> {
       if ((result.scanned ?? 0) > 0) {
         // Payee names can't be read without the vault, which is locked while the app is closed.
         if (result.imported > 0 && !family.encryptionEnabled) refreshTodayWidget(family.id, family.currency);
-        if (result.imported > 0 && me.data?.id) {
+        if (result.imported > 0 && me.id) {
           // An alert with no matching payee rule lands uncategorised: count it in tonight's reminder.
-          await syncTransactions(me.data.id, family.id, { force: true }).catch(() => undefined);
-          await refreshUncategorizedReminder(me.data.id, family.id, family.currency);
+          await syncTransactions(me.id, family.id, { force: true }).catch(() => undefined);
+          await refreshUncategorizedReminder(me.id, family.id, family.currency);
         }
         return;
       }

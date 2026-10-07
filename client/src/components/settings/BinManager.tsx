@@ -1,11 +1,18 @@
 import { useState, useEffect } from "react";
-import { ArchiveRestore, RefreshCcw, Trash } from "lucide-react";
+import { ArchiveRestore, RefreshCcw, Trash2 } from "lucide-react";
 import { api } from "../../api/client";
 import { getErrorMessage } from "../../api/errors";
-import { Button, Card, CardHeader, ErrorText, useToast, Modal } from "../ui";
+import { Button, Card, CardHeader, ErrorText, IconButton, SkeletonRows, useToast, Modal } from "../ui";
 import { useFamilyData } from "../../context/FamilyDataContext";
 import type { Transaction } from "../../api/types";
 import { Money } from "../figures";
+import { formatTime } from "../../lib/dateUtils";
+
+const RETENTION_DAYS = 30;
+
+function describe(t: Transaction) {
+  return t.payee || t.category?.name || (t.type === "TRANSFER" ? "Transfer" : t.type === "INCOME" ? "Income" : "Expense");
+}
 
 export function BinManager({ familyId }: { familyId: string }) {
   const toast = useToast();
@@ -14,15 +21,17 @@ export function BinManager({ familyId }: { familyId: string }) {
   const [binned, setBinned] = useState<Transaction[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The entry waiting for a second click before it's deleted for good.
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
 
   async function loadBin() {
     setIsLoading(true);
     setError(null);
     try {
-      const res = await api.get<Transaction[]>(`/families/${familyId}/transactions?bin=true&limit=100`);
+      const res = await api.get<Transaction[]>(`/families/${familyId}/transactions`, { params: { bin: "true", limit: 200 } });
       setBinned(res.data);
     } catch (err) {
-      setError(getErrorMessage(err, "Failed to load bin"));
+      setError(getErrorMessage(err, "Couldn't load the bin"));
     } finally {
       setIsLoading(false);
     }
@@ -32,6 +41,7 @@ export function BinManager({ familyId }: { familyId: string }) {
     if (isOpen) {
       loadBin();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
   async function handleRestore(t: Transaction) {
@@ -42,7 +52,7 @@ export function BinManager({ familyId }: { familyId: string }) {
       await refreshAccounts();
       toast("Transaction restored");
     } catch (err) {
-      toast(getErrorMessage(err, "Failed to restore"), "error");
+      toast(getErrorMessage(err, "Couldn't restore it"), "error");
     }
   }
 
@@ -50,9 +60,10 @@ export function BinManager({ familyId }: { familyId: string }) {
     try {
       await api.delete(`/families/${familyId}/transactions/${t.id}/purge`);
       setBinned((prev) => prev.filter((x) => x.id !== t.id));
-      toast("Transaction permanently deleted");
+      setConfirmingId(null);
+      toast("Deleted for good");
     } catch (err) {
-      toast(getErrorMessage(err, "Failed to delete"), "error");
+      toast(getErrorMessage(err, "Couldn't delete it"), "error");
     }
   }
 
@@ -60,51 +71,62 @@ export function BinManager({ familyId }: { familyId: string }) {
     <>
       <Card>
         <CardHeader
-          title="Recycle Bin"
-          subtitle="View and restore recently deleted transactions."
+          title="Recycle bin"
+          subtitle={`Deleted transactions stay here for ${RETENTION_DAYS} days.`}
           icon={<ArchiveRestore size={17} />}
           actions={
             <Button variant="secondary" size="sm" onClick={() => setIsOpen(true)}>
-              Open Bin
+              Open bin
             </Button>
           }
         />
       </Card>
 
       {isOpen && (
-        <Modal onClose={() => setIsOpen(false)} title="Recycle Bin">
-          {error && <ErrorText>{error}</ErrorText>}
-        {isLoading ? (
-          <p className="text-ink-subtle">Loading...</p>
-        ) : binned.length === 0 ? (
-          <p className="text-ink-subtle">The bin is empty.</p>
-        ) : (
-          <div className="space-y-2 max-h-[60vh] overflow-y-auto">
-            {binned.map((t) => (
-              <div key={t.id} className="flex items-center justify-between p-3 rounded-xl border border-line bg-surface">
-                <div>
-                  <div className="font-semibold text-ink">
-                    {t.payee || t.category?.name || "Transfer"}
+        <Modal onClose={() => setIsOpen(false)} title="Recycle bin" description={`Deleted for good after ${RETENTION_DAYS} days. Restoring puts an entry back in your balances.`}>
+          <ErrorText>{error}</ErrorText>
+          {isLoading ? (
+            <SkeletonRows rows={3} />
+          ) : binned.length === 0 ? (
+            <p className="text-sm text-ink-subtle">The bin is empty.</p>
+          ) : (
+            <ul className="max-h-[60vh] space-y-2 overflow-y-auto">
+              {binned.map((t) => (
+                <li key={t.id} className="flex items-center justify-between gap-3 rounded-xl border border-line bg-surface p-3">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-ink">{describe(t)}</p>
+                    <p className="truncate text-xs text-ink-subtle">
+                      {new Date(t.date).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}, {formatTime(t.date)} ·{" "}
+                      {t.account.name}
+                      {t.deletedAt ? ` · deleted ${new Date(t.deletedAt).toLocaleDateString(undefined, { day: "numeric", month: "short" })}` : ""}
+                    </p>
                   </div>
-                  <div className="text-xs text-ink-subtle">
-                    {new Date(t.date).toLocaleDateString()} &middot; Deleted {t.deletedAt ? new Date(t.deletedAt).toLocaleDateString() : 'recently'}
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <div className="font-semibold">
-                    <Money amount={t.amount} currency={t.account.currency} />
-                  </div>
-                  <Button variant="ghost" size="sm" onClick={() => handleRestore(t)} title="Restore">
-                    <RefreshCcw size={15} />
-                  </Button>
-                  <Button variant="ghost" size="sm" className="text-red-500 hover:text-red-600" onClick={() => handlePurge(t)} title="Purge">
-                    <Trash size={15} />
-                  </Button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
+                  {confirmingId === t.id ? (
+                    <div className="flex shrink-0 items-center gap-2">
+                      <Button variant="danger" size="sm" onClick={() => handlePurge(t)}>
+                        Delete for good
+                      </Button>
+                      <Button variant="ghost" size="sm" onClick={() => setConfirmingId(null)}>
+                        Cancel
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="flex shrink-0 items-center gap-1">
+                      <span className="mr-1 text-sm font-semibold">
+                        <Money amount={t.type === "EXPENSE" ? -t.amount : t.amount} currency={t.account.currency} signed={t.type !== "TRANSFER"} />
+                      </span>
+                      <IconButton label={`Restore ${describe(t)}`} onClick={() => handleRestore(t)}>
+                        <RefreshCcw size={15} />
+                      </IconButton>
+                      <IconButton label={`Delete ${describe(t)} for good`} tone="danger" onClick={() => setConfirmingId(t.id)}>
+                        <Trash2 size={15} />
+                      </IconButton>
+                    </div>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
         </Modal>
       )}
     </>

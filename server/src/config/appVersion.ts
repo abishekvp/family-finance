@@ -15,9 +15,5 @@ export const BLOB_BASE_URL = process.env.ASSET_STORE_ID
   ? `https://${process.env.ASSET_STORE_ID.replace(/^store_/, "").toLowerCase()}.public.blob.vercel-storage.com`
   : null;
 
-// Used when Vercel Blob isn't configured (e.g. local dev without
-// ASSET_STORE_ID set) or no release has been uploaded there yet.
-export const APP_VERSION_FALLBACK = {
-  latest: "1.0.0",
-  apkPath: "/downloads/family-finance.apk",
-};
+/** The app's Google Play listing, once it's published there (e.g. https://play.google.com/store/apps/details?id=…). */
+export const PLAY_STORE_URL = process.env.PLAY_STORE_URL?.trim() || null;

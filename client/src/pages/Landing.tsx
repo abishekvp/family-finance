@@ -258,6 +258,9 @@ export function Landing() {
             <Link to="/register" className="hover:text-ink">
               Create account
             </Link>
+            <Link to="/privacy" className="hover:text-ink">
+              Privacy
+            </Link>
           </div>
           <p>&copy; {new Date().getFullYear()} Family Finance</p>
         </div>

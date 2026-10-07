@@ -1,4 +1,4 @@
-import { Fragment } from "react";
+import { Fragment, useMemo } from "react";
 import { ActivityIndicator, Text, View } from "react-native";
 import { CalendarX } from "lucide-react-native";
 import type { Account, Transaction } from "../../api/types";
@@ -8,6 +8,7 @@ import { CarryOverRow } from "./CarryOverRow";
 import { TransactionRow } from "./TransactionRow";
 import { localDateInput } from "../../lib/dateUtils";
 import { totalsContribution } from "../../lib/transactionTotals";
+import { isPerson } from "../../lib/lending";
 
 // The local day, not dateStr.slice(0, 10): that is the UTC day, which files anything from local
 // midnight until the UTC offset (5:30 AM in India) under the previous day.
@@ -43,6 +44,7 @@ export function DailyView({
   limit?: number;
 }) {
   const { colors } = useTheme();
+  const people = useMemo(() => new Set(accounts.filter(isPerson).map((a) => a.id)), [accounts]);
 
   if (transactions.length === 0) {
     if (carryOver) {
@@ -109,7 +111,7 @@ export function DailyView({
               </View>
             </View>
             {shownRows.map((t) => (
-              <TransactionRow key={t.id} transaction={t} onPress={() => onPressTransaction(t)} />
+              <TransactionRow key={t.id} transaction={t} people={people} onPress={() => onPressTransaction(t)} />
             ))}
           </Fragment>
         );

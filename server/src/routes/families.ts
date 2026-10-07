@@ -6,6 +6,8 @@ import { prisma } from "../lib/prisma";
 import { asyncHandler, AppError } from "../middleware/errorHandler";
 import { requireAuth, requireFamilyRole } from "../middleware/auth";
 import { seedDefaultCategories } from "../lib/defaultCategories";
+import { publicAppUrl } from "../lib/config";
+import { mailConfigured, sendMail } from "../lib/mailer";
 import { accountsRouter } from "./accounts";
 import { categoriesRouter } from "./categories";
 import { transactionsRouter } from "./transactions";
@@ -184,11 +186,21 @@ familiesRouter.post(
       },
     });
 
-    res.status(201).json({
-      ...invite,
-      // TODO: send this link via an email provider instead of returning it directly.
-      inviteLink: `${req.protocol}://${req.get("host")}/invites/${invite.token}`,
-    });
+    const inviteLink = `${publicAppUrl()}/invites/${invite.token}`;
+    // Emailed when the server can send mail; the admin can always share the link themselves too.
+    let emailed = false;
+    if (mailConfigured()) {
+      const family = await prisma.family.findUnique({ where: { id: req.params.familyId }, select: { name: true } });
+      emailed = await sendMail({
+        to: email,
+        subject: `You're invited to ${family?.name ?? "a family"} on Family Finance`,
+        text: `You've been invited to join ${family?.name ?? "a family"} on Family Finance.\n\nOpen this link to accept (it expires in 7 days):\n${inviteLink}\n\n- Family Finance`,
+      })
+        .then(() => true)
+        .catch(() => false);
+    }
+
+    res.status(201).json({ ...invite, inviteLink, emailed });
   })
 );
 

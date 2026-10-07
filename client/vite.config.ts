@@ -10,12 +10,24 @@ export default defineConfig({
     strictPort: false,
     proxy: {
       "/api": {
-        target: "http://localhost:4000",
+        target: process.env.API_PROXY_TARGET ?? "http://localhost:4000",
         changeOrigin: true,
       },
     },
   },
   build: {
     outDir: "dist",
+    target: "es2022",
+    rollupOptions: {
+      output: {
+        // React and the router change far less often than the app: in a chunk of their own, browsers
+        // keep them cached across deploys. Pages (and the charting library) split off on their own
+        // through the lazy routes in App.tsx.
+        manualChunks(id) {
+          if (/[\\/]node_modules[\\/](react|react-dom|scheduler|react-router|react-router-dom)[\\/]/.test(id)) return "react";
+          return undefined;
+        },
+      },
+    },
   },
 });

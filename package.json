@@ -20,7 +20,8 @@
     "prisma:generate": "npm run prisma:generate --workspace server",
     "prisma:migrate": "npm run prisma:migrate --workspace server",
     "prisma:deploy": "npm run prisma:deploy --workspace server",
-    "prisma:studio": "npm run prisma:studio --workspace server"
+    "prisma:studio": "npm run prisma:studio --workspace server",
+    "build:play": "node scripts/release.mjs --play"
   },
   "devDependencies": {
     "concurrently": "^9.1.0",

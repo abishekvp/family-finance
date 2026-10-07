@@ -9,6 +9,7 @@ import { api } from "../../api/client";
 import { getErrorMessage } from "../../api/errors";
 import { localDateInput } from "../../lib/dateUtils";
 import { countedAmount, countsTowardTotals } from "../../lib/transactionTotals";
+import { isPerson } from "../../lib/lending";
 
 export function TotalView({
   familyId,
@@ -17,8 +18,10 @@ export function TotalView({
   periodMonth,
   transactions,
   historyForCarryOver,
+  startBalances,
   accounts,
   accountIds,
+  balanceAccountIds,
   periodStart,
   currency,
   carryOverEnabled,
@@ -29,9 +32,15 @@ export function TotalView({
   periodYear: number;
   periodMonth: number;
   transactions: Transaction[];
+  /** This year's transactions, for the carry-over. */
   historyForCarryOver: Transaction[];
+  /** Each account's balance when the year began, for the carry-over. */
+  startBalances: Record<string, number> | undefined;
   accounts: Account[];
+  /** The accounts whose activity is shown. */
   accountIds: Set<string>;
+  /** Whose balances the carry-over adds up: your own accounts. */
+  balanceAccountIds: Set<string>;
   periodStart: Date;
   currency: string;
   carryOverEnabled: boolean;
@@ -41,12 +50,21 @@ export function TotalView({
   const [budgetsError, setBudgetsError] = useState<string | null>(null);
   const [isLoadingBudgets, setIsLoadingBudgets] = useState(true);
 
+  const countedTransactions = transactions.filter(countsTowardTotals);
+  const income = countedTransactions.filter((t) => t.type === "INCOME").reduce((s, t) => s + countedAmount(t), 0);
+  const expense = countedTransactions.filter((t) => t.type === "EXPENSE").reduce((s, t) => s + countedAmount(t), 0);
+
+  // Budgets only move when spending does: refetched when the period's spending changes, not on every
+  // refresh that hands back a new (but equal) list.
+  const spentKey = Math.round(expense * 100);
   useEffect(() => {
     let cancelled = false;
     setIsLoadingBudgets(true);
     setBudgetsError(null);
     api
-      .get<Budget[]>(`/families/${familyId}/budgets`, { params: { year: periodYear, month: periodMonth } })
+      .get<Budget[]>(`/families/${familyId}/budgets`, {
+        params: { year: periodYear, month: periodMonth, tzOffset: new Date().getTimezoneOffset() },
+      })
       .then((res) => {
         if (!cancelled) setBudgets(res.data);
       })
@@ -59,11 +77,7 @@ export function TotalView({
     return () => {
       cancelled = true;
     };
-  }, [familyId, periodYear, periodMonth, transactions]);
-
-  const countedTransactions = transactions.filter(countsTowardTotals);
-  const income = countedTransactions.filter((t) => t.type === "INCOME").reduce((s, t) => s + countedAmount(t), 0);
-  const expense = countedTransactions.filter((t) => t.type === "EXPENSE").reduce((s, t) => s + countedAmount(t), 0);
+  }, [familyId, periodYear, periodMonth, spentKey]);
 
   const accountTotals = accounts
     .filter((a) => accountIds.has(a.id))
@@ -74,7 +88,9 @@ export function TotalView({
         income: accTx.filter((t) => t.type === "INCOME").reduce((s, t) => s + countedAmount(t), 0),
         expense: accTx.filter((t) => t.type === "EXPENSE").reduce((s, t) => s + countedAmount(t), 0),
       };
-    });
+    })
+    // A lend & borrow person only when something they paid for (or received) counts here.
+    .filter(({ account, income: i, expense: e }) => !isPerson(account) || i > 0 || e > 0);
 
   function handleExport() {
     const header = ["Date", "Type", "Account", "Category", "Payee", "Notes", "Amount"];
@@ -125,7 +141,7 @@ export function TotalView({
       {transactions.length === 0 && (
         <EmptyOrCarryOver
           carryOverEnabled={carryOverEnabled}
-          amount={carryOverEnabled ? cumulativeBalance(accounts, historyForCarryOver, accountIds, periodStart) : 0}
+          amount={carryOverEnabled ? cumulativeBalance(startBalances, historyForCarryOver, balanceAccountIds, periodStart) : 0}
           currency={currency}
           emptyTitle="No transactions in this period"
         />

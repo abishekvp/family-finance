@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useNavigate } from "react-router-dom";
 import { Fingerprint, KeyRound, Mail, ShieldCheck, Trash2, UserRound } from "lucide-react";
 import { api } from "../api/client";
 import { getErrorMessage } from "../api/errors";
@@ -15,7 +16,92 @@ export function Account() {
       <EmailCard />
       <SignInSecurityCard />
       <EncryptionCard />
+      <DeleteAccountCard />
     </div>
+  );
+}
+
+// --------------------------------------------------------------------------- delete account
+
+/** Also reachable without the app at /delete-account (Google Play asks for a web way to do this). */
+export function DeleteAccountCard() {
+  const { user, logout } = useAuth();
+  const toast = useToast();
+  const navigate = useNavigate();
+  const [open, setOpen] = useState(false);
+  const [secret, setSecret] = useState("");
+  const [confirmed, setConfirmed] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const usesPassword = user!.hasPassword;
+  const ready = confirmed && (usesPassword ? secret.length > 0 : secret.trim().toLowerCase() === user!.email.toLowerCase());
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    if (!ready) return;
+    setError(null);
+    setBusy(true);
+    try {
+      await api.delete("/auth/me", { data: usesPassword ? { password: secret } : { confirmEmail: secret.trim() } });
+      await logout();
+      toast("Your account was deleted");
+      navigate("/", { replace: true });
+    } catch (err) {
+      setError(getErrorMessage(err, "Unable to delete your account"));
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader title="Delete account" subtitle="Permanently remove your account and data" icon={<Trash2 size={17} />} />
+      <div className="space-y-4">
+        <p className="text-sm text-ink-muted">
+          Your sign-in, personal accounts, personal budgets and everything recorded on them are deleted. A family where you&apos;re the only
+          member is deleted with you. In a family you share, what&apos;s on family accounts stays with the family, and the longest-standing
+          member becomes admin if no one else is.
+        </p>
+        {open ? (
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <Field label={usesPassword ? "Your password" : `Type ${user!.email} to confirm`}>
+              {(props) => (
+                <Input
+                  {...props}
+                  type={usesPassword ? "password" : "text"}
+                  autoComplete={usesPassword ? "current-password" : "off"}
+                  value={secret}
+                  onChange={(e) => setSecret(e.target.value)}
+                  placeholder={usesPassword ? "Password" : user!.email}
+                />
+              )}
+            </Field>
+            <Toggle checked={confirmed} onChange={setConfirmed} label="I understand this can't be undone" />
+            <ErrorText>{error}</ErrorText>
+            <div className="flex flex-wrap gap-2">
+              <Button type="submit" variant="danger" loading={busy} disabled={!ready}>
+                Delete permanently
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={busy}
+                onClick={() => {
+                  setOpen(false);
+                  setSecret("");
+                  setConfirmed(false);
+                }}
+              >
+                Cancel
+              </Button>
+            </div>
+          </form>
+        ) : (
+          <Button variant="ghost" className="text-expense hover:text-expense" icon={<Trash2 size={15} />} onClick={() => setOpen(true)}>
+            Delete my account
+          </Button>
+        )}
+      </div>
+    </Card>
   );
 }
 

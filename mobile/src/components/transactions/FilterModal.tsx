@@ -37,13 +37,15 @@ export function FilterModal({
     onChange(next.size === accounts.length ? null : next);
   }
 
+  // Counted the way every total is: after refunds, without family transfers or uncounted entries.
   function totalsFor(accountId: string) {
     let income = 0;
     let expense = 0;
     for (const t of periodTransactions) {
       if (t.accountId !== accountId) continue;
-      if (t.type === "INCOME") income += t.amount;
-      else if (t.type === "EXPENSE") expense += t.amount;
+      const counted = totalsContribution(t);
+      income += counted.income;
+      expense += counted.expense;
     }
     return { income, expense };
   }

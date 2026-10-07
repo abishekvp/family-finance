@@ -60,7 +60,79 @@ export default function Account() {
       <EmailCard />
       <SignInSecurityCard />
       <EncryptionCard />
+      <DeleteAccountCard />
     </ScrollView>
+  );
+}
+
+// --------------------------------------------------------------------------- delete account
+
+function DeleteAccountCard() {
+  const { user, logout } = useAuth();
+  const { colors } = useTheme();
+  const { error, busy, run } = useRunner();
+  const [open, setOpen] = useState(false);
+  const [secret, setSecret] = useState("");
+  const usesPassword = user!.hasPassword;
+  const ready = usesPassword ? secret.length > 0 : secret.trim().toLowerCase() === user!.email.toLowerCase();
+
+  function handleDelete() {
+    run(async () => {
+      const sure = await confirm(
+        "Delete your account?",
+        "This permanently deletes your account and your personal data. It can't be undone.",
+        "Delete for good"
+      );
+      if (!sure) return;
+      await api.delete("/auth/me", { data: usesPassword ? { password: secret } : { confirmEmail: secret.trim() } });
+      await logout();
+    });
+  }
+
+  return (
+    <Card>
+      <CardHeader title="Delete account" subtitle="Permanently remove your account and data" icon={<Trash2 size={16} color={colors.expense} />} />
+      <View style={{ gap: 12 }}>
+        <Text style={{ fontSize: 12.5, color: colors.inkMuted, lineHeight: 18 }}>
+          Your sign-in, personal accounts, personal budgets and everything recorded on them are deleted. A family where you're the only
+          member is deleted with you. In a family you share, what's on family accounts stays with the family, and the longest-standing
+          member becomes admin if no one else is.
+        </Text>
+        {open ? (
+          <>
+            <Field label={usesPassword ? "Your password" : `Type ${user!.email} to confirm`}>
+              <Input
+                value={secret}
+                onChangeText={setSecret}
+                secureTextEntry={usesPassword}
+                autoCapitalize="none"
+                autoCorrect={false}
+                placeholder={usesPassword ? "Password" : user!.email}
+              />
+            </Field>
+            <ErrorText>{error}</ErrorText>
+            <View style={{ flexDirection: "row", gap: 8 }}>
+              <View style={{ flex: 1 }}>
+                <Button title="Delete permanently" variant="danger" loading={busy} disabled={!ready} onPress={handleDelete} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Button
+                  title="Cancel"
+                  variant="secondary"
+                  disabled={busy}
+                  onPress={() => {
+                    setOpen(false);
+                    setSecret("");
+                  }}
+                />
+              </View>
+            </View>
+          </>
+        ) : (
+          <Button title="Delete my account" variant="ghost" icon={<Trash2 size={15} color={colors.expense} />} onPress={() => setOpen(true)} />
+        )}
+      </View>
+    </Card>
   );
 }
 

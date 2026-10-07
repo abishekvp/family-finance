@@ -62,6 +62,7 @@ export default function AppLayout() {
               <Stack.Screen name="recurring" options={{ headerShown: true, title: "Repeating payments" }} />
               <Stack.Screen name="payee-rules" options={{ headerShown: true, title: "Payee rules" }} />
               <Stack.Screen name="uncategorized" options={{ headerShown: true, title: "Uncategorised" }} />
+              <Stack.Screen name="bin" options={{ headerShown: true, title: "Recycle bin" }} />
               <Stack.Screen name="recurring-form" options={{ presentation: "modal", headerShown: true, title: "Repeating payment" }} />
               <Stack.Screen
                 name="transaction-form"

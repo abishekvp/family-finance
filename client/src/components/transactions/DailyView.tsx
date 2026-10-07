@@ -7,6 +7,7 @@ import { Money } from "../figures";
 import { cumulativeBalance } from "../../lib/carryOver";
 import { SkeletonRows } from "../ui";
 import { countedAmount } from "../../lib/transactionTotals";
+import { isPerson } from "../../lib/lending";
 
 // The list draws this many rows at first and this many more each time its end scrolls near the screen.
 const PAGE_ROWS = 60;
@@ -22,6 +23,7 @@ interface DailyGroup {
 export function DailyView({
   transactions,
   historyForCarryOver,
+  startBalances,
   accounts,
   accountIds,
   periodStart,
@@ -31,8 +33,12 @@ export function DailyView({
   onRowClick,
 }: {
   transactions: Transaction[];
+  /** This year's transactions, for the carry-over. */
   historyForCarryOver: Transaction[];
+  /** Each account's balance when the year began, for the carry-over. */
+  startBalances: Record<string, number> | undefined;
   accounts: Account[];
+  /** Whose balances the carry-over adds up. */
   accountIds: Set<string>;
   periodStart: Date;
   currency: string;
@@ -40,6 +46,7 @@ export function DailyView({
   isLoading: boolean;
   onRowClick: (transaction: Transaction) => void;
 }) {
+  const people = useMemo(() => new Set(accounts.filter(isPerson).map((a) => a.id)), [accounts]);
   const groups = useMemo<DailyGroup[]>(() => {
     const map = new Map<string, DailyGroup>();
     for (const t of transactions) {
@@ -89,7 +96,7 @@ export function DailyView({
 
   if (groups.length === 0) {
     const amount = carryOverEnabled
-      ? cumulativeBalance(accounts, historyForCarryOver, accountIds, periodStart)
+      ? cumulativeBalance(startBalances, historyForCarryOver, accountIds, periodStart)
       : 0;
     return (
       <EmptyOrCarryOver
@@ -122,7 +129,7 @@ export function DailyView({
           </div>
           <div className="divide-y divide-line rounded-2xl border border-line bg-surface/40 px-3">
             {group.transactions.map((t) => (
-              <TransactionRow key={t.id} transaction={t} onClick={() => onRowClick(t)} detailed />
+              <TransactionRow key={t.id} transaction={t} people={people} onClick={() => onRowClick(t)} detailed />
             ))}
           </div>
         </div>

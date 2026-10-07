@@ -186,7 +186,7 @@ export default function Uncategorized() {
           const matchCategoryLive = match?.categoryId ? categories.some((c) => c.id === match.categoryId) : true;
           return (
             <Card key={t.id} style={{ paddingVertical: 6, gap: 8, opacity: busyId === t.id ? 0.5 : 1 }}>
-              <TransactionRow transaction={t} onPress={() => router.push(href("/transaction-form", { id: t.id, transaction: JSON.stringify(t) }))} />
+              <TransactionRow transaction={t} showDate onPress={() => router.push(href("/transaction-form", { id: t.id, transaction: JSON.stringify(t) }))} />
               {canEdit && (
                 <View style={{ gap: 8, paddingBottom: 8 }}>
                   <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>

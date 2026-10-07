@@ -12,7 +12,14 @@ export function publicAppUrl(): string {
 /** The Android app's custom-scheme redirect after an OAuth round trip. */
 export const MOBILE_OAUTH_REDIRECT = "familyfinance://oauth-callback";
 
-export const ANDROID_PACKAGE_NAME = process.env.ANDROID_PACKAGE_NAME?.trim() || "com.anonymous.familyfinance";
+/**
+ * The Android app's package names (comma-separated in ANDROID_PACKAGE_NAME): the website's APK and,
+ * once published, the Google Play build, which has its own.
+ */
+export const ANDROID_PACKAGE_NAMES = (process.env.ANDROID_PACKAGE_NAME ?? "com.anonymous.familyfinance")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
 
 /** SHA-256 fingerprints (colon-separated hex, as printed by keytool) of the APK signing certs. */
 export function androidCertFingerprints(): string[] {

@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import { useOutletContext, useSearchParams } from "react-router-dom";
 import { addMonths, addYears, format, subMonths, subYears } from "date-fns";
 import { CalendarDays, ChevronLeft, ChevronRight, Filter as FilterIcon, Plus, Search, X } from "lucide-react";
-import { api } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { Button, Card, Chip, ErrorText, Segmented } from "../components/ui";
 import { Money } from "../components/figures";
@@ -19,6 +18,8 @@ import { TransactionFormModal } from "../components/transactions/TransactionForm
 import { PeriodRail } from "../components/transactions/PeriodRail";
 import { countedAmount, countsTowardTotals } from "../lib/transactionTotals";
 import { useFamilyData, useYearTransactions } from "../context/FamilyDataContext";
+import { useCachedGet } from "../lib/sessionCache";
+import { isPerson } from "../lib/lending";
 
 type SubView = "Daily" | "Calendar" | "Monthly" | "Total";
 
@@ -45,9 +46,6 @@ export function Transactions() {
   const year = anchor.getFullYear();
   const { data: yearTransactions, isLoading: isLoadingYear } = useYearTransactions(year);
 
-  const [priorTransactions, setPriorTransactions] = useState<Transaction[]>([]);
-  const [priorError, setPriorError] = useState<string | null>(null);
-
   const [selectedAccountIds, setSelectedAccountIds] = useState<Set<string> | null>(null);
   const [showFilter, setShowFilter] = useState(false);
   const [formTransaction, setFormTransaction] = useState<Transaction | null>(null);
@@ -72,29 +70,13 @@ export function Transactions() {
       ? anchor.getFullYear() === new Date().getFullYear()
       : anchor.getFullYear() === new Date().getFullYear() && anchor.getMonth() === new Date().getMonth();
 
-  // Carry-over needs everything before the period, which can span years the cache above doesn't
-  // hold — kept as its own lighter fetch rather than pulled into the year cache.
-  async function loadPriorTransactions() {
-    if (!prefs.carryOver) {
-      setPriorTransactions([]);
-      return;
-    }
-    setPriorError(null);
-    try {
-      const res = await api.get<Transaction[]>(`/families/${family.id}/transactions`, {
-        params: { to: range.from.toISOString(), limit: 5000 },
-      });
-      setPriorTransactions(res.data);
-    } catch (err) {
-      setPriorTransactions([]);
-      setPriorError(err instanceof Error ? err.message : "Unable to load prior transactions");
-    }
-  }
-
-  useEffect(() => {
-    loadPriorTransactions().catch(() => undefined);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [family.id, range.from.getTime(), prefs.carryOver]);
+  // Carry-over: each account's balance when the viewed year began, from the server — the year's own
+  // transactions are already cached, so nothing earlier ever needs downloading.
+  const yearStart = useMemo(() => new Date(year, 0, 1).toISOString(), [year]);
+  const startBalances = useCachedGet<Record<string, number>>(
+    prefs.carryOver ? `/families/${family.id}/accounts/balances` : null,
+    { asOf: yearStart }
+  );
 
   // The account/personal scope toggle in the header (see Layout) narrows which accounts'
   // activity this hub considers, same as Dashboard's net-worth card does.
@@ -103,9 +85,16 @@ export function Transactions() {
     [accounts, scope, user]
   );
 
+  // Whose activity is listed (people included: what they paid for counts), and whose balances the
+  // carry-over adds up — your own accounts only, so lending moves it.
+  const ownAccounts = useMemo(() => scopedAccounts.filter((a) => !isPerson(a)), [scopedAccounts]);
   const accountIds = useMemo(
     () => selectedAccountIds ?? new Set(scopedAccounts.map((a) => a.id)),
     [selectedAccountIds, scopedAccounts]
+  );
+  const balanceAccountIds = useMemo(
+    () => selectedAccountIds ?? new Set(ownAccounts.map((a) => a.id)),
+    [selectedAccountIds, ownAccounts]
   );
 
   // Monthly needs the whole year; the other sub-views slice it down to the current month —
@@ -126,14 +115,10 @@ export function Transactions() {
     );
   }, [periodTransactions, search]);
 
+  // Either leg: what an account paid out, and transfers (or money back from a person) that landed on it.
   const visibleTransactions = useMemo(
-    () => searchedTransactions.filter((t) => accountIds.has(t.accountId)),
+    () => searchedTransactions.filter((t) => accountIds.has(t.accountId) || (!!t.transferToAccountId && accountIds.has(t.transferToAccountId))),
     [searchedTransactions, accountIds]
-  );
-
-  const historyForCarryOver = useMemo(
-    () => [...priorTransactions, ...yearTransactions],
-    [priorTransactions, yearTransactions]
   );
 
   const periodTotals = useMemo(() => {
@@ -160,11 +145,11 @@ export function Transactions() {
   function refresh(saved?: Transaction) {
     invalidateYear(year);
     if (saved) invalidateYear(new Date(saved.date).getFullYear());
-    loadPriorTransactions();
+    if (prefs.carryOver) startBalances.reload();
   }
 
   const isLoading = isLoadingStatic || isLoadingYear;
-  const error = staticError || priorError;
+  const error = staticError;
 
   return (
     <div className="relative space-y-4 pb-4">
@@ -206,7 +191,7 @@ export function Transactions() {
             </Button>
             {showFilter && (
               <FilterPanel
-                accounts={scopedAccounts}
+                accounts={ownAccounts}
                 transactions={periodTransactions}
                 selectedAccountIds={selectedAccountIds}
                 onChange={setSelectedAccountIds}
@@ -278,9 +263,10 @@ export function Transactions() {
         {view === "Daily" && (
           <DailyView
             transactions={visibleTransactions}
-            historyForCarryOver={historyForCarryOver}
+            historyForCarryOver={yearTransactions}
+            startBalances={startBalances.data}
             accounts={scopedAccounts}
-            accountIds={accountIds}
+            accountIds={balanceAccountIds}
             periodStart={range.from}
             currency={family.currency}
             carryOverEnabled={prefs.carryOver}
@@ -292,9 +278,10 @@ export function Transactions() {
           <CalendarView
             monthDate={anchor}
             transactions={visibleTransactions}
-            historyForCarryOver={historyForCarryOver}
+            historyForCarryOver={yearTransactions}
+            startBalances={startBalances.data}
             accounts={scopedAccounts}
-            accountIds={accountIds}
+            accountIds={balanceAccountIds}
             periodStart={range.from}
             currency={family.currency}
             carryOverEnabled={prefs.carryOver}
@@ -307,9 +294,9 @@ export function Transactions() {
           <MonthlyView
             year={anchor.getFullYear()}
             transactions={visibleTransactions}
-            historyForCarryOver={historyForCarryOver}
-            accounts={scopedAccounts}
-            accountIds={accountIds}
+            historyForCarryOver={yearTransactions}
+            startBalances={startBalances.data}
+            accountIds={balanceAccountIds}
             currency={family.currency}
             carryOverEnabled={prefs.carryOver}
             weekStart={prefs.weekStart}
@@ -323,9 +310,11 @@ export function Transactions() {
             periodYear={anchor.getFullYear()}
             periodMonth={anchor.getMonth() + 1}
             transactions={visibleTransactions}
-            historyForCarryOver={historyForCarryOver}
+            historyForCarryOver={yearTransactions}
+            startBalances={startBalances.data}
             accounts={scopedAccounts}
             accountIds={accountIds}
+            balanceAccountIds={balanceAccountIds}
             periodStart={range.from}
             currency={family.currency}
             carryOverEnabled={prefs.carryOver}

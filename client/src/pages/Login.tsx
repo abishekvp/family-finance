@@ -20,12 +20,12 @@ export function Login() {
   const [error, setError] = useState<string | null>(searchParams.get("oauth_error"));
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // Where to go once signed in: the page that sent here (an invite link, account deletion), if any.
+  const from = (location.state as { from?: { pathname?: string } } | null)?.from?.pathname ?? "/dashboard";
+
   // Checking for a stored session: don't flash the sign-in form at someone who is signed in.
   if (isLoading) return <FullPageLoader />;
-  if (user) {
-    const from = (location.state as { from?: { pathname?: string } } | null)?.from?.pathname ?? "/dashboard";
-    return <Navigate to={from} replace />;
-  }
+  if (user) return <Navigate to={from} replace />;
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -33,7 +33,7 @@ export function Login() {
     setIsSubmitting(true);
     try {
       await login(email, password);
-      navigate("/dashboard", { replace: true });
+      navigate(from, { replace: true });
     } catch (err) {
       setError(getErrorMessage(err, "Unable to sign in"));
     } finally {
@@ -109,7 +109,7 @@ export function Login() {
       </form>
 
       <div className="mt-6">
-        <SocialSignIn onSignedIn={() => navigate("/dashboard", { replace: true })} />
+        <SocialSignIn onSignedIn={() => navigate(from, { replace: true })} />
       </div>
     </AuthShell>
   );

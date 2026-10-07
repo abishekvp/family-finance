@@ -72,7 +72,6 @@ export default function AccountsScreen() {
 
   useFocusEffect(
     useCallback(() => {
-
       load();
     }, [load])
   );
@@ -88,20 +87,21 @@ export default function AccountsScreen() {
     }
   }
 
-  const totals = useMemo(() => {
-    const total = accounts.reduce((sum, a) => sum + a.balance, 0);
-    // Money you owe a friend is a debt like any other.
-    const liabilities = accounts.reduce(
-      (sum, a) => (a.type === "CREDIT_CARD" || a.type === "LOAN" || a.type === "PERSON" ? sum + Math.max(0, -a.balance) : sum),
-      0
-    );
-    return { total, liabilities, assets: total + liabilities };
-  }, [accounts]);
-
   // Friends you lend to or borrow from live on the Lend & borrow screen, not in the account list.
   const ownAccounts = useMemo(() => accounts.filter((a) => !isPerson(a)), [accounts]);
   const people = useMemo(() => accounts.filter(isPerson), [accounts]);
   const lending = lendingTotals(people);
+
+  // The money in your own accounts. Lending moves it out of them (and getting it back moves it
+  // in); what people owe you, or you owe them, is shown with Lend & borrow instead.
+  const totals = useMemo(() => {
+    const total = ownAccounts.reduce((sum, a) => sum + a.balance, 0);
+    const liabilities = ownAccounts.reduce(
+      (sum, a) => (a.type === "CREDIT_CARD" || a.type === "LOAN" ? sum + Math.max(0, -a.balance) : sum),
+      0
+    );
+    return { total, liabilities, assets: total + liabilities };
+  }, [ownAccounts]);
 
   return (
     <ScrollView style={{ backgroundColor: colors.canvas }} contentContainerStyle={{ padding: 16, gap: 16 }}>

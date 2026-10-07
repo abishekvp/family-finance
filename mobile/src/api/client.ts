@@ -66,14 +66,24 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-let refreshPromise: Promise<string | null> | null = null;
+/** A refreshed session; `user` is the /auth/me payload when it was asked for (and the server sent it). */
+export interface RefreshedSession {
+  accessToken: string;
+  user?: unknown;
+}
+
+let refreshPromise: Promise<RefreshedSession | null> | null = null;
 // True only when the server definitively rejected the session (or none is stored) — as opposed to
 // the refresh failing for a transient reason (offline, timeout, 5xx) where the user is still signed in.
 let sessionRejected = false;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function refreshAccessToken(): Promise<string | null> {
+/**
+ * Exchanges the stored refresh token for a new session. `includeUser` also returns the signed-in user
+ * in the same response — what opening the app needs — instead of a second, sequential /auth/me.
+ */
+async function refreshSession(includeUser = false): Promise<RefreshedSession | null> {
   if (!refreshPromise) {
     refreshPromise = (async () => {
       sessionRejected = false;
@@ -94,16 +104,16 @@ async function refreshAccessToken(): Promise<string | null> {
 
         try {
           const res = await axios.post(
-            `${API_BASE_URL}/auth/refresh`,
+            `${API_BASE_URL}/auth/refresh${includeUser ? "?include=user" : ""}`,
             { refreshToken: storedRefreshToken },
             // Longer than a cold serverless start, shorter than the function's 30s limit. If it
             // still gives up after the server rotated the token, the retry gets the same new one back.
             { timeout: 25_000 }
           );
-          const { accessToken, refreshToken } = res.data as { accessToken: string; refreshToken: string };
+          const { accessToken, refreshToken, user } = res.data as { accessToken: string; refreshToken: string; user?: unknown };
           setAccessToken(accessToken);
           await setStoredRefreshToken(refreshToken);
-          return accessToken;
+          return { accessToken, user };
         } catch (err) {
           const status = axios.isAxiosError(err) ? err.response?.status : undefined;
           if (status === 401 || status === 403) {
@@ -129,6 +139,10 @@ async function refreshAccessToken(): Promise<string | null> {
     });
   }
   return refreshPromise;
+}
+
+async function refreshAccessToken(): Promise<string | null> {
+  return (await refreshSession())?.accessToken ?? null;
 }
 
 /** Whether the last failed refresh was the server rejecting the session, not a connectivity blip. */
@@ -164,4 +178,4 @@ api.interceptors.response.use(
   }
 );
 
-export { refreshAccessToken };
+export { refreshAccessToken, refreshSession };

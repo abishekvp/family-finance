@@ -4,7 +4,7 @@ import { AccountType, ApprovalStatus, Prisma, Role, TransactionStatus, Transacti
 import { prisma } from "../lib/prisma";
 import { asyncHandler, AppError } from "../middleware/errorHandler";
 import { requireAuth, requireFamilyRole } from "../middleware/auth";
-import { assertEncryptionPolicy, maybeEncryptedText } from "../lib/encryption";
+import { checkEncryptionPolicy, maybeEncryptedText } from "../lib/encryption";
 import { initialApprovalStatus } from "../lib/approval";
 import { BALANCE_TX_OPTIONS, lockAccounts, recalculateAccountBalances } from "../lib/balances";
 
@@ -70,6 +70,16 @@ function assertCanModify(transactionUserId: string, requesterId: string, role: R
   }
 }
 
+/**
+ * What an edited entry is already linked to. Those links stay usable after their account or category
+ * is archived — a person removed from Lend & borrow, a deleted category — so the entry can still be
+ * edited without first being moved somewhere else.
+ */
+interface ExistingLinks {
+  accountIds: (string | null)[];
+  categoryId: string | null;
+}
+
 // Validates accountId / transferToAccountId / categoryId against the shared contract rules
 // and returns the resolved categoryId / transferToAccountId to persist.
 async function resolveRelations(
@@ -78,16 +88,9 @@ async function resolveRelations(
   type: TransactionType,
   accountId: string,
   categoryIdInput: string | null,
-  transferToAccountIdInput: string | null
+  transferToAccountIdInput: string | null,
+  existing: ExistingLinks = { accountIds: [], categoryId: null }
 ): Promise<{ categoryId: string | null; transferToAccountId: string | null }> {
-  const account = await prisma.account.findFirst({
-    where: { id: accountId, familyId, isArchived: false },
-  });
-  if (!account) throw new AppError(404, "Account not found");
-  if (!isVisible(account.ownerId, requesterId)) {
-    throw new AppError(403, "Cannot post a transaction to another member's private account");
-  }
-
   if (type === TransactionType.TRANSFER) {
     if (!transferToAccountIdInput) {
       throw new AppError(400, "transferToAccountId is required for TRANSFER transactions");
@@ -95,9 +98,30 @@ async function resolveRelations(
     if (transferToAccountIdInput === accountId) {
       throw new AppError(400, "transferToAccountId must differ from accountId");
     }
-    const destAccount = await prisma.account.findFirst({
-      where: { id: transferToAccountIdInput, familyId, isArchived: false },
-    });
+  } else if (transferToAccountIdInput) {
+    throw new AppError(400, "transferToAccountId is only valid for TRANSFER");
+  }
+
+  // One round trip for everything the entry points at.
+  const accountIds = type === TransactionType.TRANSFER ? [accountId, transferToAccountIdInput!] : [accountId];
+  const [accounts, category] = await Promise.all([
+    prisma.account.findMany({ where: { id: { in: accountIds }, familyId } }),
+    categoryIdInput ? prisma.category.findFirst({ where: { id: categoryIdInput, familyId } }) : Promise.resolve(null),
+  ]);
+  const usableAccount = (id: string) => {
+    const found = accounts.find((a) => a.id === id);
+    return found && (!found.isArchived || existing.accountIds.includes(id)) ? found : null;
+  };
+  const usableCategory = category && (!category.isArchived || category.id === existing.categoryId) ? category : null;
+
+  const account = usableAccount(accountId);
+  if (!account) throw new AppError(404, "Account not found");
+  if (!isVisible(account.ownerId, requesterId)) {
+    throw new AppError(403, "Cannot post a transaction to another member's private account");
+  }
+
+  if (type === TransactionType.TRANSFER) {
+    const destAccount = usableAccount(transferToAccountIdInput!);
     if (!destAccount) throw new AppError(404, "Transfer destination account not found");
     if (!isVisible(destAccount.ownerId, requesterId)) {
       throw new AppError(403, "Cannot post a transaction to another member's private account");
@@ -108,29 +132,19 @@ async function resolveRelations(
     if (!isLending || !categoryIdInput) {
       return { categoryId: null, transferToAccountId: transferToAccountIdInput };
     }
-    const category = await prisma.category.findFirst({
-      where: { id: categoryIdInput, familyId, isArchived: false },
-    });
-    if (!category) throw new AppError(404, "Category not found");
-    if (!isVisible(category.ownerId, requesterId)) {
+    if (!usableCategory) throw new AppError(404, "Category not found");
+    if (!isVisible(usableCategory.ownerId, requesterId)) {
       throw new AppError(403, "Cannot use another member's private category");
     }
     return { categoryId: categoryIdInput, transferToAccountId: transferToAccountIdInput };
   }
 
-  if (transferToAccountIdInput) {
-    throw new AppError(400, "transferToAccountId is only valid for TRANSFER");
-  }
-
   if (categoryIdInput) {
-    const category = await prisma.category.findFirst({
-      where: { id: categoryIdInput, familyId, isArchived: false },
-    });
-    if (!category) throw new AppError(404, "Category not found");
-    if (!isVisible(category.ownerId, requesterId)) {
+    if (!usableCategory) throw new AppError(404, "Category not found");
+    if (!isVisible(usableCategory.ownerId, requesterId)) {
       throw new AppError(403, "Cannot use another member's private category");
     }
-    if (category.type !== type) {
+    if (usableCategory.type !== type) {
       throw new AppError(400, "Category type does not match transaction type");
     }
   }
@@ -139,9 +153,10 @@ async function resolveRelations(
 }
 
 /**
- * Checks that a return of money lent or borrowed pays back an entry with the same person that moved
- * money the other way, and returns the link to persist. Anything that isn't a transfer with a
- * person carries no link.
+ * Checks the loan an entry settles and returns the link to persist. Two kinds of entry settle one:
+ *  - a return: a transfer with the same person, moving money the other way;
+ *  - a write-off (money that won't come back): an expense posted on the person's own account closes
+ *    money you lent them, an income closes money you borrowed from them.
  */
 async function resolveRepays(
   familyId: string,
@@ -153,7 +168,9 @@ async function resolveRepays(
   // False when the link is the one already saved: a loan deleted since just drops it.
   requested = true
 ): Promise<string | null> {
-  if (!repaysIdInput || type !== TransactionType.TRANSFER || !transferToAccountId) return null;
+  if (!repaysIdInput) return null;
+  const isTransfer = type === TransactionType.TRANSFER;
+  if (isTransfer && !transferToAccountId) return null;
   if (repaysIdInput === transactionId) throw new AppError(400, "An entry can't pay back itself");
 
   const loan = await prisma.transaction.findFirst({
@@ -165,15 +182,28 @@ async function resolveRepays(
     throw new AppError(404, "The loan being paid back was not found");
   }
 
-  // A loan runs your account → person (lent) or person → your account (borrowed); its return runs
-  // the opposite way with the same person.
+  // A loan runs your account → person (lent) or person → your account (borrowed).
   const personId =
     loan.transferToAccount?.type === AccountType.PERSON ? loan.transferToAccountId : loan.account.type === AccountType.PERSON ? loan.accountId : null;
-  const opposite = !!personId && (personId === loan.transferToAccountId ? accountId === personId : transferToAccountId === personId);
-  if (!opposite) {
+  const lentToThem = !!personId && personId === loan.transferToAccountId;
+  const settles = !personId
+    ? false
+    : isTransfer
+      ? lentToThem
+        ? accountId === personId
+        : transferToAccountId === personId
+      : accountId === personId && (type === TransactionType.EXPENSE ? lentToThem : !lentToThem);
+  if (!settles) {
     // An edit that moved the entry to another person or direction leaves the old link behind.
     if (!requested) return null;
-    throw new AppError(400, personId ? "A return has to be with the same person, moving money the other way" : "Only money lent or borrowed can be paid back");
+    throw new AppError(
+      400,
+      !personId
+        ? "Only money lent or borrowed can be paid back"
+        : isTransfer
+          ? "A return has to be with the same person, moving money the other way"
+          : "A write-off has to be on the same person, closing money that moved the other way"
+    );
   }
   return loan.id;
 }
@@ -242,6 +272,25 @@ async function touchRefunded(tx: Prisma.TransactionClient, ids: (string | null |
   await tx.transaction.updateMany({ where: { id: { in: unique } }, data: { updatedAt: new Date() } });
 }
 
+/**
+ * Permanently deletes entries from the bin. Entries that pointed at them (a refund, a loan's return)
+ * lose the link as they go, so their updatedAt is bumped too — otherwise synced devices would keep the
+ * link they hold and count them differently from the server.
+ */
+async function purgeTransactions(familyId: string, ids: string[]) {
+  if (ids.length === 0) return;
+  await prisma.$transaction([
+    prisma.transaction.updateMany({
+      where: { familyId, id: { notIn: ids }, OR: [{ refundsId: { in: ids } }, { repaysId: { in: ids } }] },
+      data: { updatedAt: new Date() },
+    }),
+    prisma.transaction.deleteMany({ where: { familyId, id: { in: ids } } }),
+  ]);
+}
+
+// Entries stay in the bin this long before they're deleted for good.
+const BIN_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+
 const transactionTypeSchema = z.nativeEnum(TransactionType);
 const transactionStatusSchema = z.nativeEnum(TransactionStatus);
 // "ALL" lists every entry whatever its approval state; the default lists only those that count.
@@ -296,18 +345,17 @@ transactionsRouter.get(
 
     const isBin = req.query.bin === "true";
 
-    // Auto-purge transactions in bin older than 30 days
+    // Opening the bin empties out what has been in it past the retention period. Awaited: a serverless
+    // function is frozen as soon as it responds, so a fire-and-forget delete might never run.
     if (isBin) {
-      const thirtyDaysAgo = new Date();
-      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-      // Fire and forget
-      prisma.transaction.deleteMany({
-        where: {
-          familyId,
-          isDeleted: true,
-          deletedAt: { lt: thirtyDaysAgo },
-        },
-      }).catch(console.error);
+      const expired = await prisma.transaction.findMany({
+        where: { familyId, isDeleted: true, deletedAt: { lt: new Date(Date.now() - BIN_RETENTION_MS) } },
+        select: { id: true },
+      });
+      await purgeTransactions(
+        familyId,
+        expired.map((t) => t.id)
+      );
     }
 
     const transactions = await prisma.transaction.findMany({
@@ -455,24 +503,26 @@ transactionsRouter.post(
     const familyId = req.params.familyId;
     const requesterId = req.user!.id;
     const parsed = createTransactionSchema.parse(req.body);
-    await assertEncryptionPolicy(familyId, { payee: parsed.payee, notes: parsed.notes });
 
     const categoryIdInput = parsed.categoryId ?? null;
     const transferToAccountIdInput = parsed.transferToAccountId ?? null;
 
-    const { categoryId, transferToAccountId } = await resolveRelations(
+    // Independent checks, run side by side: every one of them is a round trip to the database.
+    const [family, { categoryId, transferToAccountId }, repaysId, refundsId] = await Promise.all([
+      prisma.family.findUniqueOrThrow({ where: { id: familyId }, select: { encryptionEnabled: true, requireApproval: true } }),
+      resolveRelations(familyId, requesterId, parsed.type, parsed.accountId, categoryIdInput, transferToAccountIdInput),
+      resolveRepays(familyId, null, parsed.type, parsed.accountId, transferToAccountIdInput, parsed.repaysId ?? null),
+      resolveRefunds(familyId, null, parsed.type, parsed.amount, parsed.refundsId ?? null),
+    ]);
+    checkEncryptionPolicy(family.encryptionEnabled, { payee: parsed.payee, notes: parsed.notes });
+    // Saved either way, so nothing is lost; with approvals on, a member's entry waits for an admin.
+    const approvalStatus = await initialApprovalStatus(
       familyId,
       requesterId,
-      parsed.type,
-      parsed.accountId,
-      categoryIdInput,
-      transferToAccountIdInput
+      [parsed.accountId, transferToAccountId],
+      req.familyMembership!.role,
+      family.requireApproval
     );
-
-    const repaysId = await resolveRepays(familyId, null, parsed.type, parsed.accountId, transferToAccountId, parsed.repaysId ?? null);
-    const refundsId = await resolveRefunds(familyId, null, parsed.type, parsed.amount, parsed.refundsId ?? null);
-    // Saved either way, so nothing is lost; with approvals on, a member's entry waits for an admin.
-    const approvalStatus = await initialApprovalStatus(familyId, requesterId, [parsed.accountId, transferToAccountId], req.familyMembership!.role);
 
     const transaction = await prisma.$transaction(async (tx) => {
       await lockAccounts(tx, [parsed.accountId, transferToAccountId]);
@@ -522,7 +572,6 @@ transactionsRouter.patch(
     assertCanModify(existing.userId, requesterId, req.familyMembership!.role);
 
     const parsed = updateTransactionSchema.parse(req.body);
-    await assertEncryptionPolicy(familyId, { payee: parsed.payee, notes: parsed.notes });
 
     const mergedType = parsed.type ?? existing.type;
     const mergedAccountId = parsed.accountId ?? existing.accountId;
@@ -533,34 +582,33 @@ transactionsRouter.patch(
     const mergedTransferToAccountId: string | null =
       "transferToAccountId" in req.body ? parsed.transferToAccountId ?? null : existing.transferToAccountId;
 
-    const { categoryId, transferToAccountId } = await resolveRelations(
-      familyId,
-      requesterId,
-      mergedType,
-      mergedAccountId,
-      mergedCategoryId,
-      mergedTransferToAccountId
-    );
-
-    const repaysId = await resolveRepays(
-      familyId,
-      existing.id,
-      mergedType,
-      mergedAccountId,
-      transferToAccountId,
-      "repaysId" in req.body ? parsed.repaysId ?? null : existing.repaysId,
-      "repaysId" in req.body
-    );
-
     const mergedAmount = parsed.amount ?? Number(existing.amount);
-    const refundsId = await resolveRefunds(
-      familyId,
-      existing.id,
-      mergedType,
-      mergedAmount,
-      "refundsId" in req.body ? parsed.refundsId ?? null : existing.refundsId,
-      "refundsId" in req.body
-    );
+    // Independent checks, run side by side: every one of them is a round trip to the database.
+    const [family, { categoryId, transferToAccountId }, repaysId, refundsId] = await Promise.all([
+      prisma.family.findUniqueOrThrow({ where: { id: familyId }, select: { encryptionEnabled: true, requireApproval: true } }),
+      resolveRelations(familyId, requesterId, mergedType, mergedAccountId, mergedCategoryId, mergedTransferToAccountId, {
+        accountIds: [existing.accountId, existing.transferToAccountId],
+        categoryId: existing.categoryId,
+      }),
+      resolveRepays(
+        familyId,
+        existing.id,
+        mergedType,
+        mergedAccountId,
+        mergedType === TransactionType.TRANSFER ? mergedTransferToAccountId : null,
+        "repaysId" in req.body ? parsed.repaysId ?? null : existing.repaysId,
+        "repaysId" in req.body
+      ),
+      resolveRefunds(
+        familyId,
+        existing.id,
+        mergedType,
+        mergedAmount,
+        "refundsId" in req.body ? parsed.refundsId ?? null : existing.refundsId,
+        "refundsId" in req.body
+      ),
+    ]);
+    checkEncryptionPolicy(family.encryptionEnabled, { payee: parsed.payee, notes: parsed.notes });
     const mergedDate = parsed.date ? new Date(parsed.date) : existing.date;
     const mergedPayee = "payee" in req.body ? parsed.payee ?? null : existing.payee;
     const mergedNotes = "notes" in req.body ? parsed.notes ?? null : existing.notes;
@@ -569,10 +617,9 @@ transactionsRouter.patch(
     const mergedDueDate = "dueDate" in req.body ? (parsed.dueDate ? new Date(parsed.dueDate) : null) : existing.dueDate;
     // With approvals on, a member's edit goes back for approval (a rejected entry, once fixed, is
     // resubmitted this way). An admin's edit, or any edit with approvals off, leaves it as it was.
-    const family = await prisma.family.findUniqueOrThrow({ where: { id: familyId }, select: { requireApproval: true } });
     const reviewed =
       family.requireApproval && req.familyMembership!.role !== Role.ADMIN
-        ? await initialApprovalStatus(familyId, requesterId, [mergedAccountId, transferToAccountId], req.familyMembership!.role)
+        ? await initialApprovalStatus(familyId, requesterId, [mergedAccountId, transferToAccountId], req.familyMembership!.role, true)
         : null;
 
     const touchedAccounts = [existing.accountId, existing.transferToAccountId, mergedAccountId, transferToAccountId];
@@ -714,6 +761,11 @@ transactionsRouter.post(
 
     const restored = await prisma.$transaction(async (tx) => {
       await lockAccounts(tx, [existing.accountId, existing.transferToAccountId]);
+      // A person deleted together with their entries comes back with any one of them.
+      await tx.account.updateMany({
+        where: { id: { in: [existing.accountId, existing.transferToAccountId].filter((id): id is string => !!id) }, type: AccountType.PERSON, isArchived: true },
+        data: { isArchived: false },
+      });
       const updated = await tx.transaction.update({
         where: { id: existing.id },
         data: { isDeleted: false, deletedAt: null },
@@ -742,9 +794,7 @@ transactionsRouter.delete(
 
     assertCanModify(existing.userId, requesterId, req.familyMembership!.role);
 
-    await prisma.transaction.delete({
-      where: { id: existing.id },
-    });
+    await purgeTransactions(familyId, [existing.id]);
 
     res.status(204).send();
   })
@@ -770,9 +820,10 @@ transactionsRouter.post(
     const visible = { OR: [{ ownerId: null }, { ownerId: req.user!.id }] };
     const { startDate, endDate } = resetSchema.parse(req.body);
 
-    const dateFilter: any = {};
+    // Same bounds as everywhere else: start inclusive, end exclusive.
+    const dateFilter: Prisma.DateTimeFilter = {};
     if (startDate) dateFilter.gte = new Date(startDate);
-    if (endDate) dateFilter.lte = new Date(endDate);
+    if (endDate) dateFilter.lt = new Date(endDate);
     const hasDateFilter = startDate || endDate;
 
     const { transactions, accounts } = await prisma.$transaction(async (tx) => {

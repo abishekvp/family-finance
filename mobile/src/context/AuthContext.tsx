@@ -3,7 +3,7 @@ import { AppState } from "react-native";
 import { File, Paths } from "expo-file-system";
 import * as Linking from "expo-linking";
 import * as WebBrowser from "expo-web-browser";
-import { API_BASE_URL, api, refreshAccessToken, setOnAuthExpired, wasSessionRejected } from "../api/client";
+import { API_BASE_URL, api, refreshSession, setOnAuthExpired, wasSessionRejected } from "../api/client";
 import { ClientError } from "../api/errors";
 import { getStoredRefreshToken, setAccessToken, setStoredRefreshToken } from "../api/tokenStore";
 import { clearVaultSession } from "../api/vaultSession";
@@ -114,16 +114,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Whether `user` has been confirmed by the server this launch (rather than read from the device).
   const verified = useRef(false);
 
+  const acceptUser = useCallback((me: CurrentUser) => {
+    verified.current = true;
+    writeCachedUser(me);
+    setOffline(false);
+    setUser(me);
+  }, []);
+
   const loadMe = useCallback(async () => {
     const res = await api.get<CurrentUser>("/auth/me");
     // A captive Wi-Fi portal or a proxy can answer 200 with an HTML page. Taking that as the user
     // would crash every screen that reads user.families, so treat it like being offline.
     if (!isCurrentUser(res.data)) throw new ClientError("Unexpected response from the server");
-    verified.current = true;
-    writeCachedUser(res.data);
-    setOffline(false);
-    setUser(res.data);
-  }, []);
+    acceptUser(res.data);
+  }, [acceptUser]);
 
   const refreshUser = useCallback(async () => {
     await loadMe();
@@ -148,10 +152,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const restore = useCallback(() => {
     if (!restoringRef.current) {
       restoringRef.current = (async () => {
-        const token = await refreshAccessToken().catch(() => null);
-        if (!token) {
+        // The token and the user in one round trip.
+        const session = await refreshSession(true).catch(() => null);
+        if (!session) {
           if (wasSessionRejected()) endSession();
           else setOffline(true);
+          return;
+        }
+        if (isCurrentUser(session.user)) {
+          acceptUser(session.user);
           return;
         }
         try {
@@ -165,7 +174,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
     }
     return restoringRef.current;
-  }, [endSession, loadMe]);
+  }, [acceptUser, endSession, loadMe]);
 
   useEffect(() => {
     setOnAuthExpired(endSession);

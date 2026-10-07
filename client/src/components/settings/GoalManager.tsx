@@ -125,7 +125,7 @@ export function GoalManager({ familyId, currency }: { familyId: string; currency
               <ProgressBar value={goal.progress} tone={goal.isCompleted ? "income" : "brand"} />
               {goal.targetDate && (
                 <p className="mt-1.5 text-2xs text-ink-subtle">
-                  Target date {new Date(goal.targetDate).toLocaleDateString()}
+                  Target date {new Date(goal.targetDate).toLocaleDateString(undefined, { timeZone: "UTC" })}
                 </p>
               )}
             </li>

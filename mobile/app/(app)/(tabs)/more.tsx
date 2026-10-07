@@ -6,6 +6,12 @@ import { useTheme } from "../../../src/context/ThemeContext";
 import { Avatar, Button, Card } from "../../../src/components/ui";
 import { href } from "../../../src/lib/nav";
 import { ThemePicker } from "../../../src/components/ThemePicker";
+import { SMS_FEATURE } from "../../../src/lib/distribution";
+import * as WebBrowser from "expo-web-browser";
+import { API_BASE_URL } from "../../../src/api/client";
+import { currentAppVersion } from "../../../src/lib/appUpdate";
+
+const PRIVACY_URL = `${API_BASE_URL.replace(/\/api\/?$/, "")}/privacy`;
 
 const MENU_ITEMS: { path: string; label: string; hint: string; icon: LucideIcon }[] = [
   { path: "/family", label: "Family", hint: "Members, roles, and invites", icon: Users },
@@ -17,8 +23,8 @@ const MENU_ITEMS: { path: string; label: string; hint: string; icon: LucideIcon 
   { path: "/recurring", label: "Repeating payments", hint: "Salaries, rent and subscriptions", icon: Repeat },
   { path: "/goals", label: "Goals", hint: "Save toward a target, together", icon: Target },
   { path: "/lending", label: "Lend & borrow", hint: "Money lent to or borrowed from friends", icon: HandCoins },
-  // Reading SMS is Android-only.
-  ...(Platform.OS === "android"
+  // Reading SMS is Android-only, and a build can be made without it.
+  ...(Platform.OS === "android" && SMS_FEATURE
     ? [{ path: "/sms-import", label: "SMS transactions", hint: "Record bank and card alerts automatically", icon: MessageSquareText }]
     : []),
 ];
@@ -69,6 +75,10 @@ export default function More() {
       </Card>
 
       <Button title="Sign out" variant="secondary" icon={<LogOut size={16} color={colors.ink} />} onPress={() => logout()} />
+
+      <Pressable onPress={() => WebBrowser.openBrowserAsync(PRIVACY_URL).catch(() => undefined)} hitSlop={8} style={{ alignSelf: "center", paddingVertical: 4 }}>
+        <Text style={{ fontSize: 12, color: colors.inkSubtle }}>{`Privacy policy · Version ${currentAppVersion()}`}</Text>
+      </Pressable>
     </ScrollView>
   );
 }

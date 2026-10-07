@@ -1,6 +1,6 @@
 import * as BackgroundTask from "expo-background-task";
 import * as TaskManager from "expo-task-manager";
-import { api, refreshAccessToken } from "../api/client";
+import { api, refreshSession } from "../api/client";
 import { isSmsReaderAvailable } from "../../modules/sms-reader";
 import { runSmsSync } from "./smsImport";
 import { syncTransactions } from "./transactionStore";
@@ -15,12 +15,12 @@ export const BACKGROUND_SYNC_TASK = "family-finance-background-sync";
 TaskManager.defineTask(BACKGROUND_SYNC_TASK, async ({ error }) => {
   if (error) return BackgroundTask.BackgroundTaskResult.Failed;
   try {
-    const token = await refreshAccessToken();
-    if (!token) return BackgroundTask.BackgroundTaskResult.Failed;
-
-    const me = await api.get("/auth/me");
-    const userId = me.data?.id as string | undefined;
-    const family = me.data?.families?.[0] as { id: string; currency: string } | undefined;
+    // The token and the signed-in user in one round trip (older servers send no user: ask for it).
+    const session = await refreshSession(true);
+    if (!session) return BackgroundTask.BackgroundTaskResult.Failed;
+    const me = (session.user ?? (await api.get("/auth/me")).data) as { id?: string; families?: { id: string; currency: string }[] };
+    const userId = me?.id;
+    const family = me?.families?.[0];
     if (!userId || !family) return BackgroundTask.BackgroundTaskResult.Failed;
 
     // Recurring payments and the SMS catch-up scan never throw; the transaction sync might, so it's

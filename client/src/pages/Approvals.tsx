@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { APPROVALS_CHANGED } from "../lib/events";
 import { useOutletContext } from "react-router-dom";
 import { format } from "date-fns";
 import { Check, ClipboardCheck, X } from "lucide-react";
@@ -17,9 +18,6 @@ interface Member {
 }
 
 type Filter = "PENDING" | "REJECTED";
-
-/** Fired after a review so the nav badge can refresh its count. */
-export const APPROVALS_CHANGED = "approvals:changed";
 
 /**
  * Transactions waiting for an admin. Admins approve or reject them here; members see what they've
@@ -151,7 +149,7 @@ export function Approvals() {
           <ul className="divide-y divide-line">
             {list.map((t) => (
               <li key={t.id} className="py-1">
-                <TransactionRow transaction={t} onClick={t.userId === user!.id || isAdmin ? () => setEditing(t) : undefined} />
+                <TransactionRow transaction={t} showDate onClick={t.userId === user!.id || isAdmin ? () => setEditing(t) : undefined} />
                 <div className="flex flex-wrap items-center gap-2 pb-2 text-xs text-ink-subtle">
                   <span>
                     {memberName(t.userId)} · {format(new Date(t.date), "d MMM yyyy")}

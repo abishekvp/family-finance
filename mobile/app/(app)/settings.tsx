@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Alert, ScrollView, Text, View } from "react-native";
+import { Alert, Linking, ScrollView, Text, View } from "react-native";
 import { Bell, CalendarCog, Coins, RefreshCw, Smartphone, Trash2 } from "lucide-react-native";
 import { useRouter } from "expo-router";
 import { api } from "../../src/api/client";
@@ -8,6 +8,7 @@ import { usePrefs, type LandingView, type WeekStart } from "../../src/context/Pr
 import { useTheme } from "../../src/context/ThemeContext";
 import { useAppUpdate } from "../../src/context/UpdateContext";
 import { currentAppVersion } from "../../src/lib/appUpdate";
+import { SELF_UPDATES, playStoreUrl } from "../../src/lib/distribution";
 import { getErrorMessage } from "../../src/api/errors";
 import { syncTransactions } from "../../src/lib/transactionStore";
 import { href } from "../../src/lib/nav";
@@ -21,6 +22,7 @@ import {
   type ReminderSettings,
 } from "../../src/lib/uncategorizedReminder";
 import { Button, Card, CardHeader, Chip, ErrorText, Field, Input, SuccessText, Toggle } from "../../src/components/ui";
+import { DateField } from "../../src/components/DateTimeField";
 
 const CURRENCIES = ["USD", "EUR", "GBP", "INR", "CAD", "AUD"];
 
@@ -237,6 +239,27 @@ function AppUpdateCard() {
   const { colors } = useTheme();
   const { status, release, error, checkForUpdates, install } = useAppUpdate();
 
+  // Installed from Google Play: Play delivers updates, and the app may not install its own.
+  if (!SELF_UPDATES) {
+    return (
+      <Card>
+        <CardHeader title="App updates" icon={<Smartphone size={16} color={colors.brand600} />} />
+        <View style={{ gap: 12 }}>
+          <View>
+            <Text style={{ fontSize: 13, fontWeight: "700", color: colors.ink, marginBottom: 4 }}>Installed version {currentAppVersion()}</Text>
+            <Text style={{ color: colors.inkSubtle, fontSize: 12 }}>Updates come from Google Play.</Text>
+          </View>
+          <Button
+            title="Open in Play Store"
+            variant="secondary"
+            icon={<RefreshCw size={16} color={colors.ink} />}
+            onPress={() => Linking.openURL(playStoreUrl()).catch(() => undefined)}
+          />
+        </View>
+      </Card>
+    );
+  }
+
   const statusText =
     status === "checking"
       ? "Checking for updates…"
@@ -285,9 +308,14 @@ function BulkDeleteCard({ familyId }: { familyId: string }) {
     setNotice(null);
     setBusy(true);
     try {
+      // Local days: from the start of "from" up to the end of "to" (the server's bound is exclusive).
       const payload: Record<string, string> = {};
-      if (from) payload.from = new Date(from).toISOString();
-      if (to) payload.to = new Date(to).toISOString();
+      if (from) payload.from = new Date(`${from}T00:00:00`).toISOString();
+      if (to) {
+        const end = new Date(`${to}T00:00:00`);
+        end.setDate(end.getDate() + 1);
+        payload.to = end.toISOString();
+      }
       const res = await api.post<{ deletedCount: number }>(`/families/${familyId}/transactions/bulk-delete`, payload);
       await syncTransactions(user!.id, familyId, { force: true });
       setNotice(`Moved ${res.data.deletedCount} transactions to bin.`);
@@ -303,53 +331,48 @@ function BulkDeleteCard({ familyId }: { familyId: string }) {
   function confirmPurge() {
     Alert.alert(
       "Purge transactions?",
-      "Move transactions in this date range to the bin. They will be auto-deleted after 30 days.",
+      "Move the transactions in this date range to the bin. They're deleted for good after 30 days.",
       [
         { text: "Cancel", style: "cancel" },
-        { text: "Move to Bin", style: "destructive", onPress: purge },
+        { text: "Move to bin", style: "destructive", onPress: purge },
       ]
     );
   }
 
   return (
     <Card>
-      <CardHeader title="Purge Transactions" icon={<Trash2 size={16} color={colors.expense} />} />
+      <CardHeader title="Purge transactions" icon={<Trash2 size={16} color={colors.expense} />} />
       <View style={{ gap: 12 }}>
         <Text style={{ color: colors.inkSubtle, fontSize: 12 }}>Delete transactions in a date range. They move to the bin and can be restored for 30 days.</Text>
         <View style={{ flexDirection: "row", gap: 12 }}>
           <View style={{ flex: 1 }}>
-            <Field label="From (inclusive)">
-              <Input value={from} onChangeText={setFrom} placeholder="YYYY-MM-DD" autoCapitalize="none" />
+            <Field label="From">
+              <DateField value={from} onChange={setFrom} placeholder="Any date" clearable />
             </Field>
           </View>
           <View style={{ flex: 1 }}>
-            <Field label="To (exclusive)">
-              <Input value={to} onChangeText={setTo} placeholder="YYYY-MM-DD" autoCapitalize="none" />
+            <Field label="To (including)">
+              <DateField value={to} onChange={setTo} placeholder="Any date" clearable minimumDate={from ? new Date(`${from}T00:00:00`) : undefined} />
             </Field>
           </View>
         </View>
         {notice && <SuccessText>{notice}</SuccessText>}
         <ErrorText>{error}</ErrorText>
-        <Button title="Delete to Bin" variant="danger" disabled={busy || (!from && !to)} onPress={confirmPurge} />
+        <Button title="Move to bin" variant="danger" disabled={busy || (!from && !to)} onPress={confirmPurge} />
       </View>
     </Card>
   );
 }
 
-import { Link } from "expo-router";
-
 function BinCard() {
   const { colors } = useTheme();
+  const router = useRouter();
   return (
     <Card>
       <CardHeader
-        title="Recycle Bin"
+        title="Recycle bin"
         icon={<Trash2 size={16} color={colors.ink} />}
-        action={
-          <Link href={"/bin" as any} asChild>
-            <Button variant="secondary" title="Open Bin" />
-          </Link>
-        }
+        action={<Button variant="secondary" size="sm" title="Open bin" onPress={() => router.push(href("/bin"))} />}
       />
       <View style={{ gap: 12 }}>
         <Text style={{ color: colors.inkSubtle, fontSize: 12 }}>View and restore recently deleted transactions.</Text>

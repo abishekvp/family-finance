@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import {
   ArrowLeftRight,
@@ -27,9 +27,9 @@ import { api } from "../api/client";
 import type { FamilySummary } from "../context/AuthContext";
 import { FamilyDataProvider } from "../context/FamilyDataContext";
 import { useTheme, type ThemeChoice } from "../lib/theme";
-import { Avatar, Badge, cn, Popover, Segmented } from "./ui";
+import { Avatar, Badge, Card, cn, Popover, Segmented, SkeletonRows } from "./ui";
 import { Logo } from "./Logo";
-import { APPROVALS_CHANGED } from "../pages/Approvals";
+import { APPROVALS_CHANGED } from "../lib/events";
 
 export type Scope = "family" | "personal";
 
@@ -152,7 +152,10 @@ export function Layout() {
 
           <main className="w-full min-w-0 flex-1 px-4 pb-28 pt-5 sm:px-6 sm:pb-10 lg:px-8 2xl:px-10">
             <div key={location.pathname} className="animate-rise-in">
-              <Outlet context={{ family, scope } satisfies LayoutContext} />
+              {/* Pages load on demand (see App.tsx): the sidebar and header stay while one arrives. */}
+              <Suspense fallback={<PageSkeleton />}>
+                <Outlet context={{ family, scope } satisfies LayoutContext} />
+              </Suspense>
             </div>
           </main>
         </div>
@@ -499,5 +502,14 @@ function MoreGlyph() {
       <circle cx="12" cy="12" r="2" />
       <circle cx="19" cy="12" r="2" />
     </svg>
+  );
+}
+
+/** While a page's code is loading. */
+function PageSkeleton() {
+  return (
+    <Card>
+      <SkeletonRows rows={5} />
+    </Card>
   );
 }

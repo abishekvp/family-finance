@@ -45,3 +45,25 @@ export function isSameDayIso(a: string, b: Date): boolean {
   const d = new Date(a);
   return d.getFullYear() === b.getFullYear() && d.getMonth() === b.getMonth() && d.getDate() === b.getDate();
 }
+
+/** The local time of day of `date` as HH:mm (24-hour), the shape a time field holds. */
+export function localTimeInput(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+/** A YYYY-MM-DD day at an HH:mm time, as that local moment; null when either isn't valid. */
+export function combineDateTime(day: string, time: string): Date | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day.trim()) || !/^\d{1,2}:\d{2}$/.test(time.trim())) return null;
+  const [hours, minutes] = time.trim().split(":").map(Number);
+  if (hours > 23 || minutes > 59) return null;
+  const at = new Date(`${day.trim()}T00:00:00`);
+  if (Number.isNaN(at.getTime())) return null;
+  at.setHours(hours, minutes, 0, 0);
+  return at;
+}
+
+/** A transaction's time of day in the device's own format, e.g. "10:42 AM" or "10:42". */
+export function formatTime(date: Date | string): string {
+  return new Date(date).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+}

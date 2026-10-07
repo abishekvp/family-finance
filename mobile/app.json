@@ -51,7 +51,6 @@
           "color": "#4C36C9"
         }
       ],
-      "./plugins/withLanCleartext",
       "./plugins/withCmakeShortPath",
       "expo-web-browser",
       [
@@ -59,7 +58,8 @@
         {
           "faceIDPermission": "Allow Family Finance to use Face ID to unlock the app."
         }
-      ]
+      ],
+      "@react-native-community/datetimepicker"
     ]
   }
 }

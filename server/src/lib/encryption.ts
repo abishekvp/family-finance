@@ -23,9 +23,9 @@ export function maybeEncryptedText(plainMax: number, cipherMax: number) {
     });
 }
 
-export async function assertEncryptionPolicy(familyId: string, fields: Record<string, string | null | undefined>) {
-  const family = await prisma.family.findUnique({ where: { id: familyId }, select: { encryptionEnabled: true } });
-  if (!family?.encryptionEnabled) return;
+/** Rejects plaintext payee/notes for a family that uses end-to-end encryption. */
+export function checkEncryptionPolicy(encryptionEnabled: boolean, fields: Record<string, string | null | undefined>) {
+  if (!encryptionEnabled) return;
   for (const [name, value] of Object.entries(fields)) {
     if (value && !isEncryptedValue(value)) {
       throw new AppError(
@@ -34,4 +34,11 @@ export async function assertEncryptionPolicy(familyId: string, fields: Record<st
       );
     }
   }
+}
+
+export async function assertEncryptionPolicy(familyId: string, fields: Record<string, string | null | undefined>) {
+  // Nothing to check without a value: skip the read.
+  if (!Object.values(fields).some(Boolean)) return;
+  const family = await prisma.family.findUnique({ where: { id: familyId }, select: { encryptionEnabled: true } });
+  checkEncryptionPolicy(!!family?.encryptionEnabled, fields);
 }

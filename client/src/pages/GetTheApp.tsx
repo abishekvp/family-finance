@@ -16,9 +16,6 @@ import { QRCodeCard } from "../components/QRCode";
 import { useInstall } from "../lib/install";
 import { Logo } from "../components/Logo";
 
-const FALLBACK_APK_PATH = "/downloads/family-finance.apk";
-const FALLBACK_APK_VERSION = "1.0.0";
-
 function formatBytes(bytes: number) {
   if (bytes <= 0) return "";
   const mb = bytes / (1024 * 1024);
@@ -27,8 +24,9 @@ function formatBytes(bytes: number) {
 
 export function GetTheApp() {
   const { canPrompt, isInstalled, platform, promptInstall } = useInstall();
-  const [apkPath, setApkPath] = useState(FALLBACK_APK_PATH);
-  const [apkVersion, setApkVersion] = useState(FALLBACK_APK_VERSION);
+  const [apkPath, setApkPath] = useState<string | null>(null);
+  const [apkVersion, setApkVersion] = useState<string | null>(null);
+  const [playStoreUrl, setPlayStoreUrl] = useState<string | null>(null);
   const [apkSize, setApkSize] = useState<string | null>(null);
   const [apkAvailable, setApkAvailable] = useState<boolean | null>(null);
   const [installing, setInstalling] = useState(false);
@@ -37,15 +35,19 @@ export function GetTheApp() {
 
   useEffect(() => {
     api
-      .get<{ latestVersion: string; apkUrl: string }>("/app/version")
+      .get<{ latestVersion: string | null; apkUrl: string | null; playStoreUrl: string | null }>("/app/version")
       .then((res) => {
         setApkVersion(res.data.latestVersion);
         setApkPath(res.data.apkUrl);
+        setPlayStoreUrl(res.data.playStoreUrl ?? null);
+        // Nothing published on this server.
+        if (!res.data.apkUrl) setApkAvailable(false);
       })
-      .catch(() => undefined);
+      .catch(() => setApkAvailable(false));
   }, []);
 
   useEffect(() => {
+    if (!apkPath) return;
     fetch(apkPath, { method: "HEAD" })
       .then((res) => {
         setApkAvailable(res.ok);
@@ -126,15 +128,23 @@ export function GetTheApp() {
         <Card className="flex flex-col">
           <CardHeader
             title="Android app (APK)"
-            subtitle={apkSize ? `Version ${apkVersion} · ${apkSize}` : `Version ${apkVersion}`}
+            subtitle={[apkVersion ? `Version ${apkVersion}` : null, apkSize].filter(Boolean).join(" · ") || "Direct download"}
             icon={<Laptop size={17} />}
             actions={<Badge tone="brand">Android</Badge>}
           />
 
+          {playStoreUrl && (
+            <a href={playStoreUrl} target="_blank" rel="noreferrer" className="mb-3 block">
+              <Button className="w-full" icon={<Download size={16} />}>
+                Get it on Google Play
+              </Button>
+            </a>
+          )}
           {apkAvailable === false ? (
             <p className="mt-auto text-sm text-ink-subtle">
-              The APK isn't published on this deployment yet. Ask whoever runs this workspace to
-              build and upload one.
+              {playStoreUrl
+                ? "Install it from Google Play — it keeps itself up to date from there."
+                : "The APK isn't published on this deployment yet. Ask whoever runs this workspace to build and upload one."}
             </p>
           ) : (
             <div className="mt-auto space-y-3">
@@ -142,8 +152,8 @@ export function GetTheApp() {
                 A direct install — no Play Store needed. Your phone will warn about "unknown
                 sources", and Google Play Protect may block it — see the steps below.
               </p>
-              <a href={apkPath} download>
-                <Button className="w-full" icon={<Download size={16} />} disabled={apkAvailable === null}>
+              <a href={apkPath ?? undefined} download>
+                <Button className="w-full" variant={playStoreUrl ? "secondary" : "primary"} icon={<Download size={16} />} disabled={apkAvailable === null}>
                   Download APK
                 </Button>
               </a>

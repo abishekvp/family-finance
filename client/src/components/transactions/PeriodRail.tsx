@@ -29,7 +29,8 @@ export function PeriodRail({
   const byAccount = useMemo(() => {
     const map = new Map<string, { inflow: number; outflow: number }>();
     for (const t of transactions) {
-      if (!accountIds.has(t.accountId) || (t.type !== "INCOME" && t.type !== "EXPENSE")) continue;
+      // Only what counts: a refunded charge, a family transfer or a write-off kept out of totals adds nothing.
+      if (!accountIds.has(t.accountId) || (t.type !== "INCOME" && t.type !== "EXPENSE") || countedAmount(t) === 0) continue;
       const entry = map.get(t.accountId) ?? { inflow: 0, outflow: 0 };
       if (t.type === "INCOME") entry.inflow += countedAmount(t);
       else entry.outflow += countedAmount(t);

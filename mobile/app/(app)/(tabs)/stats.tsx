@@ -50,8 +50,8 @@ export default function Stats() {
     try {
       const budgetParams =
         periodMode === "monthly"
-          ? { year: anchor.getFullYear(), month: anchor.getMonth() + 1 }
-          : { year: anchor.getFullYear(), period: "ANNUAL" };
+          ? { year: anchor.getFullYear(), month: anchor.getMonth() + 1, tzOffset: new Date().getTimezoneOffset() }
+          : { year: anchor.getFullYear(), period: "ANNUAL", tzOffset: new Date().getTimezoneOffset() };
       const budgetsRes =
         typeFilter === "EXPENSE"
           ? await api.get<Budget[]>(`/families/${family.id}/budgets`, { params: budgetParams })

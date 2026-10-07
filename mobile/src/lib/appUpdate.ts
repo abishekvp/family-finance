@@ -42,9 +42,11 @@ export function isNewer(remote: string, local: string): boolean {
 
 /** Asks the server for the latest published build; resolves null if it isn't newer than this one. */
 export async function fetchNewerRelease(): Promise<ReleaseInfo | null> {
-  const res = await api.get<{ latestVersion: string; apkUrl: string; notes?: string | null }>("/app/version");
-  if (!isNewer(res.data.latestVersion, currentAppVersion())) return null;
-  return { version: res.data.latestVersion, apkUrl: res.data.apkUrl, notes: res.data.notes ?? null };
+  const res = await api.get<{ latestVersion: string | null; apkUrl: string | null; notes?: string | null }>("/app/version");
+  const { latestVersion, apkUrl } = res.data;
+  // Nothing published (yet) on this server.
+  if (!latestVersion || !apkUrl || !isNewer(latestVersion, currentAppVersion())) return null;
+  return { version: latestVersion, apkUrl, notes: res.data.notes ?? null };
 }
 
 function resolveApkUrl(release: ReleaseInfo): string {

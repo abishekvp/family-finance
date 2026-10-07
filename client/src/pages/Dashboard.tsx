@@ -1,6 +1,6 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { lazy, Suspense, useMemo, useState, type ReactNode } from "react";
 import { Link, useOutletContext } from "react-router-dom";
-import { ArrowDownRight, ArrowLeftRight, ArrowUpRight, ChevronRight, PiggyBank, Plus, Repeat, Sparkles, Target, TrendingDown, TrendingUp, Wallet } from "lucide-react";
+import { ArrowDownRight, ArrowLeftRight, ArrowUpRight, ChevronRight, HandCoins, PiggyBank, Plus, Repeat, Sparkles, Target, TrendingDown, TrendingUp, Wallet } from "lucide-react";
 import { subMonths } from "date-fns";
 import { useAuth } from "../context/AuthContext";
 import { Button, Card, Dot, ErrorText, ProgressBar, SkeletonRows, cn } from "../components/ui";
@@ -14,12 +14,16 @@ import { countedAmount, countsTowardTotals, isFamilyTransfer } from "../lib/tran
 import { useFamilyData, useYearTransactions } from "../context/FamilyDataContext";
 import { useCachedGet } from "../lib/sessionCache";
 import { cashflow, monthBuckets } from "../lib/analytics";
-import { CashflowChart, ChartCard, Legend, useChartPalette } from "../components/charts";
+import { ChartCard, Legend, useChartPalette } from "../components/chartKit";
 import { budgetName } from "../lib/budgets";
 import { formatDayShort } from "../lib/recurring";
-import { isPerson } from "../lib/lending";
+import { isPerson, isWriteOff, lendingFlow, lendingTotals } from "../lib/lending";
+import { formatTime } from "../lib/dateUtils";
 
 const RECENT_ROWS = 8;
+
+// The charting library is the biggest download in the app: the figures paint first, the chart follows.
+const CashflowChart = lazy(() => import("../components/charts").then((m) => ({ default: m.CashflowChart })));
 
 // The at-a-glance overview. Full management lives on each section's own page.
 export function Dashboard() {
@@ -61,7 +65,10 @@ export function Dashboard() {
     [accounts, scope, user]
   );
   const visibleAccountIds = useMemo(() => new Set(visibleAccounts.map((a) => a.id)), [visibleAccounts]);
-  const netWorth = visibleAccounts.reduce((sum, a) => sum + (a.balance ?? 0), 0);
+  // What's in your own accounts: lending takes money out of them; what's owed is shown alongside.
+  const balanceAccounts = useMemo(() => visibleAccounts.filter((a) => !isPerson(a)), [visibleAccounts]);
+  const balance = balanceAccounts.reduce((sum, a) => sum + (a.balance ?? 0), 0);
+  const lending = useMemo(() => lendingTotals(visibleAccounts.filter(isPerson)), [visibleAccounts]);
 
   function summarize(from: Date, to: Date) {
     let income = 0;
@@ -108,6 +115,7 @@ export function Dashboard() {
       .slice(0, 5);
   }, [recurringQuery.data, now]);
 
+  const people = useMemo(() => new Set(accounts.filter(isPerson).map((a) => a.id)), [accounts]);
   const ownAccounts = useMemo(
     () => visibleAccounts.filter((a) => !isPerson(a)).sort((a, b) => Math.abs(b.balance ?? 0) - Math.abs(a.balance ?? 0)),
     [visibleAccounts]
@@ -159,15 +167,24 @@ export function Dashboard() {
 
       <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
         <StatTile
-          label={scope === "family" ? "Family net worth" : "Your net worth"}
-          value={netWorth}
+          label={scope === "family" ? "Family balance" : "Your balance"}
+          value={balance}
           currency={family.currency}
           icon={<Wallet size={16} />}
           accent="brand"
           tone="auto"
           compact
           loading={isLoading}
-          hint={`Across ${visibleAccounts.length} account${visibleAccounts.length === 1 ? "" : "s"}`}
+          hint={
+            lending.owedToYou > 0 || lending.youOwe > 0
+              ? [
+                  lending.owedToYou > 0 ? `${formatCurrency(lending.owedToYou, family.currency)} owed to you` : null,
+                  lending.youOwe > 0 ? `${formatCurrency(lending.youOwe, family.currency)} you owe` : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")
+              : `Across ${balanceAccounts.length} account${balanceAccounts.length === 1 ? "" : "s"}`
+          }
         />
         <StatTile
           label="Income this month"
@@ -218,7 +235,13 @@ export function Dashboard() {
               />
             }
           >
-            {isLoading ? <SkeletonRows rows={5} /> : <CashflowChart data={flow} currency={family.currency} height={280} />}
+            {isLoading ? (
+              <SkeletonRows rows={5} />
+            ) : (
+              <Suspense fallback={<div style={{ height: 280 }} />}>
+                <CashflowChart data={flow} currency={family.currency} height={280} />
+              </Suspense>
+            )}
           </ChartCard>
 
           <Card padded={false}>
@@ -249,15 +272,22 @@ export function Dashboard() {
                       <tr key={t.id} onClick={() => setEditingTransaction(t)} className="cursor-pointer transition-colors hover:bg-surface-sunken/60">
                         <td className="whitespace-nowrap px-5 py-2.5 text-ink-muted">
                           {new Date(t.date).toLocaleDateString(undefined, { day: "numeric", month: "short" })}
+                          <span className="ml-1.5 text-2xs text-ink-subtle">{formatTime(t.date)}</span>
                         </td>
                         <td className="max-w-[260px] truncate px-3 py-2.5 font-medium text-ink">
                           {t.payee || t.category?.name || (t.type === "TRANSFER" ? "Transfer" : "Uncategorized")}
                         </td>
                         <td className="px-3 py-2.5">
-                          {t.type === "TRANSFER" ? (
+                          {lendingFlow(t, people) !== null ? (
+                            <span className="flex items-center gap-1.5 text-ink-muted">
+                              <HandCoins size={13} /> Lend &amp; borrow
+                            </span>
+                          ) : t.type === "TRANSFER" ? (
                             <span className="flex items-center gap-1.5 text-ink-muted">
                               <ArrowLeftRight size={13} /> Transfer
                             </span>
+                          ) : isWriteOff(t) ? (
+                            <span className="text-ink-muted">Written off</span>
                           ) : isFamilyTransfer(t) ? (
                             <span className="text-ink-muted">Family transfer</span>
                           ) : t.category ? (
@@ -275,10 +305,10 @@ export function Dashboard() {
                         </td>
                         <td className="whitespace-nowrap px-5 py-2.5 text-right font-semibold">
                           <Money
-                            amount={t.type === "EXPENSE" ? -t.amount : t.amount}
+                            amount={lendingFlow(t, people) ?? (t.type === "EXPENSE" ? -t.amount : t.amount)}
                             currency={t.account.currency}
-                            signed={t.type !== "TRANSFER"}
-                            tone={t.type === "TRANSFER" || isFamilyTransfer(t) ? undefined : t.type === "INCOME" ? "income" : "expense"}
+                            signed={t.type !== "TRANSFER" || lendingFlow(t, people) !== null}
+                            tone={t.type === "TRANSFER" || countedAmount(t) === 0 ? "muted" : t.type === "INCOME" ? "income" : "expense"}
                           />
                         </td>
                       </tr>

@@ -8,6 +8,7 @@ import { cn, SkeletonRows } from "../ui";
 import { cumulativeBalance } from "../../lib/carryOver";
 import { weekStartsOn, type WeekStart } from "../../lib/prefs";
 import { countedAmount } from "../../lib/transactionTotals";
+import { isPerson } from "../../lib/lending";
 
 const WEEKDAY_LABELS_SUNDAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const WEEKDAY_LABELS_MONDAY = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -16,6 +17,7 @@ export function CalendarView({
   monthDate,
   transactions,
   historyForCarryOver,
+  startBalances,
   accounts,
   accountIds,
   periodStart,
@@ -27,8 +29,12 @@ export function CalendarView({
 }: {
   monthDate: Date;
   transactions: Transaction[];
+  /** This year's transactions, for the carry-over. */
   historyForCarryOver: Transaction[];
+  /** Each account's balance when the year began, for the carry-over. */
+  startBalances: Record<string, number> | undefined;
   accounts: Account[];
+  /** Whose balances the carry-over adds up. */
   accountIds: Set<string>;
   periodStart: Date;
   currency: string;
@@ -39,6 +45,7 @@ export function CalendarView({
 }) {
   const wsOn = weekStartsOn(weekStart);
   const [selectedDay, setSelectedDay] = useState<Date | null>(null);
+  const people = useMemo(() => new Set(accounts.filter(isPerson).map((a) => a.id)), [accounts]);
 
   const days = useMemo(() => {
     const start = startOfWeek(startOfMonth(monthDate), { weekStartsOn: wsOn });
@@ -78,7 +85,7 @@ export function CalendarView({
       {transactions.length === 0 && (
         <EmptyOrCarryOver
           carryOverEnabled={carryOverEnabled}
-          amount={carryOverEnabled ? cumulativeBalance(accounts, historyForCarryOver, accountIds, periodStart) : 0}
+          amount={carryOverEnabled ? cumulativeBalance(startBalances, historyForCarryOver, accountIds, periodStart) : 0}
           currency={currency}
           emptyTitle="No transactions in this period"
           emptyDescription="Add a transaction to see it plotted on the calendar."
@@ -145,7 +152,7 @@ export function CalendarView({
           ) : (
             <div className="divide-y divide-line">
               {selectedDayTransactions.map((t) => (
-                <TransactionRow key={t.id} transaction={t} onClick={() => onRowClick(t)} />
+                <TransactionRow key={t.id} transaction={t} people={people} onClick={() => onRowClick(t)} />
               ))}
             </div>
           )}

@@ -26,8 +26,13 @@ export function BulkDeleteCard({ familyId }: { familyId: string }) {
     try {
       const payload: Record<string, string> = {};
       // Local midnight of each picked day, not UTC midnight.
+      // Local days: from the start of "from" up to the end of "to" (the server's bound is exclusive).
       if (from) payload.from = new Date(`${from}T00:00:00`).toISOString();
-      if (to) payload.to = new Date(`${to}T00:00:00`).toISOString();
+      if (to) {
+        const end = new Date(`${to}T00:00:00`);
+        end.setDate(end.getDate() + 1);
+        payload.to = end.toISOString();
+      }
 
       const res = await api.post<{ deletedCount: number }>(`/families/${familyId}/transactions/bulk-delete`, payload);
       invalidateAll();
@@ -50,14 +55,14 @@ export function BulkDeleteCard({ familyId }: { familyId: string }) {
         icon={<Trash2 size={17} />}
       />
       <form onSubmit={handleSubmit} className="flex flex-wrap items-end gap-3 mt-4">
-        <Field label="From (inclusive)" className="flex-1 min-w-[140px]">
+        <Field label="From" className="flex-1 min-w-[140px]">
           {(props) => (
             <Input {...props} type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
           )}
         </Field>
-        <Field label="To (exclusive)" className="flex-1 min-w-[140px]">
+        <Field label="To (including)" className="flex-1 min-w-[140px]">
           {(props) => (
-            <Input {...props} type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+            <Input {...props} type="date" min={from || undefined} value={to} onChange={(e) => setTo(e.target.value)} />
           )}
         </Field>
         <Button type="submit" variant="danger" disabled={isDeleting || (!from && !to)}>

@@ -1,30 +1,29 @@
-import type { Account, Transaction } from "../api/types";
+import type { Transaction } from "../api/types";
 
 /**
- * Sums opening balances plus every transaction dated strictly before `boundary` for the given
- * accounts, mirroring the server's per-account balance formula (INCOME adds, EXPENSE and the
- * outgoing leg of a TRANSFER subtract, the incoming leg of a TRANSFER adds to the destination).
- * Used to render a "Carry-over" row when a viewed period has zero transactions.
+ * The balance `accountIds` held just before `boundary`, for the "Carried over" row shown when a
+ * viewed period has no transactions: what each account held when the year began (`startBalances`,
+ * from GET /accounts/balances?asOf=<1 January>) plus that year's transactions dated before the
+ * boundary — INCOME adds, EXPENSE and the outgoing leg of a TRANSFER subtract, the incoming leg adds,
+ * mirroring the server's balance formula.
+ *
+ * `yearTransactions` covers the year from 1 January, so a boundary before then (the first week of
+ * January can start in December) reads as the start of the year.
  */
 export function cumulativeBalance(
-  accounts: Account[],
-  priorTransactions: Transaction[],
+  startBalances: Record<string, number> | undefined,
+  yearTransactions: Transaction[],
   accountIds: Set<string>,
   boundary: Date
 ): number {
   let total = 0;
-  for (const account of accounts) {
-    if (accountIds.has(account.id)) total += Number(account.openingBalance);
-  }
-  for (const t of priorTransactions) {
-    if (new Date(t.date) >= boundary) continue;
+  for (const id of accountIds) total += startBalances?.[id] ?? 0;
+  const before = boundary.getTime();
+  for (const t of yearTransactions) {
+    if (new Date(t.date).getTime() >= before) continue;
     const amount = Number(t.amount);
-    if (accountIds.has(t.accountId)) {
-      total += t.type === "INCOME" ? amount : -amount;
-    }
-    if (t.type === "TRANSFER" && t.transferToAccountId && accountIds.has(t.transferToAccountId)) {
-      total += amount;
-    }
+    if (accountIds.has(t.accountId)) total += t.type === "INCOME" ? amount : -amount;
+    if (t.type === "TRANSFER" && t.transferToAccountId && accountIds.has(t.transferToAccountId)) total += amount;
   }
   return total;
 }
