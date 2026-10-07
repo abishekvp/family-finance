@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ScrollView, Text, View } from "react-native";
 import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
-import { ArrowRight, Home, Plus, Repeat, Trash2 } from "lucide-react-native";
+import { ArrowRight, Ban, Home, Plus, Repeat, Trash2, Undo2, Users } from "lucide-react-native";
 import { api } from "../../src/api/client";
 import { fetchWithCache } from "../../src/lib/cache";
 import type { Account, Budget, Category, PayeeRule, RecurringFrequency, Transaction, TransactionType } from "../../src/api/types";
@@ -38,7 +38,7 @@ import {
   type LendingKind,
 } from "../../src/lib/lending";
 import { refreshTodayWidget } from "../../src/lib/todayWidget";
-import { useTransactions } from "../../src/lib/transactionStore";
+import { syncTransactions, useTransactions } from "../../src/lib/transactionStore";
 import { FREQUENCIES, describeSchedule } from "../../src/lib/recurring";
 import { moveToBackground } from "../../modules/home-widgets";
 import { budgetName } from "../../src/lib/budgets";
@@ -67,6 +67,11 @@ const TYPE_OPTIONS: { value: FormType; label: string }[] = [
 ];
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** A family member's first name, from the account they share. */
+function memberName(account: Account) {
+  return account.owner?.name.trim().split(/\s+/)[0] || "Family member";
+}
 
 function todayIso() {
   return localDateInput(new Date());
@@ -123,11 +128,18 @@ export default function TransactionForm() {
   // must never send the app to the background when it closes.
   const fromWidget = params.source === "widget" && !isEdit;
 
-  useLayoutEffect(() => {
-    navigation.setOptions({ title: isEdit ? "Edit transaction" : "Add transaction" });
-  }, [navigation, isEdit]);
+  // A family member's entry on their own account (or money they sent you): shown, never edited here.
+  const readOnly = !!initial?.readOnly;
 
-  const [accounts, setAccounts] = useState<Account[]>([]);
+  useLayoutEffect(() => {
+    navigation.setOptions({ title: readOnly ? "Transaction" : isEdit ? "Edit transaction" : "Add transaction" });
+  }, [navigation, isEdit, readOnly]);
+
+  // Every account you see; the ones you record on, and those other members share with the family
+  // (money can be transferred to them).
+  const [allAccounts, setAccounts] = useState<Account[]>([]);
+  const accounts = useMemo(() => allAccounts.filter((a) => !a.owner || a.owner.id === user!.id), [allAccounts, user]);
+  const sharedAccounts = useMemo(() => allAccounts.filter((a) => a.owner && a.owner.id !== user!.id), [allAccounts, user]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -135,7 +147,7 @@ export default function TransactionForm() {
   useEffect(() => {
     let cancelled = false;
     Promise.all([
-      fetchWithCache<Account[]>(`/families/${family.id}/accounts`, undefined, (cached) => {
+      fetchWithCache<Account[]>(`/families/${family.id}/accounts`, { params: { include: "shared" } }, (cached) => {
         if (!cancelled) setAccounts(cached.data);
       }),
       fetchWithCache<Category[]>(`/families/${family.id}/categories`, undefined, (cached) => {
@@ -181,12 +193,15 @@ export default function TransactionForm() {
   // Lent money that won't come back: saved as the loan plus a write-off that closes it.
   const [notReturning, setNotReturning] = useState(false);
   const [notReturningCounted, setNotReturningCounted] = useState(false);
+  // How much of the loan being edited was written off (it drops to 0 once the write-off is cancelled).
+  const [writtenOff, setWrittenOff] = useState(initial?.writtenOffAmount ?? 0);
+  const [isCancellingWriteOff, setIsCancellingWriteOff] = useState(false);
   const [notes, setNotes] = useState(initial?.notes ?? "");
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
-  const canDelete = isEdit && family.role !== "VIEWER";
+  const canDelete = isEdit && family.role !== "VIEWER" && !readOnly;
 
   // Lend & borrow: `accountId` is always your own account; the person is the other end.
   const [kind, setKind] = useState<LendingKind>(parseKind(params.kind) ?? "lent");
@@ -243,14 +258,18 @@ export default function TransactionForm() {
   // from a person's "paid for something".
   const sourceAccounts = isLending ? ownAccounts : accounts.filter((a) => !isPerson(a) || a.id === accountId);
   const transferTargets = accounts.filter((a) => a.id !== accountId && (!isPerson(a) || a.id === transferToAccountId));
+  // Sending money to a family member: into an account they share with the family. It's a transfer —
+  // not spending for you, not income for them.
+  const memberTargets = sharedAccounts.filter((a) => a.id !== accountId && !isPerson(a));
+  const toMember = memberTargets.find((a) => a.id === transferToAccountId) ?? null;
   const selectedAccount = accounts.find((a) => a.id === accountId);
   const paidByPerson = selectedAccount && isPerson(selectedAccount) && !isLending && type !== "TRANSFER" ? selectedAccount : null;
   // A write-off stays one while it's the same kind of entry on the same person.
   const editingWriteOff = !!initial && isWriteOff(initial) && type === initial.type && accountId === initial.accountId;
   // Entries kept out of totals (a write-off, money moved off a member who left) can be counted again.
   const showCounted = !!initial && (type === "INCOME" || type === "EXPENSE") && (editingWriteOff || isNotCounted(initial));
-  // Lent money that won't come back is recorded with its write-off in one go (new loans only).
-  const canMarkNotReturning = isLending && kind === "lent" && !isEdit;
+  // The loan being edited, while it's still money lent: it can be written off, or its write-off taken back.
+  const editingLoan = isEdit && isLending && kind === "lent" && initial?.type === "TRANSFER" && !readOnly;
   // A salary, rent or subscription can be set to repeat as it's added (not from a person's account).
   const canRepeat = !isEdit && (type === "INCOME" || type === "EXPENSE") && !paidByPerson;
   const symbol = currencySymbol(selectedAccount?.currency ?? family.currency);
@@ -262,7 +281,8 @@ export default function TransactionForm() {
   // A return can say which loan it pays back. This entry's own earlier save is left out, so the
   // loans read as they stood before it.
   const repaying = isLending && person ? repaidDirection(kind) : null;
-  const personLoanId = repaying ? person!.id : null;
+  // A return lists the open loans; an edited loan needs to know how much of it came back already.
+  const personLoanId = repaying || (editingLoan && person) ? person!.id : null;
   const personLoanFilter = useMemo(() => (personLoanId ? { accountId: personLoanId } : null), [personLoanId]);
   const { transactions: personHistory } = useTransactions(user!.id, family.id, personLoanFilter);
   const openLoans = useMemo(() => {
@@ -271,6 +291,19 @@ export default function TransactionForm() {
     return trackLoans(history, person).filter((l) => l.transaction && l.direction === repaying && (!l.settled || l.transaction.id === repaysId));
   }, [repaying, person, personHistory, initial?.id, repaysId]);
   const linkedLoan = openLoans.find((l) => l.transaction!.id === repaysId) ?? null;
+
+  // What of the edited loan has come back already; writing it off covers only the rest.
+  const returnedOnLoan = useMemo(() => {
+    if (!editingLoan || !person || !initial) return 0;
+    const history = personHistory.filter((t) => t.accountId === person.id || t.transferToAccountId === person.id);
+    return trackLoans(history, person).find((l) => l.transaction?.id === initial.id)?.returned ?? 0;
+  }, [editingLoan, person, personHistory, initial]);
+  const typedAmount = Number(amount);
+  const leftToWriteOff = Math.max(0, (typedAmount > 0 ? typedAmount : 0) - returnedOnLoan);
+  // Lent money that won't come back is recorded with its write-off: as it's added, or later on the loan
+  // itself (once per loan — a written-off one can have it cancelled instead).
+  const canMarkNotReturning = isLending && kind === "lent" && !readOnly && (!isEdit || (editingLoan && writtenOff < 0.005 && leftToWriteOff > 0.005));
+  const showWrittenOff = editingLoan && writtenOff > 0.005;
   
   // A refund (income) gives back an expense; a return (expense) gives back an income.
   const refundable = type === "INCOME" || type === "EXPENSE" ? type : null;
@@ -332,6 +365,7 @@ export default function TransactionForm() {
   const canRemember =
     filedByPayee &&
     family.role !== "VIEWER" &&
+    !readOnly &&
     rememberPattern.length >= 2 &&
     (!!categoryId || familyTransfer) &&
     !(existingRule && existingRule.categoryId === categoryId && existingRule.familyTransfer === familyTransfer);
@@ -365,7 +399,7 @@ export default function TransactionForm() {
       before -= describeEntry(initial, person.id).effect;
     }
     // Money that won't come back is written off straight away, so they don't owe it.
-    const effect = canMarkNotReturning && notReturning ? 0 : balanceEffect(kind, amountValue);
+    const effect = balanceEffect(kind, amountValue) - (canMarkNotReturning && notReturning ? leftToWriteOff : 0);
     return describeBalance(personName, before + effect, person?.currency ?? family.currency);
   })();
 
@@ -427,7 +461,7 @@ export default function TransactionForm() {
    * Money someone returned, or money you're returning, recorded as plain income or an expense: turn it
    * into a Lend/Borrow return so it settles the loan instead of counting as income or spending.
    */
-  const canBeLoanReturn = (type === "INCOME" || type === "EXPENSE") && !paidByPerson && !initial?.recurringId;
+  const canBeLoanReturn = (type === "INCOME" || type === "EXPENSE") && !paidByPerson && !initial?.recurringId && !readOnly;
   function recordAsLending(nextKind: LendingKind) {
     const typedName = payee.trim().toLowerCase();
     const match = typedName ? people.find((p) => p.name.trim().toLowerCase() === typedName) : undefined;
@@ -548,6 +582,7 @@ export default function TransactionForm() {
       const payload = buildPayload(personAccountId);
       if (isEdit && initial) {
         await api.patch(`/families/${family.id}/transactions/${initial.id}`, payload);
+        savedTransactionId.current = initial.id;
       } else if (!savedTransactionId.current) {
         const res = await api.post<Transaction>(`/families/${family.id}/transactions`, payload);
         savedTransactionId.current = res.data.id;
@@ -561,7 +596,8 @@ export default function TransactionForm() {
             writeOffPayload({
               person: { id: personAccountId, name: personName },
               loan: { direction: "lent", transaction: { id: savedTransactionId.current } },
-              amount: amountValue,
+              // A loan written off later covers only what hasn't come back.
+              amount: leftToWriteOff,
               date: when!.toISOString(),
               counted: notReturningCounted,
               categoryId: spendingCategory,
@@ -615,7 +651,7 @@ export default function TransactionForm() {
         setTime(localTimeInput(new Date()));
         if (isLending) {
           // A person just added is now one of the chips, with an up-to-date balance.
-          const res = await api.get<Account[]>(`/families/${family.id}/accounts`);
+          const res = await api.get<Account[]>(`/families/${family.id}/accounts`, { params: { include: "shared" } });
           setAccounts(res.data);
           if (createdPerson.current) setPersonId(createdPerson.current.id);
           setAddingPerson(false);
@@ -631,6 +667,24 @@ export default function TransactionForm() {
     } catch (err) {
       setError(getErrorMessage(err, isEdit ? "Unable to update transaction" : "Unable to create transaction"));
       setIsSubmitting(false);
+    }
+  }
+
+  /** Takes the loan's write-off back: the money counts as owed again. */
+  async function handleCancelWriteOff() {
+    if (!initial) return;
+    setError(null);
+    setIsCancellingWriteOff(true);
+    try {
+      await api.post(`/families/${family.id}/transactions/${initial.id}/cancel-write-off`);
+      setWrittenOff(0);
+      // The loan's mark and the write-offs gone to the bin reach the local copy.
+      syncTransactions(user!.id, family.id, { force: true }).catch(() => undefined);
+      refreshTodayWidget(family.id, family.currency);
+    } catch (err) {
+      setError(getErrorMessage(err, "Unable to cancel the write-off"));
+    } finally {
+      setIsCancellingWriteOff(false);
     }
   }
 
@@ -676,6 +730,19 @@ export default function TransactionForm() {
       <FormScrollView contentContainerStyle={{ padding: 16, gap: 18, paddingBottom: 64 }}>
         <ErrorText>{loadError}</ErrorText>
 
+        {readOnly && initial && (
+          <View style={{ flexDirection: "row", gap: 10, padding: 12, borderRadius: 14, backgroundColor: colors.surfaceSunken }}>
+            <Users size={16} color={colors.inkMuted} />
+            <Text style={{ flex: 1, fontSize: 12.5, color: colors.inkMuted }}>
+              {(initial.type === "TRANSFER"
+                ? initial.account.name + " → " + (initial.transferToAccount?.name ?? "another account") + ". "
+                : "On " + initial.account.name + ". ") + "Recorded by a family member on their account, so only they can change it."}
+            </Text>
+          </View>
+        )}
+
+        {/* Someone else's entry: everything shows, nothing can be changed. */}
+        <View pointerEvents={readOnly ? "none" : "auto"} style={{ gap: 18 }}>
         <Segmented fullWidth value={type} onChange={handleSelectType} options={TYPE_OPTIONS} />
 
         {canBeLoanReturn && (
@@ -803,6 +870,29 @@ export default function TransactionForm() {
           </Field>
         )}
 
+        {showWrittenOff && (
+          <View style={{ gap: 10, padding: 12, borderRadius: 14, backgroundColor: colors.surfaceSunken }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+              <Ban size={15} color={colors.inkSubtle} />
+              <Text style={{ fontSize: 13, fontWeight: "700", color: colors.ink }}>
+                {`${formatCurrency(writtenOff, selectedAccount?.currency ?? family.currency)} written off`}
+              </Text>
+            </View>
+            <Text style={{ fontSize: 12, color: colors.inkSubtle }}>
+              {`Won't be returned, so it's left out of what ${personName || "they"} owe${personName ? "s" : ""} you. Recorded as a separate write-off entry; cancel it to count it as owed again.`}
+            </Text>
+            <Button
+              title="Cancel write-off"
+              variant="secondary"
+              size="sm"
+              icon={<Undo2 size={14} color={colors.ink} />}
+              loading={isCancellingWriteOff}
+              disabled={isSubmitting}
+              onPress={handleCancelWriteOff}
+            />
+          </View>
+        )}
+
         {canMarkNotReturning && (
           <View style={{ gap: 12, padding: 12, borderRadius: 14, backgroundColor: colors.surfaceSunken }}>
             <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
@@ -810,7 +900,9 @@ export default function TransactionForm() {
                 <Text style={{ fontSize: 13, fontWeight: "700", color: colors.ink }}>Won't be returned</Text>
                 <Text style={{ fontSize: 12, color: colors.inkSubtle, marginTop: 2 }}>
                   {notReturning
-                    ? `Given for good: ${personName || "they"} won't owe it. It still leaves your account.`
+                    ? isEdit
+                      ? `Writes off ${formatCurrency(leftToWriteOff, selectedAccount?.currency ?? family.currency)}${returnedOnLoan > 0.005 ? " still owed" : ""}: ${personName || "they"} won't owe it. Saved as a write-off entry linked to this loan; you can cancel it later.`
+                      : `Given for good: ${personName || "they"} won't owe it. It still leaves your account.`
                     : "For money you don't expect back. You can also write off a loan later from their page."}
                 </Text>
               </View>
@@ -951,14 +1043,41 @@ export default function TransactionForm() {
         )}
 
         {type === "TRANSFER" ? (
-          <Field label="Transfer to">
-            {transferTargets.length === 0 ? (
+          <Field
+            label="Transfer to"
+            hint={
+              toMember
+                ? `Money to ${memberName(toMember)}: lands in their ${toMember.name}. Not spending for you, nor income for them.`
+                : memberTargets.length === 0
+                  ? "Family members show up here once they share an account with the family."
+                  : "Between your own accounts, or to a family member's shared account."
+            }
+          >
+            {transferTargets.length === 0 && memberTargets.length === 0 ? (
               <Text style={{ color: colors.inkSubtle, fontSize: 13 }}>Add another account to transfer to.</Text>
             ) : (
               <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
                 {transferTargets.map((a) => (
                   <Chip key={a.id} label={a.name} selected={transferToAccountId === a.id} onPress={() => setTransferToAccountId(a.id)} />
                 ))}
+              </View>
+            )}
+            {memberTargets.length > 0 && (
+              <View style={{ gap: 8, marginTop: 12 }}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                  <Users size={13} color={colors.inkMuted} />
+                  <Text style={{ fontSize: 12, fontWeight: "700", color: colors.inkMuted }}>To a family member</Text>
+                </View>
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                  {memberTargets.map((a) => (
+                    <Chip
+                      key={a.id}
+                      label={`${memberName(a)} · ${a.name}`}
+                      selected={transferToAccountId === a.id}
+                      onPress={() => setTransferToAccountId(a.id)}
+                    />
+                  ))}
+                </View>
               </View>
             )}
           </Field>
@@ -1075,10 +1194,12 @@ export default function TransactionForm() {
 
         <ErrorText>{error}</ErrorText>
 
-        <View style={{ gap: 10 }}>
-          <Button title={isEdit ? "Save changes" : "Save"} size="lg" loading={isSubmitting} disabled={!canSubmit} onPress={() => handleSave(false)} />
-          {!isEdit && <Button title="Save & add another" variant="secondary" disabled={isSubmitting || !canSubmit} onPress={() => handleSave(true)} />}
-        </View>
+        {!readOnly && (
+          <View style={{ gap: 10 }}>
+            <Button title={isEdit ? "Save changes" : "Save"} size="lg" loading={isSubmitting} disabled={!canSubmit} onPress={() => handleSave(false)} />
+            {!isEdit && <Button title="Save & add another" variant="secondary" disabled={isSubmitting || !canSubmit} onPress={() => handleSave(true)} />}
+          </View>
+        )}
 
         {canDelete &&
           (confirmDelete ? (
@@ -1104,6 +1225,7 @@ export default function TransactionForm() {
               onPress={() => setConfirmDelete(true)}
             />
           ))}
+        </View>
       </FormScrollView>
     </View>
   );

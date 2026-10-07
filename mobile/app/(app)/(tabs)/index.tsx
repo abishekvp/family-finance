@@ -69,14 +69,26 @@ export default function TransactionsHub() {
     () => (subView === "monthly" ? yearRange(selectedYear) : monthRange(anchorMonth)),
     [subView, selectedYear, anchorMonth]
   );
-  const { transactions: periodTransactions, ready, error: syncError, sync } = useTransactions(user!.id, family.id, period);
+  // Entries on accounts family members share come too, but only count once their account is picked in
+  // the filter: by default the screen is about your own money.
+  const periodFilter = useMemo(() => ({ ...period, includeShared: true }), [period]);
+  const { transactions: withShared, ready, error: syncError, sync } = useTransactions(user!.id, family.id, periodFilter);
+  const periodTransactions = useMemo(() => withShared.filter((t) => !t.sharedView), [withShared]);
   const isLoading = !ready;
   // A failed sync over a copy already on screen isn't worth an alarm; it's retried on the next visit.
   const error = accountsError ?? (ready ? null : syncError);
 
   const loadAccounts = useCallback(async () => {
     try {
-      const res = await fetchWithCache<Account[]>(`/families/${family.id}/accounts`, undefined, (cached) => { setAccounts(cached.data); setAccountsError(null); }, 5 * 60 * 1000);
+      const res = await fetchWithCache<Account[]>(
+        `/families/${family.id}/accounts`,
+        { params: { include: "shared" } },
+        (cached) => {
+          setAccounts(cached.data);
+          setAccountsError(null);
+        },
+        5 * 60 * 1000
+      );
       setAccounts(res.data);
       setAccountsError(null);
     } catch (err) {
@@ -134,10 +146,10 @@ export default function TransactionsHub() {
   // Either leg: what an account paid out, and transfers (or money back from a person) that landed on it.
   const filteredTransactions = useMemo(() => {
     if (selectedAccountIds === null) return periodTransactions;
-    return periodTransactions.filter(
+    return withShared.filter(
       (t) => selectedAccountIds.has(t.accountId) || (!!t.transferToAccountId && selectedAccountIds.has(t.transferToAccountId))
     );
-  }, [periodTransactions, selectedAccountIds]);
+  }, [periodTransactions, withShared, selectedAccountIds]);
 
   // Load on scroll: a busy month draws its first rows at once and the rest as they come into view.
   const [dailyLimit, setDailyLimit] = useState(DAILY_PAGE);
@@ -156,8 +168,11 @@ export default function TransactionsHub() {
     [hasMoreDaily]
   );
 
+  // Accounts you record on, and those family members share with the family (picked in the filter).
+  const usableAccounts = useMemo(() => accounts.filter((a) => !a.owner || a.owner.id === user!.id), [accounts, user]);
+  const sharedAccounts = useMemo(() => accounts.filter((a) => a.owner && a.owner.id !== user!.id), [accounts, user]);
   // Your own accounts: people you lend to aren't part of your balance, so lending moves it.
-  const ownAccounts = useMemo(() => accounts.filter((a) => !isPerson(a)), [accounts]);
+  const ownAccounts = useMemo(() => usableAccounts.filter((a) => !isPerson(a)), [usableAccounts]);
   const scopedAccountIds = useMemo(() => selectedAccountIds ?? new Set(ownAccounts.map((a) => a.id)), [selectedAccountIds, ownAccounts]);
 
   const periodTotals = useMemo(() => {
@@ -303,7 +318,8 @@ export default function TransactionsHub() {
       <FilterModal
         visible={filterVisible}
         accounts={ownAccounts}
-        periodTransactions={periodTransactions}
+        sharedAccounts={sharedAccounts}
+        periodTransactions={withShared}
         selectedAccountIds={selectedAccountIds}
         onChange={setSelectedAccountIds}
         currency={family.currency}

@@ -30,7 +30,7 @@ export function Dashboard() {
   const { family, scope } = useOutletContext<LayoutContext>();
   const { user } = useAuth();
   const palette = useChartPalette();
-  const { accounts, categories, isLoadingStatic, staticError, invalidateYear, refreshAccounts } = useFamilyData();
+  const { accounts, sharedAccounts, categories, isLoadingStatic, staticError, invalidateYear, refreshAccounts } = useFamilyData();
   const [showAddTransaction, setShowAddTransaction] = useState(false);
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
 
@@ -60,9 +60,10 @@ export function Dashboard() {
     refreshAccounts().catch(() => undefined);
   }
 
+  // The family's view takes in the accounts members share with the family too.
   const visibleAccounts = useMemo(
-    () => (scope === "family" ? accounts : accounts.filter((a) => a.owner?.id === user!.id)),
-    [accounts, scope, user]
+    () => (scope === "family" ? [...accounts, ...sharedAccounts] : accounts.filter((a) => a.owner?.id === user!.id)),
+    [accounts, sharedAccounts, scope, user]
   );
   const visibleAccountIds = useMemo(() => new Set(visibleAccounts.map((a) => a.id)), [visibleAccounts]);
   // What's in your own accounts: lending takes money out of them; what's owed is shown alongside.

@@ -6,26 +6,24 @@ import { asyncHandler, AppError } from "../middleware/errorHandler";
 import { requireAuth, requireFamilyRole } from "../middleware/auth";
 import { BALANCE_TX_OPTIONS, lockAccounts, recalculateAccountBalances, recalculateBalancesNow } from "../lib/balances";
 import { checkEncryptionPolicy, isEncryptedValue, maybeEncryptedText } from "../lib/encryption";
+import { SEEN_BY, USABLE_BY, canUseAccount } from "../lib/visibility";
 
 export const accountsRouter = Router({ mergeParams: true });
 accountsRouter.use(requireAuth);
 
-const VISIBLE_TO = (userId: string): Prisma.AccountWhereInput => ({ OR: [{ ownerId: null }, { ownerId: userId }] });
-
-function isVisible(ownerId: string | null, requesterId: string) {
-  return ownerId === null || ownerId === requesterId;
-}
-
-// Accounts are nested under /api/families/:familyId/accounts
+// Accounts are nested under /api/families/:familyId/accounts. The ones the requester records on —
+// family accounts and their own — and with ?include=shared also those other members share with the
+// family (read-only for them: see Account.sharedWithFamily).
 accountsRouter.get(
   "/",
   requireFamilyRole(Role.VIEWER),
   asyncHandler(async (req, res) => {
+    const withShared = req.query.include === "shared";
     const accounts = await prisma.account.findMany({
       where: {
         familyId: req.params.familyId,
         isArchived: false,
-        ...VISIBLE_TO(req.user!.id),
+        ...(withShared ? SEEN_BY(req.user!.id) : USABLE_BY(req.user!.id)),
       },
       orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
       include: { owner: { select: { id: true, name: true } } },
@@ -69,7 +67,8 @@ accountsRouter.get(
               AND t."approvalStatus" = 'APPROVED' AND t."date" < ${asOf}
           ), 0) AS balance
       FROM "Account" a
-      WHERE a."familyId" = ${familyId} AND a."isArchived" = false AND (a."ownerId" IS NULL OR a."ownerId" = ${requesterId})`;
+      WHERE a."familyId" = ${familyId} AND a."isArchived" = false
+        AND (a."ownerId" IS NULL OR a."ownerId" = ${requesterId} OR a."sharedWithFamily" = true)`;
 
     res.json(Object.fromEntries(rows.map((r) => [r.id, Number(r.balance)])));
   })
@@ -91,6 +90,8 @@ const createAccountSchema = z.object({
   name: z.string().trim().min(1).max(100),
   type: accountTypeSchema,
   isCommon: z.boolean().default(false),
+  // A personal account the family may see (read-only) and send money to.
+  sharedWithFamily: z.boolean().default(false),
   currency: z.string().trim().length(3).default("USD"),
   openingBalance: z.number().finite().default(0),
   creditLimit: z.number().finite().optional(),
@@ -108,6 +109,7 @@ accountsRouter.post(
       data: {
         familyId: req.params.familyId,
         ownerId: data.isCommon ? null : req.user!.id,
+        sharedWithFamily: sharable(data.isCommon, data.type) && data.sharedWithFamily,
         name: data.name,
         type: data.type,
         currency: data.currency,
@@ -133,7 +135,14 @@ const updateAccountSchema = z.object({
   creditLimit: z.number().finite().optional(),
   // true = shared with the family, false = personal to the requester.
   isCommon: z.boolean().optional(),
+  // A personal account the family may see (read-only) and send money to.
+  sharedWithFamily: z.boolean().optional(),
 });
+
+/** Only a member's own account can be shared with the family to look at; people never are. */
+function sharable(isCommon: boolean, type: AccountType) {
+  return !isCommon && type !== AccountType.PERSON;
+}
 
 accountsRouter.patch(
   "/:accountId",
@@ -189,6 +198,7 @@ accountsRouter.patch(
         ...(data.openingBalance !== undefined ? { openingBalance: data.openingBalance } : {}),
         ...(data.creditLimit !== undefined ? { creditLimit: data.creditLimit } : {}),
         ...(becomesCommon !== null ? { ownerId: becomesCommon ? null : requesterId } : {}),
+        sharedWithFamily: sharable(becomesCommon ?? wasCommon, data.type ?? existing.type) && (data.sharedWithFamily ?? existing.sharedWithFamily),
       },
     });
 
@@ -242,7 +252,7 @@ accountsRouter.post(
       prisma.account.findFirst({ where: { id: req.params.accountId, familyId, isArchived: false } }),
       prisma.family.findUniqueOrThrow({ where: { id: familyId }, select: { encryptionEnabled: true } }),
     ]);
-    if (!source || source.type !== AccountType.PERSON || !isVisible(source.ownerId, requesterId)) {
+    if (!source || source.type !== AccountType.PERSON || !canUseAccount(source, requesterId)) {
       throw new AppError(404, "Person not found");
     }
     assertCanModify(source.ownerId, requesterId, req.familyMembership!.role);
@@ -252,7 +262,7 @@ accountsRouter.post(
       ? await prisma.account.findFirst({ where: { id: data.targetId, familyId, isArchived: false, type: AccountType.PERSON } })
       : null;
     if (data.targetId) {
-      if (!target || !isVisible(target.ownerId, requesterId)) throw new AppError(404, "The person to move them to was not found");
+      if (!target || !canUseAccount(target, requesterId)) throw new AppError(404, "The person to move them to was not found");
       if (target.id === source.id) throw new AppError(400, "Choose someone else to move their entries to");
       // Family entries moved onto a personal tab would vanish for everyone else.
       if (source.ownerId === null && target.ownerId !== null) {

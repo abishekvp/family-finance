@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowRight, ArrowRightLeft, HandCoins, Home, Landmark, MinusCircle, Plus, PlusCircle, Repeat, Trash2 } from "lucide-react";
+import { ArrowRight, ArrowRightLeft, Ban, HandCoins, Home, Landmark, MinusCircle, Plus, PlusCircle, Repeat, Trash2, Undo2, Users } from "lucide-react";
 import { NOT_COUNTED_TAG, isFamilyTransfer, isNotCounted } from "../../lib/transactionTotals";
 import { api } from "../../api/client";
 import { ClientError, getErrorMessage } from "../../api/errors";
@@ -81,6 +81,11 @@ function TypeLabel({ icon, text }: { icon: ReactNode; text: string }) {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+/** A family member's first name, from the account they share. */
+function memberName(account: Account) {
+  return account.owner?.name.trim().split(/\s+/)[0] || "Family member";
+}
+
 function todayIso() {
   return localDateInput(new Date());
 }
@@ -127,7 +132,8 @@ export function TransactionFormModal({
 }) {
   const { user } = useAuth();
   const family = user!.families.find((f) => f.id === familyId) ?? user!.families[0];
-  const { refreshAccounts, refreshCategories } = useFamilyData();
+  // Accounts other members share with the family: money can be transferred to them.
+  const { refreshAccounts, refreshCategories, sharedAccounts } = useFamilyData();
   const toast = useToast();
   const navigate = useNavigate();
 
@@ -159,12 +165,17 @@ export function TransactionFormModal({
   // Lent money that won't come back: saved as the loan plus a write-off that closes it.
   const [notReturning, setNotReturning] = useState(false);
   const [notReturningCounted, setNotReturningCounted] = useState(false);
+  // How much of the loan being edited was written off (it drops to 0 once the write-off is cancelled).
+  const [writtenOff, setWrittenOff] = useState(initial?.writtenOffAmount ?? 0);
+  const [isCancellingWriteOff, setIsCancellingWriteOff] = useState(false);
   const [notes, setNotes] = useState(initial?.notes ?? "");
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
-  const canDelete = isEdit && family.role !== "VIEWER";
+  // A family member's entry on their own account (or money they sent you): shown, never edited here.
+  const readOnly = !!initial?.readOnly;
+  const canDelete = isEdit && family.role !== "VIEWER" && !readOnly;
 
   // Lend & borrow: `accountId` is always your own account; the person is the other end.
   const [kind, setKind] = useState<LendingKind>(parseKind(preset?.kind) ?? "lent");
@@ -221,14 +232,18 @@ export function TransactionFormModal({
   // from a person's "paid for something".
   const sourceAccounts = isLending ? ownAccounts : accounts.filter((a) => !isPerson(a) || a.id === accountId);
   const transferTargets = accounts.filter((a) => a.id !== accountId && (!isPerson(a) || a.id === transferToAccountId));
+  // Sending money to a family member: into an account they share with the family. It's a transfer —
+  // not spending for you, not income for them.
+  const memberTargets = sharedAccounts.filter((a) => a.id !== accountId && !isPerson(a));
+  const toMember = memberTargets.find((a) => a.id === transferToAccountId) ?? null;
   const selectedAccount = accounts.find((a) => a.id === accountId);
   const paidByPerson = selectedAccount && isPerson(selectedAccount) && !isLending && type !== "TRANSFER" ? selectedAccount : null;
   // A write-off stays one while it's the same kind of entry on the same person.
   const editingWriteOff = !!initial && isWriteOff(initial) && type === initial.type && accountId === initial.accountId;
   // Entries kept out of totals (a write-off, money moved off a member who left) can be counted again.
   const showCounted = !!initial && (type === "INCOME" || type === "EXPENSE") && (editingWriteOff || isNotCounted(initial));
-  // Lent money that won't come back is recorded with its write-off in one go (new loans only).
-  const canMarkNotReturning = isLending && kind === "lent" && !isEdit;
+  // The loan being edited, while it's still money lent: it can be written off, or its write-off taken back.
+  const editingLoan = isEdit && isLending && kind === "lent" && initial?.type === "TRANSFER" && !readOnly;
   // A salary, rent or subscription can be set to repeat as it's added (not from a person's account).
   const canRepeat = !isEdit && (type === "INCOME" || type === "EXPENSE") && !paidByPerson;
   const symbol = currencySymbol(selectedAccount?.currency ?? family.currency);
@@ -240,7 +255,8 @@ export function TransactionFormModal({
   // A return can say which loan it pays back. This entry's own earlier save is left out, so the loans
   // read as they stood before it.
   const repaying = isLending && person ? repaidDirection(kind) : null;
-  const personLoanId = repaying ? person!.id : null;
+  // A return lists the open loans; an edited loan needs to know how much of it came back already.
+  const personLoanId = repaying || (editingLoan && person) ? person!.id : null;
   const [personHistory, setPersonHistory] = useState<Transaction[]>([]);
   useEffect(() => {
     if (!personLoanId) {
@@ -262,6 +278,19 @@ export function TransactionFormModal({
     return trackLoans(history, person).filter((l) => l.transaction && l.direction === repaying && (!l.settled || l.transaction.id === repaysId));
   }, [repaying, person, personHistory, initial?.id, repaysId]);
   const linkedLoan = openLoans.find((l) => l.transaction!.id === repaysId) ?? null;
+
+  // What of the edited loan has come back already; writing it off covers only the rest.
+  const returnedOnLoan = useMemo(() => {
+    if (!editingLoan || !person || !initial) return 0;
+    const history = personHistory.filter((t) => t.accountId === person.id || t.transferToAccountId === person.id);
+    return trackLoans(history, person).find((l) => l.transaction?.id === initial.id)?.returned ?? 0;
+  }, [editingLoan, person, personHistory, initial]);
+  const amountValueForLoan = Number(amount);
+  const leftToWriteOff = Math.max(0, (amountValueForLoan > 0 ? amountValueForLoan : 0) - returnedOnLoan);
+  // Lent money that won't come back is recorded with its write-off: as it's added, or later on the loan
+  // itself (once per loan — a written-off one can have it cancelled instead).
+  const canMarkNotReturning = isLending && kind === "lent" && !readOnly && (!isEdit || (editingLoan && writtenOff < 0.005 && leftToWriteOff > 0.005));
+  const showWrittenOff = editingLoan && writtenOff > 0.005;
 
   // A refund (income) gives back an expense; a return (expense) gives back an income.
   const refundable = type === "INCOME" || type === "EXPENSE" ? type : null;
@@ -361,6 +390,7 @@ export function TransactionFormModal({
   const canRemember =
     filedByPayee &&
     family.role !== "VIEWER" &&
+    !readOnly &&
     rememberPattern.length >= 2 &&
     (!!categoryId || familyTransfer) &&
     !(existingRule && existingRule.categoryId === categoryId && existingRule.familyTransfer === familyTransfer);
@@ -390,7 +420,7 @@ export function TransactionFormModal({
       before -= describeEntry(initial, person.id).effect;
     }
     // Money that won't come back is written off straight away, so they don't owe it.
-    const effect = canMarkNotReturning && notReturning ? 0 : balanceEffect(kind, amountValue);
+    const effect = balanceEffect(kind, amountValue) - (canMarkNotReturning && notReturning ? leftToWriteOff : 0);
     return describeBalance(personName, before + effect, person?.currency ?? family.currency);
   })();
 
@@ -446,7 +476,7 @@ export function TransactionFormModal({
    * Money someone returned, or money you're returning, recorded as plain income or an expense: turn it
    * into a Lend/Borrow return so it settles the loan instead of counting as income or spending.
    */
-  const canBeLoanReturn = (type === "INCOME" || type === "EXPENSE") && !paidByPerson && !initial?.recurringId;
+  const canBeLoanReturn = (type === "INCOME" || type === "EXPENSE") && !paidByPerson && !initial?.recurringId && !readOnly;
   function recordAsLending(nextKind: LendingKind) {
     const typedName = payee.trim().toLowerCase();
     const match = typedName ? people.find((p) => p.name.trim().toLowerCase() === typedName) : undefined;
@@ -582,7 +612,8 @@ export function TransactionFormModal({
             writeOffPayload({
               person: { id: personAccountId, name: personName },
               loan: { direction: "lent", transaction: { id: saved.id } },
-              amount: amountValue,
+              // A loan written off later covers only what hasn't come back.
+              amount: leftToWriteOff,
               date: when!.toISOString(),
               counted: notReturningCounted,
               categoryId: spendingCategory,
@@ -674,9 +705,27 @@ export function TransactionFormModal({
     }
   }
 
+  /** Takes the loan's write-off back: the money counts as owed again. */
+  async function handleCancelWriteOff() {
+    if (!initial) return;
+    setError(null);
+    setIsCancellingWriteOff(true);
+    try {
+      const res = await api.post<Transaction>(`/families/${familyId}/transactions/${initial.id}/cancel-write-off`);
+      setWrittenOff(0);
+      toast(personName ? `Write-off cancelled: ${personName} owes it again` : "Write-off cancelled");
+      onSaved(res.data);
+      await refreshAccounts().catch(() => undefined);
+    } catch (err) {
+      setError(getErrorMessage(err, "Unable to cancel the write-off"));
+    } finally {
+      setIsCancellingWriteOff(false);
+    }
+  }
+
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    if (canSubmit && !isSubmitting) handleSave(false);
+    if (canSubmit && !readOnly && !isSubmitting) handleSave(false);
   }
 
   const typeTone =
@@ -694,26 +743,41 @@ export function TransactionFormModal({
 
   return (
     <Modal
-      title={isEdit ? "Edit transaction" : "Add transaction"}
+      title={readOnly ? "Transaction" : isEdit ? "Edit transaction" : "Add transaction"}
       onClose={onClose}
       size="xl"
       footer={
         <div className="flex flex-wrap justify-end gap-2">
           <Button type="button" variant="ghost" onClick={onClose}>
-            Cancel
+            {readOnly ? "Close" : "Cancel"}
           </Button>
           {!isEdit && (
             <Button type="button" variant="secondary" disabled={isSubmitting || !canSubmit} onClick={() => handleSave(true)}>
               Save &amp; add another
             </Button>
           )}
-          <Button type="submit" form="transaction-form" loading={isSubmitting} disabled={!canSubmit}>
-            {isEdit ? "Save changes" : "Save"}
-          </Button>
+          {!readOnly && (
+            <Button type="submit" form="transaction-form" loading={isSubmitting} disabled={!canSubmit}>
+              {isEdit ? "Save changes" : "Save"}
+            </Button>
+          )}
         </div>
       }
     >
       <form id="transaction-form" onSubmit={handleSubmit} className="space-y-5">
+        {readOnly && initial && (
+          <div className="flex items-start gap-2.5 rounded-2xl bg-surface-sunken/70 p-3 text-xs text-ink-muted">
+            <Users size={15} className="mt-0.5 shrink-0" />
+            <span>
+              {initial.type === "TRANSFER"
+                ? `${initial.account.name} → ${initial.transferToAccount?.name ?? "another account"}. `
+                : `On ${initial.account.name}. `}
+              Recorded by a family member on their account, so only they can change it.
+            </span>
+          </div>
+        )}
+        {/* Someone else's entry: everything shows, nothing can be changed. */}
+        <fieldset disabled={readOnly} className="m-0 min-w-0 space-y-5 border-0 p-0">
         <Segmented
           value={type}
           onChange={handleSelectType}
@@ -835,6 +899,21 @@ export function TransactionFormModal({
           </div>
         )}
 
+        {showWrittenOff && (
+          <div className="space-y-2 rounded-2xl bg-surface-sunken/70 p-3">
+            <p className="flex items-center gap-2 text-sm font-semibold text-ink">
+              <Ban size={15} className="shrink-0 text-ink-subtle" />
+              {`${formatCurrency(writtenOff, selectedAccount?.currency ?? family.currency)} written off`}
+            </p>
+            <p className="text-xs text-ink-subtle">
+              {`Won't be returned, so it's left out of what ${personName || "they"} owe${personName ? "s" : ""} you. Recorded as a separate write-off entry; cancel it to count it as owed again.`}
+            </p>
+            <Button type="button" variant="secondary" size="sm" icon={<Undo2 size={14} />} loading={isCancellingWriteOff} disabled={isSubmitting} onClick={handleCancelWriteOff}>
+              Cancel write-off
+            </Button>
+          </div>
+        )}
+
         {canMarkNotReturning && (
           <div className="space-y-3 rounded-2xl bg-surface-sunken/70 p-3">
             <Toggle
@@ -843,7 +922,9 @@ export function TransactionFormModal({
               label="Won't be returned"
               description={
                 notReturning
-                  ? `Given for good: ${personName || "they"} won't owe it. It still leaves your account.`
+                  ? isEdit
+                    ? `Writes off ${formatCurrency(leftToWriteOff, selectedAccount?.currency ?? family.currency)}${returnedOnLoan > 0.005 ? " still owed" : ""}: ${personName || "they"} won't owe it. Saved as a write-off entry linked to this loan; you can cancel it later.`
+                    : `Given for good: ${personName || "they"} won't owe it. It still leaves your account.`
                   : "For money you don't expect back. You can also write off a loan later from their page."
               }
             />
@@ -950,7 +1031,7 @@ export function TransactionFormModal({
         {type === "TRANSFER" && (
           <div>
             <Label>Transfer to</Label>
-            {transferTargets.length === 0 ? (
+            {transferTargets.length === 0 && memberTargets.length === 0 ? (
               <p className="text-sm text-ink-subtle">Add another account to transfer to.</p>
             ) : (
               <div className="flex flex-wrap gap-2">
@@ -961,6 +1042,28 @@ export function TransactionFormModal({
                 ))}
               </div>
             )}
+            {memberTargets.length > 0 && (
+              <>
+                <p className="mb-2 mt-3 flex items-center gap-1.5 text-xs font-semibold text-ink-muted">
+                  <Users size={13} />
+                  To a family member
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {memberTargets.map((a) => (
+                    <Chip key={a.id} selected={transferToAccountId === a.id} onClick={() => setTransferToAccountId(a.id)}>
+                      {`${memberName(a)} · ${a.name}`}
+                    </Chip>
+                  ))}
+                </div>
+              </>
+            )}
+            <p className="mt-1.5 text-xs text-ink-subtle">
+              {toMember
+                ? `Money to ${memberName(toMember)}: lands in their ${toMember.name}. Not spending for you, nor income for them.`
+                : memberTargets.length === 0
+                  ? "Family members show up here once they share an account with the family."
+                  : "Between your own accounts, or to a family member's shared account."}
+            </p>
           </div>
         )}
         </div>
@@ -1133,6 +1236,7 @@ export function TransactionFormModal({
           ))}
         </div>
         </div>
+        </fieldset>
       </form>
     </Modal>
   );

@@ -55,7 +55,10 @@ export function TransactionRow({
       {t.isRefunded && !t.refundsId && <Tag>{(t.refundedAmount ?? t.amount) >= t.amount - 0.005 ? "Refunded" : "Part refunded"}</Tag>}
       {familyTransfer && <Tag>{t.type === "INCOME" ? "From family" : "To family"}</Tag>}
       {isLending && <Tag>Lend &amp; borrow</Tag>}
+      {/* A loan written off as not coming back: the write-off is its own entry, marked here too. */}
+      {isTransfer && (t.writtenOffAmount ?? 0) > 0.005 && <Tag>{t.writtenOffAmount! >= t.amount - 0.005 ? "Written off" : "Part written off"}</Tag>}
       {writtenOff ? <Tag>Written off</Tag> : !familyTransfer && uncounted ? <Tag>Not counted</Tag> : null}
+      {t.sharedView && <Tag>Shared</Tag>}
       {t.recurringId && <Tag>Repeating</Tag>}
       {t.refundsId && <Tag>{t.type === "INCOME" ? "Refund" : "Returned"}</Tag>}
     </>

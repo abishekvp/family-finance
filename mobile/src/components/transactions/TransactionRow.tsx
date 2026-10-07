@@ -99,6 +99,8 @@ export function TransactionRow({
           {isLending ? " · Lend & borrow" : ""}
           {fromFamily ? (t.type === "INCOME" ? " · From family" : " · To family") : ""}
           {writtenOff ? " · Written off" : !fromFamily && uncounted ? " · Not counted" : ""}
+          {isTransfer && (t.writtenOffAmount ?? 0) > 0.005 ? (t.writtenOffAmount! >= t.amount - 0.005 ? " · Written off" : " · Part written off") : ""}
+          {t.sharedView ? " · Shared by family" : ""}
           {t.recurringId ? " · Repeating" : ""}
           {t.refundsId ? (t.type === "INCOME" ? " · Refund" : " · Returned") : ""}
           {!t.refundsId && t.isRefunded ? (isFullyRefunded(t) ? " · Refunded" : " · Part refunded") : ""}

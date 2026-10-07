@@ -51,7 +51,7 @@ export function Stats() {
   const [period, setPeriod] = useState<Period>("Monthly");
   const [anchor, setAnchor] = useState(() => new Date());
 
-  const { accounts, isLoadingStatic, staticError } = useFamilyData();
+  const { accounts, sharedAccounts, isLoadingStatic, staticError } = useFamilyData();
   const type = metric === "Income" ? "INCOME" : "EXPENSE";
   const metricColor = metric === "Income" ? palette.income : palette.expense;
 
@@ -69,9 +69,10 @@ export function Stats() {
   const all = useMemo(() => [...lastYear.data, ...thisYear.data], [thisYear.data, lastYear.data]);
 
   const accountIds = useMemo(() => {
-    const scoped = scope === "family" ? accounts : accounts.filter((a) => a.owner?.id === user!.id);
+    // The family's view takes in the accounts members share with the family too.
+    const scoped = scope === "family" ? [...accounts, ...sharedAccounts] : accounts.filter((a) => a.owner?.id === user!.id);
     return new Set(scoped.map((a) => a.id));
-  }, [accounts, scope, user]);
+  }, [accounts, sharedAccounts, scope, user]);
 
   const current = useMemo(() => inRange(all, range.from, range.to), [all, range.from, range.to]);
   const previous = useMemo(() => inRange(all, previousRange.from, previousRange.to), [all, previousRange.from, previousRange.to]);

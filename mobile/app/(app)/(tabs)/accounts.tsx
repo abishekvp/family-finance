@@ -11,6 +11,7 @@ import {
   PiggyBank,
   Plus,
   Trash2,
+  Users,
   Wallet,
   type LucideIcon,
 } from "lucide-react-native";
@@ -50,7 +51,10 @@ export default function AccountsScreen() {
   const { colors } = useTheme();
   const family = user!.families[0];
   const router = useRouter();
-  const [accounts, setAccounts] = useState<Account[]>([]);
+  // Every account you see: yours and the family's, and those other members share with the family.
+  const [allAccounts, setAccounts] = useState<Account[]>([]);
+  const accounts = useMemo(() => allAccounts.filter((a) => !a.owner || a.owner.id === user!.id), [allAccounts, user]);
+  const sharedAccounts = useMemo(() => allAccounts.filter((a) => a.owner && a.owner.id !== user!.id && !isPerson(a)), [allAccounts, user]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showAddForm, setShowAddForm] = useState(false);
@@ -60,7 +64,15 @@ export default function AccountsScreen() {
 
   const load = useCallback(async () => {
     try {
-      const res = await fetchWithCache<Account[]>(`/families/${family.id}/accounts`, undefined, (cached) => { setAccounts(cached.data); setIsLoading(false); }, 5 * 60 * 1000);
+      const res = await fetchWithCache<Account[]>(
+        `/families/${family.id}/accounts`,
+        { params: { include: "shared" } },
+        (cached) => {
+          setAccounts(cached.data);
+          setIsLoading(false);
+        },
+        5 * 60 * 1000
+      );
       setAccounts(res.data);
       setError(null);
     } catch (err) {
@@ -190,7 +202,9 @@ export default function AccountsScreen() {
                                 <Text style={{ fontWeight: "700", color: colors.ink }}>{account.name}</Text>
                                 <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 3 }}>
                                   <Text style={{ color: colors.inkSubtle, fontSize: 12 }}>{humanizeEnum(account.type)}</Text>
-                                  <Badge tone={account.owner ? "neutral" : "brand"}>{account.owner ? "Personal" : "Family"}</Badge>
+                                  <Badge tone={account.owner ? "neutral" : "brand"}>
+                                    {!account.owner ? "Family" : account.sharedWithFamily ? "Shared" : "Personal"}
+                                  </Badge>
                                 </View>
                               </View>
                             </Pressable>
@@ -222,6 +236,42 @@ export default function AccountsScreen() {
             </View>
           );
         })
+      )}
+
+      {!isLoading && sharedAccounts.length > 0 && (
+        <View style={{ gap: 8 }}>
+          <View style={{ paddingHorizontal: 2 }}>
+            <Text style={{ fontSize: 12, fontWeight: "800", color: colors.inkSubtle, textTransform: "uppercase" }}>Shared by family members</Text>
+            <Text style={{ fontSize: 12, color: colors.inkSubtle, marginTop: 3 }}>
+              Pick them in the Transactions filter to see the family's spending. Only they record on them; you can transfer money to them.
+            </Text>
+          </View>
+          <Card style={{ padding: 0 }}>
+            {sharedAccounts.map((account, i) => {
+              const Icon = TYPE_ICONS[account.type];
+              return (
+                <View
+                  key={account.id}
+                  style={{ flexDirection: "row", alignItems: "center", gap: 12, padding: 16, borderTopWidth: i === 0 ? 0 : 1, borderTopColor: colors.line }}
+                >
+                  <View style={{ width: 40, height: 40, borderRadius: 12, backgroundColor: colors.surfaceSunken, alignItems: "center", justifyContent: "center" }}>
+                    <Icon size={17} color={colors.inkMuted} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontWeight: "700", color: colors.ink }}>{account.name}</Text>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 5, marginTop: 3 }}>
+                      <Users size={12} color={colors.inkSubtle} />
+                      <Text style={{ color: colors.inkSubtle, fontSize: 12 }} numberOfLines={1}>
+                        {`${account.owner?.name ?? "A member"} · ${humanizeEnum(account.type)}`}
+                      </Text>
+                    </View>
+                  </View>
+                  <Money amount={account.balance} currency={account.currency} tone={account.balance < 0 ? "expense" : undefined} style={{ fontWeight: "800" }} />
+                </View>
+              );
+            })}
+          </Card>
+        </View>
       )}
 
       {!isLoading && people.length > 0 && (
@@ -262,6 +312,9 @@ function AccountForm({
   const [name, setName] = useState(initial?.name ?? "");
   const [type, setType] = useState<AccountType>(initial?.type ?? "BANK");
   const [isCommon, setIsCommon] = useState(initial ? initial.owner === null : false);
+  const [sharedWithFamily, setSharedWithFamily] = useState(initial?.sharedWithFamily ?? false);
+  // Only a personal account can be shared for the family to see; a family account already is.
+  const canShare = !isCommon;
   const [openingBalance, setOpeningBalance] = useState(String(initial?.openingBalance ?? 0));
   const [creditLimit, setCreditLimit] = useState(initial?.creditLimit != null ? String(initial.creditLimit) : "");
   const [error, setError] = useState<string | null>(null);
@@ -276,6 +329,7 @@ function AccountForm({
           name,
           type,
           ...(isCommon !== (initial.owner === null) ? { isCommon } : {}),
+          sharedWithFamily: canShare && sharedWithFamily,
           openingBalance: Number(openingBalance) || 0,
           creditLimit: creditLimit.trim() ? Number(creditLimit) : undefined,
         });
@@ -284,6 +338,7 @@ function AccountForm({
           name,
           type,
           isCommon,
+          sharedWithFamily: canShare && sharedWithFamily,
           openingBalance: Number(openingBalance) || 0,
           creditLimit: creditLimit.trim() ? Number(creditLimit) : undefined,
         });
@@ -325,11 +380,25 @@ function AccountForm({
           <Text style={{ fontSize: 12, color: colors.inkSubtle, marginTop: 2 }}>
             {isCommon
               ? "Everyone in the family can see it and add to it. Only an admin can change it."
-              : "Personal — only you can see it."}
+              : "Personal — only you add to it."}
           </Text>
         </View>
         <Toggle value={isCommon} onChange={setIsCommon} />
       </View>
+
+      {canShare && (
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontSize: 13, fontWeight: "600", color: colors.ink }}>Share with family</Text>
+            <Text style={{ fontSize: 12, color: colors.inkSubtle, marginTop: 2 }}>
+              {sharedWithFamily
+                ? "Family members can see it and its transactions, and send money to it. Only you add to it or change it."
+                : "Only you can see it."}
+            </Text>
+          </View>
+          <Toggle value={sharedWithFamily} onChange={setSharedWithFamily} />
+        </View>
+      )}
 
       <ErrorText>{error}</ErrorText>
       <View style={{ flexDirection: "row", gap: 8 }}>

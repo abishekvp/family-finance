@@ -42,7 +42,7 @@ export function Transactions() {
   // Accounts, categories and this year's transactions are cached once (in FamilyDataContext, up in
   // Layout) and shared with Dashboard and Insights too — switching sub-view here, or tabbing away
   // and back, never re-fetches; only crossing into a year not seen yet does.
-  const { accounts, categories, isLoadingStatic, staticError, invalidateYear } = useFamilyData();
+  const { accounts, sharedAccounts, categories, isLoadingStatic, staticError, invalidateYear } = useFamilyData();
   const year = anchor.getFullYear();
   const { data: yearTransactions, isLoading: isLoadingYear } = useYearTransactions(year);
 
@@ -79,10 +79,11 @@ export function Transactions() {
   );
 
   // The account/personal scope toggle in the header (see Layout) narrows which accounts'
-  // activity this hub considers, same as Dashboard's net-worth card does.
+  // activity this hub considers, same as Dashboard's net-worth card does. The family's view also
+  // takes in the accounts members share with the family.
   const scopedAccounts = useMemo(
-    () => (scope === "family" ? accounts : accounts.filter((a) => a.owner?.id === user!.id)),
-    [accounts, scope, user]
+    () => (scope === "family" ? [...accounts, ...sharedAccounts] : accounts.filter((a) => a.owner?.id === user!.id)),
+    [accounts, sharedAccounts, scope, user]
   );
 
   // Whose activity is listed (people included: what they paid for counts), and whose balances the

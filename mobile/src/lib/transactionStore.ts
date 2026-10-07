@@ -235,7 +235,10 @@ async function runSync(cache: FamilyCache) {
   let changed = !cache.ready;
 
   for (;;) {
-    const res = await api.get<SyncResponse>(url, { params: { ...(since ? { since } : {}), ...(continuing ? { continue: "1" } : {}) } });
+    // `shared`: also the entries on accounts other members share with the family, each marked sharedView.
+    const res = await api.get<SyncResponse>(url, {
+      params: { shared: "true", ...(since ? { since } : {}), ...(continuing ? { continue: "1" } : {}) },
+    });
     const page = res.data;
     if (scope === null) {
       scope = page.scope;
@@ -332,6 +335,11 @@ export interface TransactionFilter {
   type?: TransactionType;
   /** For sums that never show payee/notes: skips decrypting them. */
   sealed?: boolean;
+  /**
+   * Also entries seen only because a family member shares their account with the family (sharedView).
+   * Off by default, so your own totals, budgets and suggestions never take in someone else's money.
+   */
+  includeShared?: boolean;
 }
 
 /** The matching transactions, newest first, with payee/notes decrypted. */
@@ -344,6 +352,7 @@ export function selectTransactions(userId: string, familyId: string, filter: Tra
     if (to && t.date >= to) continue;
     if (from && t.date < from) break;
     if (filter.type && t.type !== filter.type) continue;
+    if (t.sharedView && !filter.includeShared && t.accountId !== filter.accountId && t.transferToAccountId !== filter.accountId) continue;
     if (filter.accountId && t.accountId !== filter.accountId && t.transferToAccountId !== filter.accountId) continue;
     out.push(filter.sealed ? t : readable(cache, t));
   }
@@ -364,6 +373,7 @@ export function useTransactions(userId: string, familyId: string, filter: Transa
   const accountId = filter?.accountId;
   const type = filter?.type;
   const sealed = filter?.sealed;
+  const includeShared = filter?.includeShared;
   const transactions = useMemo(
     () =>
       enabled
@@ -373,10 +383,11 @@ export function useTransactions(userId: string, familyId: string, filter: Transa
             accountId,
             type,
             sealed,
+            includeShared,
           })
         : [],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [snapshot, userId, familyId, enabled, fromMs, toMs, accountId, type, sealed]
+    [snapshot, userId, familyId, enabled, fromMs, toMs, accountId, type, sealed, includeShared]
   );
 
   const sync = useCallback((options?: { force?: boolean }) => syncTransactions(userId, familyId, options), [userId, familyId]);

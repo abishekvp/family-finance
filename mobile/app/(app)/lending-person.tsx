@@ -109,6 +109,22 @@ export default function LendingPerson() {
     router.push(href("/transaction-form", { id: t.id, transaction: JSON.stringify(t) }));
   }
 
+  /**
+   * Takes a loan's write-offs back (to the bin, where they can still be restored): the money counts as
+   * owed again. Write-offs matched to it automatically go too, so the loan is whole again.
+   */
+  async function cancelWriteOff(loan: Loan) {
+    setError(null);
+    try {
+      const writeOffs = Array.from(new Set(loan.repayments.filter((r) => r.writtenOff).map((r) => r.transaction.id)));
+      for (const writeOffId of writeOffs) await api.delete(`/families/${family.id}/transactions/${writeOffId}`);
+      await Promise.all([afterChange(), load()]);
+    } catch (err) {
+      setError(getErrorMessage(err, "Unable to cancel the write-off"));
+      await afterChange();
+    }
+  }
+
   /** After money was written off, merged or deleted: everything showing balances catches up. */
   async function afterChange() {
     await syncTransactions(user!.id, family.id, { force: true }).catch(() => undefined);
@@ -205,6 +221,7 @@ export default function LendingPerson() {
                     : undefined
                 }
                 onWriteOff={canRecord ? () => setWritingOff(loan) : undefined}
+                onCancelWriteOff={canRecord && loan.writtenOff > 0 ? () => cancelWriteOff(loan) : undefined}
               />
             ))}
           </Card>
@@ -222,6 +239,7 @@ export default function LendingPerson() {
                 first={i === 0}
                 onPress={loan.transaction ? () => openTransaction(loan.transaction!) : undefined}
                 onOpenRepayment={openTransaction}
+                onCancelWriteOff={canRecord && loan.writtenOff > 0 ? () => cancelWriteOff(loan) : undefined}
               />
             ))}
           </Card>
@@ -337,6 +355,7 @@ function LoanRow({
   onOpenRepayment,
   onRecordReturn,
   onWriteOff,
+  onCancelWriteOff,
 }: {
   loan: Loan;
   currency: string;
@@ -345,8 +364,11 @@ function LoanRow({
   onOpenRepayment: (t: Transaction) => void;
   onRecordReturn?: () => void;
   onWriteOff?: () => void;
+  /** For a loan (partly) written off: takes that back, so it's owed again. */
+  onCancelWriteOff?: () => Promise<void>;
 }) {
   const { colors } = useTheme();
+  const [cancelling, setCancelling] = useState(false);
   const lent = loan.direction === "lent";
   const title = loan.transaction
     ? `${lent ? "You lent" : "You borrowed"} ${formatCurrency(loan.amount, currency)}`
@@ -408,16 +430,31 @@ function LoanRow({
           ))}
         </View>
       )}
-      {(onRecordReturn || onWriteOff) && !loan.settled && (
+      {(((onRecordReturn || onWriteOff) && !loan.settled) || onCancelWriteOff) && (
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 18, paddingLeft: 28 }}>
-          {onRecordReturn && (
+          {onRecordReturn && !loan.settled && (
             <Pressable onPress={onRecordReturn} hitSlop={6}>
               <Text style={{ fontSize: 12.5, fontWeight: "700", color: colors.brand600 }}>{lent ? "Record money got back" : "Record paying back"}</Text>
             </Pressable>
           )}
-          {onWriteOff && (
+          {onWriteOff && !loan.settled && (
             <Pressable onPress={onWriteOff} hitSlop={6}>
               <Text style={{ fontSize: 12.5, fontWeight: "700", color: colors.inkMuted }}>{lent ? "Won't be returned" : "No need to repay"}</Text>
+            </Pressable>
+          )}
+          {onCancelWriteOff && (
+            <Pressable
+              disabled={cancelling}
+              hitSlop={6}
+              onPress={async () => {
+                setCancelling(true);
+                await onCancelWriteOff();
+                setCancelling(false);
+              }}
+            >
+              <Text style={{ fontSize: 12.5, fontWeight: "700", color: colors.inkMuted, opacity: cancelling ? 0.5 : 1 }}>
+                {cancelling ? "Cancelling…" : "Cancel write-off"}
+              </Text>
             </Pressable>
           )}
         </View>

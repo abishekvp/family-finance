@@ -38,6 +38,8 @@ export interface Account {
   sortOrder: number;
   isArchived: boolean;
   includeInNetWorth: boolean;
+  /** A personal account its owner lets the family see (read-only) and send money to. */
+  sharedWithFamily?: boolean;
   createdAt: string;
   updatedAt: string;
   owner: { id: string; name: string } | null;
@@ -86,6 +88,12 @@ export interface Transaction {
   isRefunded?: boolean;
   /** How much of this entry has come back through refunds (may be partial). */
   refundedAmount?: number;
+  /** For money lent or borrowed: how much of it was written off as not coming back. */
+  writtenOffAmount?: number;
+  /** Seen only because a family member shares their account with the family — theirs, not yours. */
+  sharedView?: boolean;
+  /** On an account you don't record on (a family member's): shown, but not yours to edit. */
+  readOnly?: boolean;
   approvalStatus?: ApprovalStatus;
   reviewedById?: string | null;
   reviewedAt?: string | null;

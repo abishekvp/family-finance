@@ -82,6 +82,24 @@ export function LendingPerson() {
     setForm({ transaction: t });
   }
 
+  /**
+   * Takes a loan's write-offs back (to the bin, where they can still be restored): the money counts as
+   * owed again. Write-offs matched to it automatically go too, so the loan is whole again.
+   */
+  async function cancelWriteOff(loan: Loan) {
+    setError(null);
+    try {
+      const writeOffs = Array.from(new Set(loan.repayments.filter((r) => r.writtenOff).map((r) => r.transaction)));
+      for (const t of writeOffs) await api.delete(`/families/${family.id}/transactions/${t.id}`);
+      toast(`Write-off cancelled: ${loan.direction === "lent" ? `${person!.name} owes it again` : `you owe ${person!.name} again`}`);
+      for (const t of writeOffs) invalidateYear(new Date(t.date).getFullYear());
+      await Promise.all([loadHistory(), refreshAccounts().catch(() => undefined)]);
+    } catch (err) {
+      setError(getErrorMessage(err, "Unable to cancel the write-off"));
+      await loadHistory();
+    }
+  }
+
   /** After money was written off, merged or deleted: everything showing balances catches up. */
   async function afterChange() {
     invalidateAll();
@@ -162,6 +180,7 @@ export function LendingPerson() {
                         canRecord ? () => record(loan.direction === "lent" ? "got-back" : "paid-back", loan.remaining, loan.transaction?.id) : undefined
                       }
                       onWriteOff={canRecord ? () => setWritingOff(loan) : undefined}
+                      onCancelWriteOff={canRecord && loan.writtenOff > 0 ? () => cancelWriteOff(loan) : undefined}
                     />
                   ))}
                 </ul>
@@ -180,6 +199,7 @@ export function LendingPerson() {
                       currency={person.currency}
                       onOpen={loan.transaction ? () => openTransaction(loan.transaction!) : undefined}
                       onOpenRepayment={openTransaction}
+                      onCancelWriteOff={canRecord && loan.writtenOff > 0 ? () => cancelWriteOff(loan) : undefined}
                     />
                   ))}
                 </ul>
@@ -327,6 +347,7 @@ function LoanRow({
   onOpenRepayment,
   onRecordReturn,
   onWriteOff,
+  onCancelWriteOff,
 }: {
   loan: Loan;
   currency: string;
@@ -334,7 +355,10 @@ function LoanRow({
   onOpenRepayment: (t: Transaction) => void;
   onRecordReturn?: () => void;
   onWriteOff?: () => void;
+  /** For a loan (partly) written off: takes that back, so it's owed again. */
+  onCancelWriteOff?: () => Promise<void>;
 }) {
+  const [cancelling, setCancelling] = useState(false);
   const lent = loan.direction === "lent";
   const title = loan.transaction
     ? `${lent ? "You lent" : "You borrowed"} ${formatCurrency(loan.amount, currency)}`
@@ -383,16 +407,30 @@ function LoanRow({
           ))}
         </ul>
       )}
-      {(onRecordReturn || onWriteOff) && !loan.settled && (
+      {(((onRecordReturn || onWriteOff) && !loan.settled) || onCancelWriteOff) && (
         <div className="flex flex-wrap gap-x-5 gap-y-1 pl-7">
-          {onRecordReturn && (
+          {onRecordReturn && !loan.settled && (
             <button type="button" onClick={onRecordReturn} className="text-xs font-bold text-brand-600 hover:underline">
               {lent ? "Record money got back" : "Record paying back"}
             </button>
           )}
-          {onWriteOff && (
+          {onWriteOff && !loan.settled && (
             <button type="button" onClick={onWriteOff} className="text-xs font-bold text-ink-muted hover:text-ink hover:underline">
               {lent ? "Won't be returned" : "No need to repay"}
+            </button>
+          )}
+          {onCancelWriteOff && (
+            <button
+              type="button"
+              disabled={cancelling}
+              onClick={async () => {
+                setCancelling(true);
+                await onCancelWriteOff();
+                setCancelling(false);
+              }}
+              className="text-xs font-bold text-ink-muted hover:text-ink hover:underline disabled:opacity-50"
+            >
+              {cancelling ? "Cancelling…" : "Cancel write-off"}
             </button>
           )}
         </div>

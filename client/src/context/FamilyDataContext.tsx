@@ -3,9 +3,13 @@ import { api } from "../api/client";
 import { getErrorMessage } from "../api/errors";
 import type { Account, Category, Transaction } from "../api/types";
 import { dropCache, readCache, writeCache } from "../lib/sessionCache";
+import { useAuth } from "./AuthContext";
 
 interface FamilyDataValue {
+  /** Accounts you record on: the family's and your own. */
   accounts: Account[];
+  /** Accounts other members share with the family: read-only, in the family's view and as transfer targets. */
+  sharedAccounts: Account[];
   categories: Category[];
   isLoadingStatic: boolean;
   staticError: string | null;
@@ -32,7 +36,8 @@ const REVALIDATE_INTERVAL_MS = 2 * 60_000;
 /**
  * One calendar year of transactions, by local time: a year's views filter by local dates, and with
  * UTC bounds an entry made just after midnight on 1 January east of UTC (before 05:30 in India) was
- * cached with the previous year and missing from January.
+ * cached with the previous year and missing from January. Entries on accounts other members share
+ * with the family come too (marked `sharedView`); pages pick them by account, like any other.
  */
 async function fetchYear(familyId: string, year: number) {
   const res = await api.get<Transaction[]>(`/families/${familyId}/transactions`, {
@@ -40,6 +45,7 @@ async function fetchYear(familyId: string, year: number) {
       from: new Date(year, 0, 1).toISOString(),
       to: new Date(year + 1, 0, 1).toISOString(),
       limit: 5000,
+      shared: true,
     },
   });
   return res.data;
@@ -68,7 +74,12 @@ export function FamilyDataProvider({
   const categoriesKey = `${familyId}:categories`;
   const yearKey = useCallback((year: number) => `${familyId}:tx:${year}`, [familyId]);
 
-  const [accounts, setAccounts] = useState<Account[]>(() => readCache<Account[]>(accountsKey)?.data ?? []);
+  const { user } = useAuth();
+  const userId = user?.id;
+  // Every account you see; split below into the ones you use and the ones others share.
+  const [allAccounts, setAccounts] = useState<Account[]>(() => readCache<Account[]>(accountsKey)?.data ?? []);
+  const accounts = useMemo(() => allAccounts.filter((a) => !a.owner || a.owner.id === userId), [allAccounts, userId]);
+  const sharedAccounts = useMemo(() => allAccounts.filter((a) => a.owner && a.owner.id !== userId), [allAccounts, userId]);
   const [categories, setCategories] = useState<Category[]>(() => readCache<Category[]>(categoriesKey)?.data ?? []);
   const [isLoadingStatic, setIsLoadingStatic] = useState(() => !readCache(accountsKey) || !readCache(categoriesKey));
   const [staticError, setStaticError] = useState<string | null>(null);
@@ -86,7 +97,7 @@ export function FamilyDataProvider({
   yearsRef.current = years;
 
   const refreshAccounts = useCallback(async () => {
-    const res = await api.get<Account[]>(`/families/${familyId}/accounts`);
+    const res = await api.get<Account[]>(`/families/${familyId}/accounts`, { params: { include: "shared" } });
     setAccounts(res.data);
     writeCache(`${familyId}:accounts`, res.data);
   }, [familyId]);
@@ -228,6 +239,7 @@ export function FamilyDataProvider({
 
   const value: FamilyDataValue = {
     accounts,
+    sharedAccounts,
     categories,
     isLoadingStatic,
     staticError,
@@ -272,7 +284,8 @@ export function useRecentHistory(days = 365) {
   const data = useMemo(() => {
     const rows = since.getFullYear() === thisYear ? current.data : [...current.data, ...previous.data];
     const from = since.toISOString();
-    return rows.filter((t) => t.date >= from).sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+    // Your own entries only: what other members record on accounts they share isn't yours to learn from.
+    return rows.filter((t) => t.date >= from && !t.sharedView).sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
   }, [current.data, previous.data, since, thisYear]);
   return { data, isLoading: current.isLoading || previous.isLoading };
 }

@@ -297,6 +297,10 @@ model Account {
   sortOrder         Int         @default(0)
   isArchived        Boolean     @default(false)
   includeInNetWorth Boolean     @default(true)
+  // A personal account its owner lets the rest of the family see (read-only), so its transactions
+  // count in the family's view — and other members can transfer money into it. Only the owner records
+  // on it. Always false for family accounts (ownerId null), which everyone sees anyway, and for people.
+  sharedWithFamily  Boolean     @default(false)
   createdAt         DateTime    @default(now())
   updatedAt         DateTime    @updatedAt
 

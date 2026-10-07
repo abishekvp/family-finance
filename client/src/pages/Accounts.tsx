@@ -10,6 +10,7 @@ import {
   PiggyBank,
   Plus,
   Trash2,
+  Users,
   Wallet,
   type LucideIcon,
 } from "lucide-react";
@@ -67,7 +68,7 @@ export function Accounts() {
   const { user } = useAuth();
   // Shared with Dashboard and Transactions (see FamilyDataContext) so switching to this tab doesn't
   // re-fetch accounts that were just loaded there.
-  const { accounts, isLoadingStatic: isLoading, staticError: error, refreshAccounts } = useFamilyData();
+  const { accounts, sharedAccounts, isLoadingStatic: isLoading, staticError: error, refreshAccounts } = useFamilyData();
   const [editingAccount, setEditingAccount] = useState<Account | "new" | null>(null);
   const [archivingId, setArchivingId] = useState<string | null>(null);
   const [archiveError, setArchiveError] = useState<string | null>(null);
@@ -175,7 +176,9 @@ export function Accounts() {
                               <p className="truncate text-sm font-semibold text-ink">{account.name}</p>
                               <p className="flex items-center gap-1.5 truncate text-xs text-ink-subtle">
                                 {humanizeEnum(account.type)}
-                                <Badge tone={account.owner ? "neutral" : "brand"}>{account.owner ? "Personal" : "Family"}</Badge>
+                                <Badge tone={account.owner ? "neutral" : "brand"}>
+                                  {!account.owner ? "Family" : account.sharedWithFamily ? "Shared with family" : "Personal"}
+                                </Badge>
                               </p>
                             </div>
                           </button>
@@ -228,6 +231,37 @@ export function Accounts() {
         </div>
       )}
 
+      {!isLoading && scope === "family" && sharedAccounts.length > 0 && (
+        <Card>
+          <CardHeader
+            title="Shared by family members"
+            subtitle="Their accounts, to see how the family's money moves. Only they record on them; you can transfer money to them."
+            className="mb-2"
+          />
+          <ul className="divide-y divide-line">
+            {sharedAccounts.map((account) => {
+              const Icon = TYPE_ICONS[account.type];
+              const balance = account.balance ?? 0;
+              return (
+                <li key={account.id} className="flex items-center gap-3 py-3">
+                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-surface-sunken text-ink-muted">
+                    <Icon size={17} />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold text-ink">{account.name}</p>
+                    <p className="flex items-center gap-1.5 truncate text-xs text-ink-subtle">
+                      <Users size={12} />
+                      {`${account.owner?.name ?? "A member"} · ${humanizeEnum(account.type)}`}
+                    </p>
+                  </div>
+                  <Money amount={balance} currency={account.currency} tone={balance < 0 ? "expense" : undefined} className="text-sm font-bold" />
+                </li>
+              );
+            })}
+          </ul>
+        </Card>
+      )}
+
       {!isLoading && people.length > 0 && (
         <Link to="/lending" className="block">
           <Card interactive className="flex items-center gap-3">
@@ -275,6 +309,9 @@ function AccountFormModal({
   const [name, setName] = useState(account?.name ?? "");
   const [type, setType] = useState<AccountType>(account?.type ?? "BANK");
   const [isCommon, setIsCommon] = useState(account ? account.ownerId === null : false);
+  const [sharedWithFamily, setSharedWithFamily] = useState(account?.sharedWithFamily ?? false);
+  // Only a personal account can be shared for the family to see; a family account already is.
+  const canShare = !isCommon && type !== "PERSON";
   const [currency, setCurrency] = useState(account?.currency ?? familyCurrency);
   const [openingBalance, setOpeningBalance] = useState(String(account?.openingBalance ?? 0));
   const [creditLimit, setCreditLimit] = useState(account?.creditLimit != null ? String(account.creditLimit) : "");
@@ -291,6 +328,7 @@ function AccountFormModal({
           name,
           type,
           ...(isCommon !== (account.ownerId === null) ? { isCommon } : {}),
+          sharedWithFamily: canShare && sharedWithFamily,
           openingBalance: Number(openingBalance) || 0,
           ...(creditLimit ? { creditLimit: Number(creditLimit) } : {}),
         });
@@ -299,6 +337,7 @@ function AccountFormModal({
           name,
           type,
           isCommon,
+          sharedWithFamily: canShare && sharedWithFamily,
           currency,
           openingBalance: Number(openingBalance) || 0,
           ...(creditLimit ? { creditLimit: Number(creditLimit) } : {}),
@@ -383,9 +422,21 @@ function AccountFormModal({
           onChange={setIsCommon}
           label="Family account"
           description={
-            isCommon ? "Everyone in the family can see it and add to it. Only an admin can change it." : "Personal — only you can see it."
+            isCommon ? "Everyone in the family can see it and add to it. Only an admin can change it." : "Personal — only you add to it."
           }
         />
+        {canShare && (
+          <Toggle
+            checked={sharedWithFamily}
+            onChange={setSharedWithFamily}
+            label="Share with family"
+            description={
+              sharedWithFamily
+                ? "Family members can see it and its transactions in the family's view, and send money to it. Only you add to it or change it."
+                : "Only you can see it."
+            }
+          />
+        )}
 
         <ErrorText>{error}</ErrorText>
       </form>

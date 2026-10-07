@@ -7,21 +7,43 @@ import { requireAuth, requireFamilyRole } from "../middleware/auth";
 import { checkEncryptionPolicy, maybeEncryptedText } from "../lib/encryption";
 import { initialApprovalStatus } from "../lib/approval";
 import { BALANCE_TX_OPTIONS, lockAccounts, recalculateAccountBalances } from "../lib/balances";
+import { WRITE_OFF_TAG } from "../lib/tags";
+import { TRANSACTION_SEEN_BY, USABLE_BY, canSeeAccount, canUseAccount, isSharedByOther } from "../lib/visibility";
 
 export const transactionsRouter = Router({ mergeParams: true });
 transactionsRouter.use(requireAuth);
 
+// Who owns each end, so an entry can be shown to someone who can't see one of them (see accountFor).
+const ACCOUNT_ACCESS = { ownerId: true, sharedWithFamily: true, owner: { select: { firstName: true, name: true } } } as const;
+
 const TRANSACTION_INCLUDE = {
-  account: { select: { id: true, name: true, currency: true } },
-  transferToAccount: { select: { id: true, name: true } },
+  account: { select: { id: true, name: true, currency: true, ...ACCOUNT_ACCESS } },
+  transferToAccount: { select: { id: true, name: true, ...ACCOUNT_ACCESS } },
   category: { select: { id: true, name: true, color: true, icon: true, type: true } },
   // Only entries whose refund still counts mark this one as refunded (see COUNTED in lib/approval).
   refundedBy: { where: { isDeleted: false, approvalStatus: ApprovalStatus.APPROVED }, select: { id: true, amount: true } },
+  // Write-offs closing this loan (see resolveRepays): marks it as money that won't come back.
+  repayments: {
+    where: { isDeleted: false, approvalStatus: ApprovalStatus.APPROVED, type: { not: TransactionType.TRANSFER }, tags: { has: WRITE_OFF_TAG } },
+    select: { id: true, amount: true },
+  },
 } satisfies Prisma.TransactionInclude;
 
 type TransactionWithRelations = Prisma.TransactionGetPayload<{ include: typeof TRANSACTION_INCLUDE }>;
+type AccountEnd = TransactionWithRelations["account"] | NonNullable<TransactionWithRelations["transferToAccount"]>;
 
-function serializeTransaction(t: TransactionWithRelations) {
+/**
+ * One end of an entry as the requester may see it. A member's private account at the other end of a
+ * transfer they can see — money a member sent to the family, or to you — shows only whose it is.
+ */
+function accountFor(account: AccountEnd, requesterId: string) {
+  const { ownerId, sharedWithFamily, owner, ...rest } = account;
+  if (canSeeAccount({ ownerId, sharedWithFamily }, requesterId)) return rest;
+  const whose = owner?.firstName.trim() || owner?.name.trim() || "A member";
+  return { ...rest, name: `${whose}'s account` };
+}
+
+function serializeTransaction(t: TransactionWithRelations, requesterId: string) {
   return {
     id: t.id,
     familyId: t.familyId,
@@ -47,6 +69,8 @@ function serializeTransaction(t: TransactionWithRelations) {
     // back, so a partial refund only takes that much off what the entry counts for.
     isRefunded: t.refundedBy.length > 0,
     refundedAmount: t.refundedBy.reduce((sum, r) => sum + Number(r.amount), 0),
+    // How much of this loan was written off as not coming back (0 when none, or not a loan).
+    writtenOffAmount: t.repayments.reduce((sum, r) => sum + Number(r.amount), 0),
     approvalStatus: t.approvalStatus,
     reviewedById: t.reviewedById,
     reviewedAt: t.reviewedAt ? t.reviewedAt.toISOString() : null,
@@ -54,20 +78,33 @@ function serializeTransaction(t: TransactionWithRelations) {
     deletedAt: t.deletedAt ? t.deletedAt.toISOString() : null,
     createdAt: t.createdAt.toISOString(),
     updatedAt: t.updatedAt.toISOString(),
-    account: t.account,
-    transferToAccount: t.transferToAccount,
+    account: accountFor(t.account, requesterId),
+    transferToAccount: t.transferToAccount ? accountFor(t.transferToAccount, requesterId) : null,
     category: t.category,
+    // Seen only because a family member shares their account with the family: theirs to look at, not
+    // yours — clients leave it out of your own totals unless they're showing the family's.
+    sharedView: !canUseAccount(t.account, requesterId) && !(t.transferToAccount && canUseAccount(t.transferToAccount, requesterId)),
+    // Recorded on an account the requester doesn't use (a member's money sent to them or to the family,
+    // or a shared account's entries): shown, but never edited by them.
+    readOnly: !canUseAccount(t.account, requesterId),
   };
 }
 
-function isVisible(ownerId: string | null, requesterId: string) {
-  return ownerId === null || ownerId === requesterId;
+/** Transactions touching an account the requester uses — or, with `shared`, any account they see. */
+function visibleTo(requesterId: string, shared: boolean): Prisma.TransactionWhereInput {
+  if (shared) return TRANSACTION_SEEN_BY(requesterId);
+  return { OR: [{ account: USABLE_BY(requesterId) }, { transferToAccount: USABLE_BY(requesterId) }] };
 }
 
-function assertCanModify(transactionUserId: string, requesterId: string, role: Role) {
-  if (transactionUserId !== requesterId && role !== Role.ADMIN) {
-    throw new AppError(403, "Not allowed to edit this transaction");
-  }
+/**
+ * Whoever recorded an entry may change it; so may an admin, but only on accounts they use — never
+ * another member's entries on that member's own account, even one shared with the family to look at.
+ */
+async function assertCanModify(existing: { userId: string; accountId: string }, requesterId: string, role: Role) {
+  if (existing.userId === requesterId) return;
+  if (role !== Role.ADMIN) throw new AppError(403, "Not allowed to edit this transaction");
+  const account = await prisma.account.findUnique({ where: { id: existing.accountId }, select: { ownerId: true } });
+  if (!account || !canUseAccount(account, requesterId)) throw new AppError(403, "Not allowed to edit another member's transaction");
 }
 
 /**
@@ -116,14 +153,17 @@ async function resolveRelations(
 
   const account = usableAccount(accountId);
   if (!account) throw new AppError(404, "Account not found");
-  if (!isVisible(account.ownerId, requesterId)) {
+  if (!canUseAccount(account, requesterId)) {
     throw new AppError(403, "Cannot post a transaction to another member's private account");
   }
 
   if (type === TransactionType.TRANSFER) {
     const destAccount = usableAccount(transferToAccountIdInput!);
     if (!destAccount) throw new AppError(404, "Transfer destination account not found");
-    if (!isVisible(destAccount.ownerId, requesterId)) {
+    // Money sent to a family member goes into an account they share with the family (or, on an edit,
+    // the one it already went to, should they have stopped sharing it since).
+    const toMember = isSharedByOther(destAccount, requesterId) || existing.accountIds.includes(destAccount.id);
+    if (!canUseAccount(destAccount, requesterId) && !toMember) {
       throw new AppError(403, "Cannot post a transaction to another member's private account");
     }
     // Money lent to or borrowed from a person may say what it was for. It stays a transfer, so the
@@ -133,7 +173,7 @@ async function resolveRelations(
       return { categoryId: null, transferToAccountId: transferToAccountIdInput };
     }
     if (!usableCategory) throw new AppError(404, "Category not found");
-    if (!isVisible(usableCategory.ownerId, requesterId)) {
+    if (usableCategory.ownerId !== null && usableCategory.ownerId !== requesterId) {
       throw new AppError(403, "Cannot use another member's private category");
     }
     return { categoryId: categoryIdInput, transferToAccountId: transferToAccountIdInput };
@@ -141,7 +181,7 @@ async function resolveRelations(
 
   if (categoryIdInput) {
     if (!usableCategory) throw new AppError(404, "Category not found");
-    if (!isVisible(usableCategory.ownerId, requesterId)) {
+    if (usableCategory.ownerId !== null && usableCategory.ownerId !== requesterId) {
       throw new AppError(403, "Cannot use another member's private category");
     }
     if (usableCategory.type !== type) {
@@ -262,11 +302,12 @@ async function resolveRefunds(
 }
 
 /**
- * Bumps updatedAt on entries whose refunded amount just changed (a refund pointing at them was
- * added, edited, moved, deleted or restored). Their own row didn't change, so without this the
- * delta sync would never send them again and other devices would keep counting them in full.
+ * Bumps updatedAt on entries whose refunded or written-off amount just changed (a refund, return or
+ * write-off pointing at them was added, edited, moved, deleted or restored). Their own row didn't
+ * change, so without this the delta sync would never send them again and other devices would keep
+ * counting them as before.
  */
-async function touchRefunded(tx: Prisma.TransactionClient, ids: (string | null | undefined)[]) {
+async function touchLinked(tx: Prisma.TransactionClient, ids: (string | null | undefined)[]) {
   const unique = Array.from(new Set(ids.filter((id): id is string => !!id)));
   if (unique.length === 0) return;
   await tx.transaction.updateMany({ where: { id: { in: unique } }, data: { updatedAt: new Date() } });
@@ -344,6 +385,8 @@ transactionsRouter.get(
     }
 
     const isBin = req.query.bin === "true";
+    // Also the entries on accounts other members share with the family (see Account.sharedWithFamily).
+    const shared = req.query.shared === "true";
 
     // Opening the bin empties out what has been in it past the retention period. Awaited: a serverless
     // function is frozen as soon as it responds, so a fire-and-forget delete might never run.
@@ -364,8 +407,6 @@ transactionsRouter.get(
         isDeleted: isBin,
         // Totals are summed from this list, so by default it holds only what counts.
         ...(approval === "ALL" ? {} : { approvalStatus: approval }),
-        // Both legs: what the account paid out and the transfers that landed on it.
-        ...(accountId ? { OR: [{ accountId }, { transferToAccountId: accountId }] } : {}),
         ...(categoryId ? { categoryId } : {}),
         ...(type ? { type } : {}),
         ...(from || to
@@ -376,14 +417,18 @@ transactionsRouter.get(
               },
             }
           : {}),
-        account: { OR: [{ ownerId: null }, { ownerId: requesterId }] },
+        AND: [
+          // Both legs: what the account paid out and the transfers that landed on it.
+          ...(accountId ? [{ OR: [{ accountId }, { transferToAccountId: accountId }] }] : []),
+          visibleTo(requesterId, shared || !!accountId),
+        ],
       },
       orderBy: [{ date: "desc" }, { createdAt: "desc" }],
       take: limit,
       include: TRANSACTION_INCLUDE,
     });
 
-    res.json(transactions.map(serializeTransaction));
+    res.json(transactions.map((t) => serializeTransaction(t, requesterId)));
   })
 );
 
@@ -419,6 +464,9 @@ transactionsRouter.get(
     }
     // A page continuation resumes exactly where the last page stopped; a fresh sync rewinds a little.
     const isContinuation = req.query.continue === "1";
+    // Newer apps also keep the entries on accounts other members share with the family (each marked
+    // sharedView); older ones don't know to leave those out of their totals, so they never get them.
+    const shared = req.query.shared === "true";
 
     const [accounts, categories] = await Promise.all([
       prisma.account.aggregate({ where: { familyId }, _count: true, _max: { updatedAt: true } }),
@@ -430,6 +478,7 @@ transactionsRouter.get(
       accounts._max.updatedAt?.getTime() ?? 0,
       categories._count,
       categories._max.updatedAt?.getTime() ?? 0,
+      shared ? "shared" : "own",
     ].join(":");
 
     let where: Prisma.TransactionWhereInput = { familyId };
@@ -449,19 +498,20 @@ transactionsRouter.get(
       where,
       orderBy: [{ updatedAt: "asc" }, { id: "asc" }],
       take: SYNC_PAGE_SIZE + 1,
-      include: { ...TRANSACTION_INCLUDE, account: { select: { ...TRANSACTION_INCLUDE.account.select, ownerId: true } } },
+      include: TRANSACTION_INCLUDE,
     });
     const hasMore = rows.length > SYNC_PAGE_SIZE;
     const page = hasMore ? rows.slice(0, SYNC_PAGE_SIZE) : rows;
 
+    // A row is kept while either end is an account the member sees (or, without `shared`, uses).
+    const seen = (end: AccountEnd | null) => !!end && (shared ? canSeeAccount(end, requesterId) : canUseAccount(end, requesterId));
     const transactions: ReturnType<typeof serializeTransaction>[] = [];
     const removed: string[] = [];
     for (const row of page) {
-      if (row.isDeleted || row.approvalStatus !== ApprovalStatus.APPROVED || !isVisible(row.account.ownerId, requesterId)) {
+      if (row.isDeleted || row.approvalStatus !== ApprovalStatus.APPROVED || !(seen(row.account) || seen(row.transferToAccount))) {
         removed.push(row.id);
       } else {
-        const { ownerId: _ownerId, ...account } = row.account;
-        transactions.push(serializeTransaction({ ...row, account }));
+        transactions.push(serializeTransaction(row, requesterId));
       }
     }
 
@@ -549,11 +599,11 @@ transactionsRouter.post(
         include: TRANSACTION_INCLUDE,
       });
       await recalculateAccountBalances(tx, [parsed.accountId, transferToAccountId]);
-      await touchRefunded(tx, [refundsId]);
+      await touchLinked(tx, [refundsId, repaysId]);
       return created;
     }, BALANCE_TX_OPTIONS);
 
-    res.status(201).json(serializeTransaction(transaction));
+    res.status(201).json(serializeTransaction(transaction, requesterId));
   })
 );
 
@@ -569,7 +619,7 @@ transactionsRouter.patch(
     });
     if (!existing) throw new AppError(404, "Transaction not found");
 
-    assertCanModify(existing.userId, requesterId, req.familyMembership!.role);
+    await assertCanModify(existing, requesterId, req.familyMembership!.role);
 
     const parsed = updateTransactionSchema.parse(req.body);
 
@@ -646,11 +696,11 @@ transactionsRouter.patch(
         include: TRANSACTION_INCLUDE,
       });
       await recalculateAccountBalances(tx, touchedAccounts);
-      await touchRefunded(tx, [existing.refundsId, refundsId]);
+      await touchLinked(tx, [existing.refundsId, refundsId, existing.repaysId, repaysId]);
       return updatedTx;
     }, BALANCE_TX_OPTIONS);
 
-    res.json(serializeTransaction(updated));
+    res.json(serializeTransaction(updated, requesterId));
   })
 );
 
@@ -666,7 +716,7 @@ transactionsRouter.delete(
     });
     if (!existing) throw new AppError(404, "Transaction not found");
 
-    assertCanModify(existing.userId, requesterId, req.familyMembership!.role);
+    await assertCanModify(existing, requesterId, req.familyMembership!.role);
 
     await prisma.$transaction(async (tx) => {
       await lockAccounts(tx, [existing.accountId, existing.transferToAccountId]);
@@ -675,7 +725,7 @@ transactionsRouter.delete(
         data: { isDeleted: true, deletedAt: new Date() },
       });
       await recalculateAccountBalances(tx, [existing.accountId, existing.transferToAccountId]);
-      await touchRefunded(tx, [existing.refundsId]);
+      await touchLinked(tx, [existing.refundsId, existing.repaysId]);
     }, BALANCE_TX_OPTIONS);
 
     res.status(204).send();
@@ -723,7 +773,7 @@ transactionsRouter.post(
       // Find which accounts are affected
       const affected = await tx.transaction.findMany({
         where: whereClause,
-        select: { accountId: true, transferToAccountId: true, refundsId: true },
+        select: { accountId: true, transferToAccountId: true, refundsId: true, repaysId: true },
       });
       const accountIds = new Set<string>();
       for (const t of affected) {
@@ -737,7 +787,7 @@ transactionsRouter.post(
       });
 
       await recalculateAccountBalances(tx, Array.from(accountIds));
-      await touchRefunded(tx, affected.map((t) => t.refundsId));
+      await touchLinked(tx, affected.flatMap((t) => [t.refundsId, t.repaysId]));
       return updateResult;
     }, BALANCE_TX_OPTIONS);
 
@@ -757,7 +807,7 @@ transactionsRouter.post(
     });
     if (!existing) throw new AppError(404, "Transaction not found in bin");
 
-    assertCanModify(existing.userId, requesterId, req.familyMembership!.role);
+    await assertCanModify(existing, requesterId, req.familyMembership!.role);
 
     const restored = await prisma.$transaction(async (tx) => {
       await lockAccounts(tx, [existing.accountId, existing.transferToAccountId]);
@@ -772,11 +822,52 @@ transactionsRouter.post(
         include: TRANSACTION_INCLUDE,
       });
       await recalculateAccountBalances(tx, [updated.accountId, updated.transferToAccountId]);
-      await touchRefunded(tx, [updated.refundsId]);
+      await touchLinked(tx, [updated.refundsId, updated.repaysId]);
       return updated;
     }, BALANCE_TX_OPTIONS);
 
-    res.json(serializeTransaction(restored));
+    res.json(serializeTransaction(restored, requesterId));
+  })
+);
+
+/**
+ * Takes back a loan's write-offs: they go to the bin (where they can still be restored) and the money
+ * counts as owed again. Returns the loan as it now stands.
+ */
+transactionsRouter.post(
+  "/:transactionId/cancel-write-off",
+  requireFamilyRole(Role.MEMBER),
+  asyncHandler(async (req, res) => {
+    const familyId = req.params.familyId;
+    const requesterId = req.user!.id;
+    const role = req.familyMembership!.role;
+
+    const loan = await prisma.transaction.findFirst({
+      where: { id: req.params.transactionId, familyId, isDeleted: false, type: TransactionType.TRANSFER },
+      include: {
+        repayments: {
+          where: { isDeleted: false, type: { not: TransactionType.TRANSFER }, tags: { has: WRITE_OFF_TAG } },
+          select: { id: true, userId: true, accountId: true },
+        },
+      },
+    });
+    if (!loan) throw new AppError(404, "Loan not found");
+    if (loan.repayments.length === 0) throw new AppError(400, "Nothing on this loan has been written off");
+    for (const writeOff of loan.repayments) await assertCanModify(writeOff, requesterId, role);
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const accountIds = loan.repayments.map((w) => w.accountId);
+      await lockAccounts(tx, accountIds);
+      await tx.transaction.updateMany({
+        where: { id: { in: loan.repayments.map((w) => w.id) } },
+        data: { isDeleted: true, deletedAt: new Date() },
+      });
+      await recalculateAccountBalances(tx, accountIds);
+      await touchLinked(tx, [loan.id]);
+      return tx.transaction.findUniqueOrThrow({ where: { id: loan.id }, include: TRANSACTION_INCLUDE });
+    }, BALANCE_TX_OPTIONS);
+
+    res.json(serializeTransaction(updated, requesterId));
   })
 );
 
@@ -792,7 +883,7 @@ transactionsRouter.delete(
     });
     if (!existing) throw new AppError(404, "Transaction not found in bin");
 
-    assertCanModify(existing.userId, requesterId, req.familyMembership!.role);
+    await assertCanModify(existing, requesterId, req.familyMembership!.role);
 
     await purgeTransactions(familyId, [existing.id]);
 
@@ -835,7 +926,7 @@ transactionsRouter.post(
           account: visible,
           ...(hasDateFilter ? { date: dateFilter } : {}),
         },
-        select: { accountId: true, transferToAccountId: true, refundsId: true },
+        select: { accountId: true, transferToAccountId: true, refundsId: true, repaysId: true },
       });
       const accountIds = new Set<string>();
       for (const t of affected) {
@@ -862,7 +953,7 @@ transactionsRouter.post(
       }
 
       await recalculateAccountBalances(tx, Array.from(accountIds));
-      await touchRefunded(tx, affected.map((t) => t.refundsId));
+      await touchLinked(tx, affected.flatMap((t) => [t.refundsId, t.repaysId]));
 
       return { transactions: txResult, accounts: accountsResult };
     }, BALANCE_TX_OPTIONS);
@@ -918,7 +1009,7 @@ transactionsRouter.post(
     const result = await prisma.$transaction(async (tx) => {
       const affected = await tx.transaction.findMany({
         where: whereClause,
-        select: { accountId: true, transferToAccountId: true, refundsId: true },
+        select: { accountId: true, transferToAccountId: true, refundsId: true, repaysId: true },
       });
       const accountIds = new Set<string>();
       for (const t of affected) {
@@ -936,7 +1027,7 @@ transactionsRouter.post(
       });
 
       await recalculateAccountBalances(tx, Array.from(accountIds));
-      await touchRefunded(tx, affected.map((t) => t.refundsId));
+      await touchLinked(tx, affected.flatMap((t) => [t.refundsId, t.repaysId]));
 
       return updateResult;
     }, BALANCE_TX_OPTIONS);
